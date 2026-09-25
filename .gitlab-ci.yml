@@ -125,12 +125,12 @@ build:agent:
         --cache-to type=inline \
         $tags .
 
-# Bare-metal installer: tarball (agent for amd64+arm64 + systemd unit + the
-# installer itself) is uploaded to the Generic Package Registry; the installer
-# fetches it with --download-url:
+# Bare-metal installer: each linux binary (amd64 + arm64) and a full tarball
+# (binaries + systemd unit + installer) are pushed to the Generic Package
+# Registry. Installer usage:
 #   sudo ./install-agent.sh --server https://hub.example.com --token <t> \
-#     --download-url \
-#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/ansiblehub-agent/$VER/ansiblehub-agent-$VER.tar.gz"
+#     --binary-url \
+#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/ansiblehub-agent/$VER/ansiblehub-agent-linux-amd64"
 release:binary:
   stage: release
   image: golang:1.25-alpine
@@ -149,6 +149,12 @@ release:binary:
     - cd ..
     - cp deploy/ansiblehub-agent.service deploy/install-agent.sh dist/agent/
     - tar -C dist/agent -czf dist/release/ansiblehub-agent-${VER}.tar.gz .
+    # one upload per binary + the tarball
+    - |
+      for f in dist/agent/ansiblehub-agent-linux-*; do
+        curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/$(basename "$f")"
+      done
     - |
       curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "dist/release/ansiblehub-agent-${VER}.tar.gz" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/ansiblehub-agent-${VER}.tar.gz"

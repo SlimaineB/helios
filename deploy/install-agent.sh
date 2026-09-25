@@ -6,11 +6,13 @@
 #     --token <bootstrap-token> \
 #     [--instance-id abcd1234] \
 #     [--download-url https://…/ansiblehub-agent-<ver>.tar.gz] \
+#     [--binary-url https://…/ansiblehub-agent-linux-amd64] \
 #     [--autoheal 0|1] \
 #     [--state-dir /var/lib/ansiblehub]
 #
-# --download-url (or $AHUB_DOWNLOAD_URL) points at the release tarball built by
-# CI (server + agent cross-compiled for linux/amd64 and linux/arm64).
+# --download-url: release tarball from CI (extracts the right arch binary);
+# --binary-url: a single prebuilt binary. Either one works ($AHUB_DOWNLOAD_URL
+# / $AHUB_BINARY_URL override the flags).
 set -e
 
 SERVER=""
@@ -19,9 +21,10 @@ INSTANCE_ID=""
 STATE_DIR=/var/lib/ansiblehub
 AUTOHEAL=1
 DOWNLOAD_URL="${AHUB_DOWNLOAD_URL:-}"
+BINARY_URL="${AHUB_BINARY_URL:-}"
 
 usage() {
-    sed -n '2,12p' "$0"
+    sed -n '2,14p' "$0"
     exit 1
 }
 
@@ -33,6 +36,7 @@ while [ $# -gt 0 ]; do
         --state-dir) STATE_DIR=$2; shift 2 ;;
         --autoheal) AUTOHEAL=$2; shift 2 ;;
         --download-url) DOWNLOAD_URL=$2; shift 2 ;;
+        --binary-url) BINARY_URL=$2; shift 2 ;;
         *) echo "unknown option: $1"; usage ;;
     esac
 done
@@ -69,8 +73,15 @@ install_ansible() {
 
 install_binary() {
     command -v ansiblehub-agent >/dev/null && return
+    if [ -n "$BINARY_URL" ]; then
+        tmp="$(mktemp)"
+        curl -fsSL "$BINARY_URL" -o "$tmp"
+        install -m755 "$tmp" /usr/local/bin/ansiblehub-agent
+        rm -f "$tmp"
+        return
+    fi
     [ -n "$DOWNLOAD_URL" ] || {
-        echo "ansiblehub-agent not found and no --download-url given" >&2
+        echo "ansiblehub-agent not found; give --binary-url or --download-url" >&2
         exit 1
     }
     case "$(uname -m)" in
@@ -78,11 +89,11 @@ install_binary() {
         aarch64|arm64) bin=ansiblehub-agent-linux-arm64 ;;
         *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
     esac
-    tar="$(mktemp)"
-    curl -fsSL "$DOWNLOAD_URL" -o "$tar"
-    tar -xzf "$tar" -C /tmp --wildcards "$bin"
-    install -m755 "/tmp/$bin" /usr/local/bin/ansiblehub-agent
-    rm -f "$tar"
+    tmp="$(mktemp -d)"
+    curl -fsSL "$DOWNLOAD_URL" -o "$tmp/pkg.tar.gz"
+    tar -xzf "$tmp/pkg.tar.gz" -C "$tmp" --wildcards "$bin"
+    install -m755 "$tmp/$bin" /usr/local/bin/ansiblehub-agent
+    rm -rf "$tmp"
 }
 
 write_config() {
