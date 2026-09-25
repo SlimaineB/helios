@@ -46,9 +46,16 @@ test:ui:
     - npm ci
     - npm run build
 
+.helm-cli:
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl tar ca-certificates
+    - curl -fsSL https://get.helm.sh/helm-v3.18.0-linux-amd64.tar.gz -o /tmp/helm.tgz
+    - tar -C /usr/local/bin -xzf /tmp/helm.tgz --strip-components=1 linux-amd64/helm
+
 test:helm:
+  extends: .helm-cli
   stage: test
-  image: alpine/helm:3.18.0
   script:
     - helm lint helm/ansiblehub-server helm/ansiblehub-agent
     - helm template s helm/ansiblehub-server >/dev/null
@@ -98,7 +105,7 @@ build:agent:
 # bumped to the git tag on each release tag (v0.2.0 -> 0.2.0).
 release:helm:
   stage: release
-  image: alpine/helm:3.18.0
+  extends: .helm-cli
   rules:
     - if: $CI_COMMIT_TAG
   script:
