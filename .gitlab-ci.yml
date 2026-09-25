@@ -46,50 +46,122 @@ test:ui:
     - npm ci
     - npm run build
 
+.helm-cli:
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl tar ca-certificates
+    - curl -fsSL https://get.helm.sh/helm-v3.18.0-linux-amd64.tar.gz -o /tmp/helm.tgz
+    - tar -C /usr/local/bin -xzf /tmp/helm.tgz --strip-components=1 linux-amd64/helm
+
 test:helm:
+  extends: .helm-cli
   stage: test
-  image: alpine/helm:3.18.0
   script:
     - helm lint helm/ansiblehub-server helm/ansiblehub-agent
     - helm template s helm/ansiblehub-server >/dev/null
     - helm template a helm/ansiblehub-agent >/dev/null
 
+test:shellcheck:
+  stage: test
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - shellcheck -S warning deploy/install-agent.sh hack/agent-entrypoint.sh
+
 # ------------------------------------------------------------------ build ---
 
-# Kaniko builds from the repository root without a Docker daemon. The charts
-# default to `image.repository: ansiblehub/<name>`; point them at the registry
-# of your project (see header) with --set image.repository / image.tag.
+# Classic GitLab Docker-in-Docker + buildx. Requires a privileged executor
+# (GitLab.com shared runners are); this is the supported, actively-maintained
+# path. Two-stage cache: <image>:cache is the buildx cache ref.
+# The charts default to `image.repository: ansiblehub/<name>`; point them at
+# the registry of your project (see header) with --set image.repository/tag.
 # Images: <sha> always, latest on the default branch, the tag name on tags.
 .build-template:
   stage: build
-  image: gcr.io/kaniko-project/executor:debug
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: dind
+  variables:
+    DOCKER_HOST: tcp://dind:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
   before_script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - docker info >/dev/null
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
     - when: always
 
-build:server:
-  extends: .build-template
+# BuildKit on the default `docker` buildx driver cannot export to a registry
+# cache backend; `type=inline` keeps the cache inside the pushed image while
+# the next run imports it back via its `latest` tag (first run: cache-miss,
+# buildx ignores it).
+.build-bake:
   script:
     - |
-      dests="--destination $IMAGE_SERVER:$CI_COMMIT_SHORT_SHA"
-      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && dests="$dests --destination $IMAGE_SERVER:latest"
-      [ -n "$CI_COMMIT_TAG" ] && dests="$dests --destination $IMAGE_SERVER:$CI_COMMIT_TAG"
-      set -- $dests
-      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile Dockerfile "$@"
+      tags="-t $IMAGE_SERVER:$CI_COMMIT_SHORT_SHA"
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && tags="$tags -t $IMAGE_SERVER:latest"
+      [ -n "$CI_COMMIT_TAG" ] && tags="$tags -t $IMAGE_SERVER:$CI_COMMIT_TAG"
+      # shellcheck disable=SC2086
+      docker buildx build --push -f Dockerfile \
+        --cache-from type=registry,ref=$IMAGE_SERVER:latest \
+        --cache-to type=inline \
+        $tags .
+
+build:server:
+  extends: [.build-template, .build-bake]
 
 build:agent:
-  extends: .build-template
+  extends: [.build-template, .build-bake]
   script:
     - |
-      dests="--destination $IMAGE_AGENT:$CI_COMMIT_SHORT_SHA"
-      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && dests="$dests --destination $IMAGE_AGENT:latest"
-      [ -n "$CI_COMMIT_TAG" ] && dests="$dests --destination $IMAGE_AGENT:$CI_COMMIT_TAG"
-      set -- $dests
-      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile agent/Dockerfile "$@"
+      tags="-t $IMAGE_AGENT:$CI_COMMIT_SHORT_SHA"
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && tags="$tags -t $IMAGE_AGENT:latest"
+      [ -n "$CI_COMMIT_TAG" ] && tags="$tags -t $IMAGE_AGENT:$CI_COMMIT_TAG"
+      # shellcheck disable=SC2086
+      docker buildx build --push -f agent/Dockerfile \
+        --cache-from type=registry,ref=$IMAGE_AGENT:latest \
+        --cache-to type=inline \
+        $tags .
+
+# Bare-metal installer: each linux binary (amd64 + arm64) and a full tarball
+# (binaries + systemd unit + installer) are pushed to the Generic Package
+# Registry. Installer usage:
+#   sudo ./install-agent.sh --server https://hub.example.com --token <t> \
+#     --binary-url \
+#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/ansiblehub-agent/$VER/ansiblehub-agent-linux-amd64"
+release:binary:
+  stage: release
+  image: golang:1.25-alpine
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - set -e
+    - apk add --no-cache tar
+    - VER=${CI_COMMIT_TAG#v}
+    - mkdir -p dist/agent dist/release
+    - cd agent && go mod download
+    - |
+      for a in amd64 arm64; do
+        GOOS=linux GOARCH=$a CGO_ENABLED=0 go build -ldflags="-s -w" -o ../dist/agent/ansiblehub-agent-linux-$a ./cmd/agent
+      done
+    - cd ..
+    - cp deploy/ansiblehub-agent.service deploy/install-agent.sh dist/agent/
+    - tar -C dist/agent -czf dist/release/ansiblehub-agent-${VER}.tar.gz .
+    # one upload per binary + the tarball
+    - |
+      for f in dist/agent/ansiblehub-agent-linux-*; do
+        curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/$(basename "$f")"
+      done
+    - |
+      curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "dist/release/ansiblehub-agent-${VER}.tar.gz" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/ansiblehub-agent-${VER}.tar.gz"
+  artifacts:
+    paths:
+      - dist/release/*.tar.gz
+    expire_in: 1 year
 
 # ---------------------------------------------------------------- release ---
 
@@ -98,7 +170,7 @@ build:agent:
 # bumped to the git tag on each release tag (v0.2.0 -> 0.2.0).
 release:helm:
   stage: release
-  image: alpine/helm:3.18.0
+  extends: .helm-cli
   rules:
     - if: $CI_COMMIT_TAG
   script:

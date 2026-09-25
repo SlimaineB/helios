@@ -1,0 +1,20 @@
+[Unit]
+Description=AnsibleHub agent (ansible-pull drift controller)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ansiblehub-agent -config /etc/ansiblehub/agent.yaml
+Environment=HOME=/root
+Restart=always
+RestartSec=10
+# Runtime hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ansiblehub /tmp
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
