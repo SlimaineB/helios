@@ -1,0 +1,118 @@
+# AnsibleHub CI/CD: tests -> container images -> Helm charts.
+#
+# Produces, in GitLab's own hosting:
+#   - container images : $CI_REGISTRY_IMAGE/server and .../agent
+#   - helm repo        : helm repo add <name> $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/helm/stable
+#
+# Helm install example:
+#   helm install hub <name>/ansiblehub-server --set image.repository=$CI_REGISTRY_IMAGE/server
+#   helm install agt <name>/ansiblehub-agent --set image.repository=$CI_REGISTRY_IMAGE/agent \
+#     --set config.server=http://hub-<name>-ansiblehub-server --set config.token=<token>
+#
+# Runner: any docker/podman executor works; no privileged/Docker socket needed.
+
+stages:
+  - test
+  - build
+  - release
+
+variables:
+  IMAGE_SERVER: $CI_REGISTRY_IMAGE/server
+  IMAGE_AGENT: $CI_REGISTRY_IMAGE/agent
+
+# ------------------------------------------------------------------ tests ---
+
+test:go-server:
+  stage: test
+  image: golang:1.25-alpine
+  script:
+    - cd server
+    - go vet ./...
+    - go test ./...
+
+test:go-agent:
+  stage: test
+  image: golang:1.25-alpine
+  script:
+    - cd agent
+    - go vet ./...
+    - go test ./...
+
+test:ui:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd ui
+    - npm ci
+    - npm run build
+
+test:helm:
+  stage: test
+  image: alpine/helm:3.18.0
+  script:
+    - helm lint helm/ansiblehub-server helm/ansiblehub-agent
+    - helm template s helm/ansiblehub-server >/dev/null
+    - helm template a helm/ansiblehub-agent >/dev/null
+
+# ------------------------------------------------------------------ build ---
+
+# Kaniko builds from the repository root without a Docker daemon. The charts
+# default to `image.repository: ansiblehub/<name>`; point them at the registry
+# of your project (see header) with --set image.repository / image.tag.
+# Images: <sha> always, latest on the default branch, the tag name on tags.
+.build-template:
+  stage: build
+  image: gcr.io/kaniko-project/executor:debug
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - when: always
+
+build:server:
+  extends: .build-template
+  script:
+    - |
+      dests="--destination $IMAGE_SERVER:$CI_COMMIT_SHORT_SHA"
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && dests="$dests --destination $IMAGE_SERVER:latest"
+      [ -n "$CI_COMMIT_TAG" ] && dests="$dests --destination $IMAGE_SERVER:$CI_COMMIT_TAG"
+      set -- $dests
+      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile Dockerfile "$@"
+
+build:agent:
+  extends: .build-template
+  script:
+    - |
+      dests="--destination $IMAGE_AGENT:$CI_COMMIT_SHORT_SHA"
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && dests="$dests --destination $IMAGE_AGENT:latest"
+      [ -n "$CI_COMMIT_TAG" ] && dests="$dests --destination $IMAGE_AGENT:$CI_COMMIT_TAG"
+      set -- $dests
+      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile agent/Dockerfile "$@"
+
+# ---------------------------------------------------------------- release ---
+
+# Packages both charts and publishes them to the GitLab Helm package repo
+# (channel "stable"); GitLab auto-serves the index.yaml. Chart versions are
+# bumped to the git tag on each release tag (v0.2.0 -> 0.2.0).
+release:helm:
+  stage: release
+  image: alpine/helm:3.18.0
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - set -e
+    - VER=${CI_COMMIT_TAG#v}
+    - 'sed -i "s/^version:.*/version: $VER/; s/^appVersion:.*/appVersion: \"$VER\"/" helm/ansiblehub-server/Chart.yaml helm/ansiblehub-agent/Chart.yaml'
+    - helm lint helm/ansiblehub-server helm/ansiblehub-agent
+    - mkdir -p dist && helm package --destination dist helm/ansiblehub-server helm/ansiblehub-agent
+    - |
+      for f in dist/*.tgz; do
+        curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/helm/stable/${f##*/}"
+      done
+  artifacts:
+    paths:
+      - dist/*.tgz
+    expire_in: 30 days

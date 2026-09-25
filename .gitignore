@@ -1,0 +1,8 @@
+*.db
+*.db-journal
+node_modules/
+ui/dist/
+server/ansiblehub-server
+agent/ansiblehub-agent
+.idea/
+.vscode/

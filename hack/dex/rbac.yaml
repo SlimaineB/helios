@@ -1,0 +1,14 @@
+# Boundary for the docker-lab SSO users.
+#
+# NOTE: Dex's local password connector does not emit a "groups" claim (issue
+# observed on v2.37/v2.43), so for the lab the server maps the OIDC "email"
+# claim as the group identity (ANSIBLEHUB_OIDC_GROUP_CLAIM=email). With a real
+# provider (Okta/Keycloak) keep GROUP_CLAIM=groups and bind the actual groups:
+#   - "g, ansiblehub:admins, role:admins"
+#   - "g, ansiblehub:readers, role:readers"
+policies:
+  - "p, role:admins, *, *, *"
+  - "p, role:readers, *, get, *"
+bindings:
+  - "g, admin@example.com, role:admins"
+  - "g, reader@example.com, role:readers"

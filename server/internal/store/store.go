@@ -1,0 +1,80 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/slim/ansiblehub/server/internal/model"
+)
+
+var (
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+	ErrAlreadyBound = errors.New("already bound")
+	ErrNoCommand    = errors.New("no command to claim")
+	ErrTokenInUse   = errors.New("token already in use")
+)
+
+// Store is the persistence contract. The SQLite implementation lives in
+// sqlite.go; a Postgres implementation can be swapped in later without
+// touching the API layer.
+type Store interface {
+	Close() error
+
+	// Instances
+	ListInstances(ctx context.Context, limit, offset int) ([]model.Instance, error)
+	CountInstances(ctx context.Context) (int, error)
+	GetInstance(ctx context.Context, id string) (model.Instance, error)
+	GetInstanceByToken(ctx context.Context, tokenHash string) (model.Instance, error)
+	CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error)
+	UpdateInstance(ctx context.Context, in model.Instance) error
+	DeleteInstance(ctx context.Context, id string) error
+
+	// Applications
+	ListApplications(ctx context.Context) ([]model.Application, error)
+	GetApplication(ctx context.Context, id int64) (model.Application, error)
+	GetApplicationByName(ctx context.Context, name string) (model.Application, error)
+	CreateApplication(ctx context.Context, in model.Application) (model.Application, error)
+	UpdateApplication(ctx context.Context, in model.Application) error
+	DeleteApplication(ctx context.Context, id int64) error
+
+	// Repositories (git connections registry)
+	ListRepositories(ctx context.Context) ([]model.Repository, error)
+	GetRepository(ctx context.Context, id int64) (model.Repository, error)
+	GetRepositoryByURL(ctx context.Context, url string) (model.Repository, error)
+	CreateRepository(ctx context.Context, in model.Repository) (model.Repository, error)
+	UpdateRepository(ctx context.Context, in model.Repository) error
+	DeleteRepository(ctx context.Context, id int64) error
+
+	// Assignments (instance <-> application)
+	ListAssignments(ctx context.Context, instanceID string) ([]model.Assignment, error)
+	AssignmentsForApp(ctx context.Context, appID int64) ([]model.Assignment, error)
+	Assign(ctx context.Context, instanceID string, appID int64) error
+	Unassign(ctx context.Context, instanceID string, appID int64) error
+	SetAssignmentAutoHeal(ctx context.Context, instanceID string, appID int64, autoHeal bool) error
+	ClearAssignmentAutoHeal(ctx context.Context, instanceID string, appID int64) error
+	// TouchCheck records the moment a check result was received, even when the
+	// run itself was deduplicated away.
+	TouchCheck(ctx context.Context, instanceID string, appID int64, at time.Time) error
+
+	// Runs
+	ListRuns(ctx context.Context, f model.RunFilter) ([]model.Run, error)
+	CountRuns(ctx context.Context, f model.RunFilter) (int, error)
+	GetRun(ctx context.Context, id int64) (model.Run, error)
+	CreateRun(ctx context.Context, r model.Run) (model.Run, error)
+	LatestRun(ctx context.Context, instanceID string, appID int64, mode string) (model.Run, error)
+
+	// Variables: app defaults + per-assignment (host) overrides.
+	AppVariables(ctx context.Context, appID int64) ([]model.Variable, error)
+	SaveAppVariables(ctx context.Context, appID int64, vars []model.Variable) error
+	AssignmentVariables(ctx context.Context, instanceID string, appID int64) ([]model.Variable, error)
+	SaveAssignmentVariables(ctx context.Context, instanceID string, appID int64, vars []model.Variable) error
+
+	// Commands
+	CreateCommand(ctx context.Context, c model.Command) (model.Command, error)
+	PendingCommands(ctx context.Context, instanceID string) ([]model.Command, error)
+	ClaimCommands(ctx context.Context, instanceID string) ([]model.Command, error)
+	CompleteCommand(ctx context.Context, id int64, status, result, commit string) error
+	LatestCommand(ctx context.Context, instanceID string, appID int64, action string) (model.Command, error)
+}

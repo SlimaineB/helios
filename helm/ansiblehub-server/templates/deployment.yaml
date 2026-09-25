@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ansiblehub-server.fullname" . }}
+  labels:
+    {{- include "ansiblehub-server.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ansiblehub-server.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "ansiblehub-server.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -addr
+            - :8080
+            - -db
+            - /data/ansiblehub.db
+            - -ui
+            - /app/ui
+            {{- range .Values.extraArgs }}
+            - {{ . }}
+            {{- end }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user }}
+          env:
+            {{- if .Values.database.dsn }}
+            - name: ANSIBLEHUB_DB
+              value: {{ .Values.database.dsn | quote }}
+            {{- end }}
+            {{- if .Values.operatorAuth.user }}
+            - name: ANSIBLEHUB_OPERATOR_USER
+              value: {{ .Values.operatorAuth.user | quote }}
+            - name: ANSIBLEHUB_OPERATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.operatorAuth.existingSecret | default (printf "%s-operator" (include "ansiblehub-server.fullname" .)) }}
+                  key: operator-password
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "ansiblehub-server.fullname" . }}-data

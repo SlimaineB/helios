@@ -1,0 +1,76 @@
+---
+# webapp role — manages the demo webapp deployment under /tmp/ansiblehub-demo.
+- name: Ensure the base directory tree exists
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /tmp/ansiblehub-demo
+    - /tmp/ansiblehub-demo/conf
+
+- name: Ensure the service user exists
+  ansible.builtin.user:
+    name: svc-webapp
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Ship the main webapp config from a template
+  ansible.builtin.template:
+    src: webapp.conf.j2
+    dest: /tmp/ansiblehub-demo/webapp.conf
+    mode: "0644"
+
+- name: Ensure the properties file carries the app identity
+  ansible.builtin.lineinfile:
+    path: /tmp/ansiblehub-demo/conf/app.properties
+    regexp: '^app.name='
+    line: 'app.name=ansiblehub-demo'
+    create: true
+    mode: "0644"
+    state: present
+
+- name: Ensure the properties file carries the environment
+  ansible.builtin.lineinfile:
+    path: /tmp/ansiblehub-demo/conf/app.properties
+    regexp: '^app.environment='
+    line: 'app.environment=staging'
+    create: true
+    state: present
+
+- name: Enable the healthz flag in the properties file
+  ansible.builtin.lineinfile:
+    path: /tmp/ansiblehub-demo/conf/app.properties
+    regexp: '^healthz='
+    line: 'healthz=true'
+    create: true
+    state: present
+
+- name: Enable the metrics flag in the properties file
+  ansible.builtin.lineinfile:
+    path: /tmp/ansiblehub-demo/conf/app.properties
+    regexp: '^metrics='
+    line: 'metrics=true'
+    create: true
+    state: present
+
+- name: Render one listener config per enabled feature
+  ansible.builtin.template:
+    src: feature.conf.j2
+    dest: "/tmp/ansiblehub-demo/conf/{{ item.key }}.conf"
+    mode: "0644"
+  loop: "{{ features | dict2items }}"
+  when: item.value.enabled
+
+- name: Install the systemd-style unit file
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      ExecStart=/usr/local/bin/ansiblehub-demo \
+        --config /tmp/ansiblehub-demo/webapp.conf \
+        --props /tmp/ansiblehub-demo/conf/app.properties
+      Restart=on-failure
+    dest: /tmp/ansiblehub-demo/ansiblehub-demo.service
+    mode: "0644"

@@ -1,0 +1,43 @@
+#cloud-config
+# Generated from template by terraform.
+write_files:
+  - path: /etc/ansiblehub/agent.yaml
+    permissions: "0600"
+    content: |
+      server: ${server}
+      token: ${token}
+      state_dir: /var/lib/ansiblehub
+      poll_interval: 5m
+      autoheal: true
+
+  - path: /etc/systemd/system/ansiblehub-agent.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=AnsibleHub agent (ansible-pull drift controller)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/ansiblehub-agent -config /etc/ansiblehub/agent.yaml
+      Environment=HOME=/root
+      Restart=always
+      RestartSec=10
+      ProtectSystem=strict
+      ProtectHome=true
+      ReadWritePaths=/var/lib/ansiblehub /tmp
+      PrivateTmp=true
+      NoNewPrivileges=true
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /var/lib/ansiblehub
+  - command -v git >/dev/null || (dnf install -y git)
+  - command -v ansible-playbook >/dev/null || (dnf install -y python3-pip && pip3 install ansible-core && ansible-galaxy collection install ansible.posix)
+  - [ -x /usr/local/bin/ansiblehub-agent ] || curl -fsSL -o /usr/local/bin/ansiblehub-agent ${agent_url}
+  - chmod +x /usr/local/bin/ansiblehub-agent
+  - systemctl daemon-reload
+  - systemctl enable --now ansiblehub-agent

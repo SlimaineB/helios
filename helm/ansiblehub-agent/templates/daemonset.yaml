@@ -1,0 +1,17 @@
+{{- if eq .Values.mode "daemonset" }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ansiblehub-agent.fullname" . }}
+  labels:
+    {{- include "ansiblehub-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ansiblehub-agent.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    {{- include "ansiblehub-agent.pod" . | nindent 4 }}
+  updateStrategy:
+    type: RollingUpdate
+{{- end }}

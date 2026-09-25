@@ -1,0 +1,8 @@
+.git
+**/node_modules
+ui/dist
+server/ansiblehub.db
+*.db
+*.db-journal
+hdata
+agentconf

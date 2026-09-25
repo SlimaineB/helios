@@ -1,0 +1,107 @@
+# Dev/testbed harness. Everything runs on the host network so the SSO (Dex)
+# issuer, the API and the repo are all reachable as "localhost" from both the
+# containers and the browser. Not meant for production networking.
+services:
+  db:
+    image: postgres:16-alpine
+    network_mode: host
+    environment:
+      POSTGRES_USER: ansiblehub
+      POSTGRES_PASSWORD: ansiblehub
+      POSTGRES_DB: ansiblehub
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ansiblehub -d ansiblehub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    environment:
+      ANSIBLEHUB_DB: postgres://ansiblehub:ansiblehub@localhost:5432/ansiblehub?sslmode=disable
+      ANSIBLEHUB_OPERATOR_USER: ${ANH_OPERATOR_USER:-admin}
+      ANSIBLEHUB_OPERATOR_PASSWORD: ${ANH_OPERATOR_PASSWORD:-changeme}
+      ANSIBLEHUB_BASE_URL: http://localhost:8080
+      ANSIBLEHUB_RBAC_FILE: /etc/ansiblehub/rbac.yaml
+      ANSIBLEHUB_OIDC_ISSUER: http://localhost:5556
+      ANSIBLEHUB_OIDC_CLIENT_ID: ansiblehub
+      ANSIBLEHUB_OIDC_CLIENT_SECRET: dex-client-secret
+      ANSIBLEHUB_OIDC_GROUP_CLAIM: email
+      ANSIBLEHUB_OIDC_SCOPES: openid, profile, email, groups
+    volumes:
+      - ./hack/dex/rbac.yaml:/etc/ansiblehub/rbac.yaml:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dex:
+    image: dexidp/dex:v2.37.0
+    network_mode: host
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      ANH_DEX_CLIENT_SECRET: dex-client-secret
+    volumes:
+      - ./hack/dex/config.yaml:/etc/dex/config.yaml:ro
+    restart: unless-stopped
+
+  repo:
+    build:
+      context: .
+      dockerfile: hack/repo-server/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: hack/bootstrap/Dockerfile
+    network_mode: host
+    environment:
+      ANH_SERVER: http://localhost:8080
+      NUM_AGENTS: ${NUM_AGENTS:-2}
+      ANH_OPERATOR_USER: ${ANH_OPERATOR_USER:-admin}
+      ANH_OPERATOR_PASSWORD: ${ANH_OPERATOR_PASSWORD:-changeme}
+      DEMO_REPO_URL: ${DEMO_REPO_URL:-http://localhost:8000/demo.git}
+    volumes:
+      - agentconf:/conf
+    depends_on:
+      - server
+      - repo
+    restart: "no"
+
+  agent-1:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    network_mode: host
+    environment:
+      CONFIG_FILE: /etc/ansiblehub/agent-1.yaml
+    volumes:
+      - agentconf:/etc/ansiblehub
+    depends_on:
+      - bootstrap
+    restart: unless-stopped
+
+  agent-2:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    network_mode: host
+    environment:
+      CONFIG_FILE: /etc/ansiblehub/agent-2.yaml
+    volumes:
+      - agentconf:/etc/ansiblehub
+    depends_on:
+      - bootstrap
+    restart: unless-stopped
+
+volumes:
+  dbdata:
+  agentconf:

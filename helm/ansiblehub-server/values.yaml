@@ -1,0 +1,63 @@
+# Default values for ansiblehub-server.
+# This is a YAML-formatted file.
+
+replicaCount: 1
+
+image:
+  repository: ansiblehub/server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Image built from the root Dockerfile (embeds the React UI + Go server).
+# -addr and -db can be overridden/extra args appended via extraArgs.
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+# Storage for the SQLite database. NOTE: the production roadmap replaces SQLite
+# with a Postgres backend (Store interface) — until then the server persists to
+# a volume, use a real PVC/storageClass here.
+storage:
+  className: null    # null -> cluster default storage class
+  size: 10Gi
+  accessMode: ReadWriteOnce
+
+ingress:
+  enabled: false
+  className: ""
+  host: hub.example.com
+  tls:
+    enabled: false
+    secretName: ""
+    # hosts: [hub.example.com]
+
+# Backend. Leave dsn empty for SQLite (default, backed by the /data PVC).
+# Set a postgres:// URL to use Postgres instead (e.g. an external or a
+# cloud-managed instance). The server chart ships no Postgres.
+database:
+  dsn: ""
+
+# HTTP Basic auth protecting the operator UI + API. Empty -> no auth (open).
+# Learn the password from a secret, e.g. existingSecret with key "operator-password".
+operatorAuth:
+  user: ""
+  password: ""
+  # existingSecret: name of a Secret holding key `operator-password`.
+
+resources:
+  {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+
+extraArgs: []
