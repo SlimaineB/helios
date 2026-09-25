@@ -225,6 +225,21 @@ Route map (what each permission unlocks in the UI): `instances.get` list/detail,
    playbook path), assign the instance.
 5. Optional: use `deploy/terraform/agent/` to manage instances as code.
 
+### Direct install (any Linux box, no containers)
+
+For non-EC2 hosts, `deploy/install-agent.sh` installs git + ansible-core + the
+agent and registers a systemd unit. It auto-detects apt/dnf/yum/zypper and
+works on any architecture shipped in the release tarball:
+
+```sh
+sudo ./deploy/install-agent.sh --server https://hub.example.com \
+  --token <bootstrap-token> \
+  --download-url <ansiblehub-agent-<ver>.tar.gz from the CI "release:binary" job>
+```
+
+The agent itself is a single static Go binary (`make build-agent`) — Docker is
+only one of its packaging options.
+
 ## Configuration
 
 `server`: `-addr`, `-db` (sqlite file **or** `postgres://` URL), `-ui`,

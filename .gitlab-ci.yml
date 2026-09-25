@@ -61,6 +61,12 @@ test:helm:
     - helm template s helm/ansiblehub-server >/dev/null
     - helm template a helm/ansiblehub-agent >/dev/null
 
+test:shellcheck:
+  stage: test
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - shellcheck -S warning deploy/install-agent.sh hack/agent-entrypoint.sh
+
 # ------------------------------------------------------------------ build ---
 
 # Classic GitLab Docker-in-Docker + buildx. Requires a privileged executor
@@ -118,6 +124,38 @@ build:agent:
         --cache-from type=registry,ref=$IMAGE_AGENT:latest \
         --cache-to type=inline \
         $tags .
+
+# Bare-metal installer: tarball (agent for amd64+arm64 + systemd unit + the
+# installer itself) is uploaded to the Generic Package Registry; the installer
+# fetches it with --download-url:
+#   sudo ./install-agent.sh --server https://hub.example.com --token <t> \
+#     --download-url \
+#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/ansiblehub-agent/$VER/ansiblehub-agent-$VER.tar.gz"
+release:binary:
+  stage: release
+  image: golang:1.25-alpine
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - set -e
+    - apk add --no-cache tar
+    - VER=${CI_COMMIT_TAG#v}
+    - mkdir -p dist/agent dist/release
+    - cd agent && go mod download
+    - |
+      for a in amd64 arm64; do
+        GOOS=linux GOARCH=$a CGO_ENABLED=0 go build -ldflags="-s -w" -o ../dist/agent/ansiblehub-agent-linux-$a ./cmd/agent
+      done
+    - cd ..
+    - cp deploy/ansiblehub-agent.service deploy/install-agent.sh dist/agent/
+    - tar -C dist/agent -czf dist/release/ansiblehub-agent-${VER}.tar.gz .
+    - |
+      curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "dist/release/ansiblehub-agent-${VER}.tar.gz" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/ansiblehub-agent-${VER}.tar.gz"
+  artifacts:
+    paths:
+      - dist/release/*.tar.gz
+    expire_in: 1 year
 
 # ---------------------------------------------------------------- release ---
 
