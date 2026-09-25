@@ -63,16 +63,25 @@ test:helm:
 
 # ------------------------------------------------------------------ build ---
 
-# Kaniko builds from the repository root without a Docker daemon. The charts
-# default to `image.repository: ansiblehub/<name>`; point them at the registry
-# of your project (see header) with --set image.repository / image.tag.
+# Classic GitLab Docker-in-Docker + buildx. Requires a privileged executor
+# (GitLab.com shared runners are); this is the supported, actively-maintained
+# path. Two-stage cache: <image>:cache is the buildx cache ref.
+# The charts default to `image.repository: ansiblehub/<name>`; point them at
+# the registry of your project (see header) with --set image.repository/tag.
 # Images: <sha> always, latest on the default branch, the tag name on tags.
 .build-template:
   stage: build
-  image: gcr.io/kaniko-project/executor:debug
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
   before_script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - docker info >/dev/null
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
@@ -82,21 +91,27 @@ build:server:
   extends: .build-template
   script:
     - |
-      dests="--destination $IMAGE_SERVER:$CI_COMMIT_SHORT_SHA"
-      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && dests="$dests --destination $IMAGE_SERVER:latest"
-      [ -n "$CI_COMMIT_TAG" ] && dests="$dests --destination $IMAGE_SERVER:$CI_COMMIT_TAG"
-      set -- $dests
-      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile Dockerfile "$@"
+      tags="-t $IMAGE_SERVER:$CI_COMMIT_SHORT_SHA"
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && tags="$tags -t $IMAGE_SERVER:latest"
+      [ -n "$CI_COMMIT_TAG" ] && tags="$tags -t $IMAGE_SERVER:$CI_COMMIT_TAG"
+      # shellcheck disable=SC2086
+      docker buildx build --push -f Dockerfile \
+        --cache-from type=registry,ref=$IMAGE_SERVER:cache \
+        --cache-to type=registry,ref=$IMAGE_SERVER:cache,mode=max \
+        $tags .
 
 build:agent:
   extends: .build-template
   script:
     - |
-      dests="--destination $IMAGE_AGENT:$CI_COMMIT_SHORT_SHA"
-      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && dests="$dests --destination $IMAGE_AGENT:latest"
-      [ -n "$CI_COMMIT_TAG" ] && dests="$dests --destination $IMAGE_AGENT:$CI_COMMIT_TAG"
-      set -- $dests
-      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile agent/Dockerfile "$@"
+      tags="-t $IMAGE_AGENT:$CI_COMMIT_SHORT_SHA"
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && tags="$tags -t $IMAGE_AGENT:latest"
+      [ -n "$CI_COMMIT_TAG" ] && tags="$tags -t $IMAGE_AGENT:$CI_COMMIT_TAG"
+      # shellcheck disable=SC2086
+      docker buildx build --push -f agent/Dockerfile \
+        --cache-from type=registry,ref=$IMAGE_AGENT:cache \
+        --cache-to type=registry,ref=$IMAGE_AGENT:cache,mode=max \
+        $tags .
 
 # ---------------------------------------------------------------- release ---
 
