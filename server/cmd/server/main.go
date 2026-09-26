@@ -44,6 +44,14 @@ func main() {
 	}
 	defer st.Close()
 
+	// One-shot migration: register repo URLs already used by applications so
+	// the Repositories page reflects them (ArgoCD order: repo then app).
+	if err := st.BackfillRepositoryRegistry(context.Background()); err != nil {
+		log.Warn("repository registry backfill failed", "error", err)
+	} else if repos, err := st.ListRepositories(context.Background()); err == nil {
+		log.Info("repository registry ready", "repositories", len(repos))
+	}
+
 	rb, err := rbac.FromFile(*rbacFile)
 	if err != nil {
 		log.Error("failed to load RBAC", "error", err)

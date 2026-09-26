@@ -298,6 +298,7 @@ form label.row input { margin-top: 0; }
 .badge.small { font-size: 11px; padding: 1px 7px; }
 .badge.ok { color: #7ee2b4; background: rgba(46, 160, 67, .12); border-color: rgba(52, 211, 153, .35); }
 .badge.drift { color: #ffb3ac; background: rgba(210, 153, 34, .14); border-color: rgba(248, 81, 73, .5); }
+.badge.stuck { color: #ffd28a; background: rgba(234, 88, 12, .12); border-color: rgba(249, 115, 22, .5); }
 .badge.error, .badge.failed { color: #ffb3ac; background: rgba(248, 81, 73, .12); border-color: rgba(248, 81, 73, .4); }
 .badge.unknown, .badge.pending { color: var(--muted); background: rgba(138, 147, 163, .1); border-color: var(--border); }
 

@@ -52,11 +52,15 @@ spec:
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if or .Values.database.dsn .Values.operatorAuth.user }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak }}
           env:
             {{- if .Values.database.dsn }}
             - name: ANSIBLEHUB_DB
               value: {{ .Values.database.dsn | quote }}
+            {{- end }}
+            {{- if .Values.healing.maxDriftStreak }}
+            - name: ANH_HEAL_MAX_STREAK
+              value: {{ .Values.healing.maxDriftStreak | quote }}
             {{- end }}
             {{- if .Values.operatorAuth.user }}
             - name: ANSIBLEHUB_OPERATOR_USER

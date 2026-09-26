@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS assignments (
   app_id       INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
   autoheal     INTEGER,
   last_check_at TEXT NOT NULL DEFAULT '',
+  consecutive_drift INTEGER NOT NULL DEFAULT 0,
+  stuck         INTEGER NOT NULL DEFAULT 0,
+  stuck_at      TEXT NOT NULL DEFAULT '',
   created_at   TEXT NOT NULL,
   PRIMARY KEY (instance_id, app_id)
 );
@@ -157,6 +160,9 @@ CREATE TABLE IF NOT EXISTS assignments (
   app_id       BIGINT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
   autoheal     INTEGER,
   last_check_at TEXT NOT NULL DEFAULT '',
+  consecutive_drift INTEGER NOT NULL DEFAULT 0,
+  stuck         INTEGER NOT NULL DEFAULT 0,
+  stuck_at      TEXT NOT NULL DEFAULT '',
   created_at   TEXT NOT NULL,
   PRIMARY KEY (instance_id, app_id)
 );
@@ -260,6 +266,17 @@ func openPostgres(dsn string) (Store, error) {
 	if _, err := db.Exec(pgSchema); err != nil {
 		return nil, fmt.Errorf("postgres schema: %w", err)
 	}
+	// Postgres has no CREATE IF NOT EXISTS column; backfill columns that older
+	// databases predate. (SQLite equivalents live in migrate().)
+	for _, ddl := range []string{
+		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS consecutive_drift INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS stuck INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS stuck_at TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			return nil, fmt.Errorf("postgres migrate: %w", err)
+		}
+	}
 	return &sqlstore{db: db, driver: "pgx"}, nil
 }
 
@@ -318,6 +335,9 @@ func migrate(db *sql.DB) error {
 	adds := []col{
 		{"assignments", "autoheal", "ALTER TABLE assignments ADD COLUMN autoheal INTEGER"},
 		{"assignments", "last_check_at", "ALTER TABLE assignments ADD COLUMN last_check_at TEXT NOT NULL DEFAULT ''"},
+		{"assignments", "consecutive_drift", "ALTER TABLE assignments ADD COLUMN consecutive_drift INTEGER NOT NULL DEFAULT 0"},
+		{"assignments", "stuck", "ALTER TABLE assignments ADD COLUMN stuck INTEGER NOT NULL DEFAULT 0"},
+		{"assignments", "stuck_at", "ALTER TABLE assignments ADD COLUMN stuck_at TEXT NOT NULL DEFAULT ''"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output", "ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output_text", "ALTER TABLE runs ADD COLUMN output_text TEXT NOT NULL DEFAULT ''"},
@@ -659,11 +679,48 @@ func (s *sqlstore) DeleteRepository(ctx context.Context, id int64) error {
 	return nil
 }
 
+// EnsureRepositoryByURL makes the registry self-healing (ArgoCD style): an
+// application created against an unregistered URL gets a placeholder row, so
+// its connection always resolves at checkin time.
+func (s *sqlstore) EnsureRepositoryByURL(ctx context.Context, url string) (model.Repository, error) {
+	r, err := s.GetRepositoryByURL(ctx, url)
+	if err == nil {
+		return r, nil
+	}
+	r, err = s.CreateRepository(ctx, model.Repository{Name: url, URL: url})
+	if err == nil {
+		return r, nil
+	}
+	// Lost a create race / duplicate — re-read the winner.
+	return s.GetRepositoryByURL(ctx, url)
+}
+
+// BackfillRepositoryRegistry registers every repo_url already referenced by
+// applications that has no registry row yet (one-shot migration for
+// pre-registry databases).
+func (s *sqlstore) BackfillRepositoryRegistry(ctx context.Context) error {
+	apps, err := s.ListApplications(ctx)
+	if err != nil {
+		return fmt.Errorf("backfill list apps: %w", err)
+	}
+	for _, app := range apps {
+		if app.RepoURL == "" {
+			continue
+		}
+		if _, err := s.EnsureRepositoryByURL(ctx, app.RepoURL); err != nil {
+			return fmt.Errorf("backfill %s: %w", app.RepoURL, err)
+		}
+	}
+	return nil
+}
+
 // ---- Assignments ----
+
+const assignmentCols = `instance_id, app_id, autoheal, last_check_at, consecutive_drift, stuck, stuck_at, created_at`
 
 func (s *sqlstore) ListAssignments(ctx context.Context, instanceID string) ([]model.Assignment, error) {
 	rows, err := s.query(ctx,
-		`SELECT instance_id, app_id, autoheal, last_check_at, created_at FROM assignments WHERE instance_id=? ORDER BY app_id`, instanceID)
+		`SELECT `+assignmentCols+` FROM assignments WHERE instance_id=? ORDER BY app_id`, instanceID)
 	if err != nil {
 		return nil, wrap(err, "list assignments")
 	}
@@ -681,7 +738,7 @@ func (s *sqlstore) ListAssignments(ctx context.Context, instanceID string) ([]mo
 
 func (s *sqlstore) AssignmentsForApp(ctx context.Context, appID int64) ([]model.Assignment, error) {
 	rows, err := s.query(ctx,
-		`SELECT instance_id, app_id, autoheal, last_check_at, created_at FROM assignments WHERE app_id=?`, appID)
+		`SELECT `+assignmentCols+` FROM assignments WHERE app_id=?`, appID)
 	if err != nil {
 		return nil, wrap(err, "list app assignments")
 	}
@@ -697,18 +754,30 @@ func (s *sqlstore) AssignmentsForApp(ctx context.Context, appID int64) ([]model.
 	return out, rows.Err()
 }
 
+func (s *sqlstore) GetAssignment(ctx context.Context, instanceID string, appID int64) (model.Assignment, error) {
+	a, err := scanAssignment(s.queryRow(ctx,
+		`SELECT `+assignmentCols+` FROM assignments WHERE instance_id=? AND app_id=?`, instanceID, appID))
+	if err != nil {
+		return a, wrap(err, "get assignment")
+	}
+	return a, nil
+}
+
 func scanAssignment(row interface{ Scan(...any) error }) (model.Assignment, error) {
 	var (
-		a        model.Assignment
-		autoheal *bool
-		last, cr string
+		a            model.Assignment
+		autoheal     *bool
+		stuck        int
+		last, sa, cr string
 	)
-	err := row.Scan(&a.InstanceID, &a.AppID, &autoheal, &last, &cr)
+	err := row.Scan(&a.InstanceID, &a.AppID, &autoheal, &last, &a.ConsecutiveDrift, &stuck, &sa, &cr)
 	if err != nil {
 		return a, err
 	}
 	a.AutoHeal = autoheal
 	a.LastCheckAt = parseTime(last)
+	a.Stuck = stuck != 0
+	a.StuckAt = parseTime(sa)
 	a.CreatedAt = parseTime(cr)
 	return a, nil
 }
@@ -753,6 +822,48 @@ func (s *sqlstore) ClearAssignmentAutoHeal(ctx context.Context, instanceID strin
 		`UPDATE assignments SET autoheal=NULL WHERE instance_id=? AND app_id=?`, instanceID, appID)
 	if err != nil {
 		return fmt.Errorf("clear assignment autoheal: %w", err)
+	}
+	return nil
+}
+
+// ---- healing guard (drift-streak / stuck) ----
+
+// BumpDriftStreak increments the non-convergence counter for an assignment and
+// returns its new value. Callers decide when the threshold is crossed.
+func (s *sqlstore) BumpDriftStreak(ctx context.Context, instanceID string, appID int64) (int, error) {
+	if _, err := s.exec(ctx,
+		`UPDATE assignments SET consecutive_drift=consecutive_drift+1 WHERE instance_id=? AND app_id=?`, instanceID, appID); err != nil {
+		return 0, fmt.Errorf("bump drift streak: %w", err)
+	}
+	var n int
+	if err := s.queryRow(ctx,
+		`SELECT consecutive_drift FROM assignments WHERE instance_id=? AND app_id=?`, instanceID, appID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("read drift streak: %w", err)
+	}
+	return n, nil
+}
+
+// ResetHealState clears the non-convergence counter and any stuck flag, so a
+// converged (or operator-rearmed) assignment can autoheal again.
+func (s *sqlstore) ResetHealState(ctx context.Context, instanceID string, appID int64) error {
+	_, err := s.exec(ctx,
+		`UPDATE assignments SET consecutive_drift=0, stuck=0, stuck_at='' WHERE instance_id=? AND app_id=?`, instanceID, appID)
+	if err != nil {
+		return fmt.Errorf("reset heal state: %w", err)
+	}
+	return nil
+}
+
+// SetStuck flags (or clears) an assignment as non-convergent.
+func (s *sqlstore) SetStuck(ctx context.Context, instanceID string, appID int64, stuck bool) error {
+	v, at := 0, ""
+	if stuck {
+		v, at = 1, tm(nowCtx(ctx))
+	}
+	_, err := s.exec(ctx,
+		`UPDATE assignments SET stuck=?, stuck_at=? WHERE instance_id=? AND app_id=?`, v, at, instanceID, appID)
+	if err != nil {
+		return fmt.Errorf("set stuck: %w", err)
 	}
 	return nil
 }

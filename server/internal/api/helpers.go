@@ -40,8 +40,12 @@ type AppStatus struct {
 	Application model.Application `json:"application"`
 	AutoHeal    bool              `json:"autoheal"`     // effective value (override or app default)
 	AutoHealSet bool              `json:"autoheal_set"` // true when an explicit override exists
-	LatestCheck model.Run         `json:"latest_check"`
-	LatestApply model.Run         `json:"latest_apply,omitempty"`
-	HasCheck    bool              `json:"has_check"`
-	LastCheckAt time.Time         `json:"last_check_at,omitempty"`
+	// Stuck marks autoheal as blocked: the last max-drifting apply cycles did
+	// not converge, so the server stopped asking the agent to apply.
+	Stuck       bool      `json:"stuck"`
+	StuckAt     time.Time `json:"stuck_at,omitempty"`
+	LatestCheck model.Run `json:"latest_check"`
+	LatestApply model.Run `json:"latest_apply,omitempty"`
+	HasCheck    bool      `json:"has_check"`
+	LastCheckAt time.Time `json:"last_check_at,omitempty"`
 }

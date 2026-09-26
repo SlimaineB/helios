@@ -46,10 +46,18 @@ type Store interface {
 	CreateRepository(ctx context.Context, in model.Repository) (model.Repository, error)
 	UpdateRepository(ctx context.Context, in model.Repository) error
 	DeleteRepository(ctx context.Context, id int64) error
+	// EnsureRepositoryByURL guarantees a registry row exists for url,
+	// creating a placeholder (name = url) when missing — ArgoCD-style, an
+	// application's repoURL always resolves in the registry.
+	EnsureRepositoryByURL(ctx context.Context, url string) (model.Repository, error)
+	// BackfillRepositoryRegistry is a one-shot migration: it registers every
+	// repo_url already used by applications but absent from the registry.
+	BackfillRepositoryRegistry(ctx context.Context) error
 
 	// Assignments (instance <-> application)
 	ListAssignments(ctx context.Context, instanceID string) ([]model.Assignment, error)
 	AssignmentsForApp(ctx context.Context, appID int64) ([]model.Assignment, error)
+	GetAssignment(ctx context.Context, instanceID string, appID int64) (model.Assignment, error)
 	Assign(ctx context.Context, instanceID string, appID int64) error
 	Unassign(ctx context.Context, instanceID string, appID int64) error
 	SetAssignmentAutoHeal(ctx context.Context, instanceID string, appID int64, autoHeal bool) error
@@ -57,6 +65,11 @@ type Store interface {
 	// TouchCheck records the moment a check result was received, even when the
 	// run itself was deduplicated away.
 	TouchCheck(ctx context.Context, instanceID string, appID int64, at time.Time) error
+	// Healing guard: tracks non-converging autoheal cycles (drift-streak) so
+	// the server can stop applying on a playbook that never converges.
+	BumpDriftStreak(ctx context.Context, instanceID string, appID int64) (int, error)
+	ResetHealState(ctx context.Context, instanceID string, appID int64) error
+	SetStuck(ctx context.Context, instanceID string, appID int64, stuck bool) error
 
 	// Runs
 	ListRuns(ctx context.Context, f model.RunFilter) ([]model.Run, error)

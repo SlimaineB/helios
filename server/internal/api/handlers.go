@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -22,10 +23,26 @@ type Server struct {
 	mux           *http.ServeMux
 	opAuth        *OpAuth
 	secureCookies bool
+	// maxHealStreak is the number of consecutive apply→after-apply cycles that
+	// may fail to converge before an assignment is flagged stuck (autoheal
+	// stops until the playbook converges again).
+	maxHealStreak int
 }
 
 func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *Server {
-	s := &Server{store: st, log: log, mux: http.NewServeMux(), opAuth: opAuth, secureCookies: secureCookies}
+	s := &Server{
+		store:         st,
+		log:           log,
+		mux:           http.NewServeMux(),
+		opAuth:        opAuth,
+		secureCookies: secureCookies,
+		maxHealStreak: 3,
+	}
+	if v := os.Getenv("ANH_HEAL_MAX_STREAK"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			s.maxHealStreak = n
+		}
+	}
 	s.routes()
 	return s
 }
@@ -142,6 +159,8 @@ func (s *Server) appsForInstance(ctx context.Context, instanceID string) ([]AppS
 		as := AppStatus{
 			Application: app,
 			AutoHeal:    effectiveAutoHeal(app, a),
+			Stuck:       a.Stuck,
+			StuckAt:     a.StuckAt,
 			LastCheckAt: a.LastCheckAt,
 		}
 		if a.AutoHeal != nil {
@@ -354,6 +373,11 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 	if in.Vars == "" {
 		in.Vars = "{}"
 	}
+	// Ensure the repo is registered (ArgoCD-style: app → registry upsert).
+	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to register repository: "+err.Error())
+		return
+	}
 	app, err := s.store.CreateApplication(r.Context(), in)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) || strings.Contains(err.Error(), "UNIQUE") {
@@ -383,6 +407,9 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	in.ID = old.ID
+	if in.RepoURL == "" {
+		in.RepoURL = old.RepoURL
+	}
 	if in.Branch == "" {
 		in.Branch = old.Branch
 	}
@@ -391,6 +418,11 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 	}
 	if in.Vars == "" {
 		in.Vars = "{}"
+	}
+	// Keep the registry in sync with the (possibly re-pointed) repo URL.
+	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to register repository: "+err.Error())
+		return
 	}
 	if err := s.store.UpdateApplication(r.Context(), in); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -580,6 +612,11 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		app.AutoHeal = effectiveAutoHeal(app, a)
+		// A non-converging assignment is stuck: keep drifting checks but stop
+		// the apply side, so the box isn't pinned in an apply loop forever.
+		if a.Stuck {
+			app.AutoHeal = false
+		}
 		// Resolve the git connection from the repositories registry so the
 		// agent can authenticate against private repos.
 		if repo, err := s.store.GetRepositoryByURL(r.Context(), app.RepoURL); err == nil {
@@ -657,6 +694,32 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		run.FinishedAt = time.Now().UTC()
 	}
 
+	// Healing guard: an after-apply check that still drifts means the apply
+	// did not converge. After maxHealStreak consecutive failures, flag the
+	// assignment stuck so the agent stops applying (drift checks continue).
+	// Any converged check resets the counter and lifts the flag.
+	if body.Mode == "check" {
+		if body.Trigger == "after_apply" && body.Status == model.RunDrift {
+			if app, err := s.store.GetApplication(r.Context(), body.AppID); err == nil {
+				if a, err := s.store.GetAssignment(r.Context(), inst.ID, body.AppID); err == nil && effectiveAutoHeal(app, a) {
+					streak, _ := s.store.BumpDriftStreak(r.Context(), inst.ID, body.AppID)
+					if streak >= s.maxHealStreak {
+						if err := s.store.SetStuck(r.Context(), inst.ID, body.AppID, true); err != nil {
+							s.log.Warn("failed to flag assignment stuck", "instance", inst.ID, "app", body.AppID, "error", err)
+						} else {
+							s.log.Warn("assignment stuck: autoheal did not converge",
+								"instance", inst.ID, "app", body.AppID, "streak", streak)
+						}
+					}
+				}
+			}
+		} else if body.Status == model.RunOK {
+			if err := s.store.ResetHealState(r.Context(), inst.ID, body.AppID); err != nil {
+				s.log.Warn("failed to reset heal state", "instance", inst.ID, "app", body.AppID, "error", err)
+			}
+		}
+	}
+
 	// The periodic/repo/after-apply checks poll constantly at fixed intervals,
 	// so most of them repeat an identical state. Skip storing a new run when
 	// nothing changed since the last recorded check — but always keep
@@ -668,6 +731,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "deduped": true})
+			return
+		}
+	}
+	// Idempotent autoheal applies repeat the same state each non-converging
+	// cycle; dedupe them the same way so a stuck app can't grow the DB forever.
+	if body.Mode == "apply" && body.Trigger != "command" {
+		if prev, err := s.store.LatestRun(r.Context(), inst.ID, body.AppID, "apply"); err == nil && sameRunState(prev, run) {
 			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "deduped": true})
 			return
 		}

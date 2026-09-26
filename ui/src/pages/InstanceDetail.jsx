@@ -54,6 +54,17 @@ export default function InstanceDetail() {
     }
   }
 
+  // rearm clears the stuck flag server-side and lets autoheal try again.
+  const rearm = async (app) => {
+    try {
+      setError('')
+      await api.setAutoHeal(id, app.application.id, true)
+      refresh()
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   if (!inst) return <div className="muted">Loading…</div>
   const online =
     inst.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
@@ -90,17 +101,29 @@ export default function InstanceDetail() {
         <div className="card" key={a.application.id}>
           <div className="card-head">
             <strong>{a.application.name}</strong>
+            {a.stuck && <Badge state="stuck" label="stuck" small />}
             <StatusIcon state={a.latest_check?.status || 'unknown'} size={16} />
             <Badge state={a.latest_check?.status || 'unknown'} label={a.latest_check?.status || 'no check yet'} small />
-            <label className="switch" title="auto heal / re-apply on drift detection">
-              <input
-                type="checkbox"
-                checked={a.autoheal}
+            {a.stuck ? (
+              <button
+                className="small warn"
+                title="re-enable autoheal once the playbook is fixed"
                 disabled={!can('instances', 'update')}
-                onChange={() => toggleAutoHeal(a)}
-              />
-              <span className="slider" />
-            </label>
+                onClick={() => rearm(a)}
+              >
+                Rearm
+              </button>
+            ) : (
+              <label className="switch" title="auto heal / re-apply on drift detection">
+                <input
+                  type="checkbox"
+                  checked={a.autoheal}
+                  disabled={!can('instances', 'update')}
+                  onChange={() => toggleAutoHeal(a)}
+                />
+                <span className="slider" />
+              </label>
+            )}
             <span className="sub">{a.autoheal ? (a.autoheal_set ? 'auto-sync on (override)' : 'auto-sync on') : 'auto-sync off'}</span>
             <span className="mono muted">{a.application.repo_url}</span>
             <span className="actions">

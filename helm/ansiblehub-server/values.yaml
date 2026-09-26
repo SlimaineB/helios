@@ -38,6 +38,13 @@ ingress:
 database:
   dsn: ""
 
+# Drift healing policy. After `maxDriftStreak` consecutive apply→after-apply
+# cycles that failed to converge, the assignment is flagged "stuck": the agent
+# stops applying (drift checks continue) until the playbook converges again or
+# an operator re-arms autoheal.
+healing:
+  maxDriftStreak: 3
+
 # HTTP Basic auth protecting the operator UI + API. Empty -> no auth (open).
 # Learn the password from a secret, e.g. existingSecret with key "operator-password".
 operatorAuth:

@@ -91,7 +91,8 @@ install_binary() {
     esac
     tmp="$(mktemp -d)"
     curl -fsSL "$DOWNLOAD_URL" -o "$tmp/pkg.tar.gz"
-    tar -xzf "$tmp/pkg.tar.gz" -C "$tmp" --wildcards "$bin"
+    # GNU tar prefixes members with "./"; match by basename.
+    tar -xzf "$tmp/pkg.tar.gz" -C "$tmp" --wildcards "*$bin"
     install -m755 "$tmp/$bin" /usr/local/bin/ansiblehub-agent
     rm -rf "$tmp"
 }

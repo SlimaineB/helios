@@ -89,6 +89,12 @@ export default function Instances() {
     await act(`${inst.id}:${app.application.id}:heal`, api.setAutoHeal, inst.id, app.application.id, !app.autoheal)
   }
 
+  // rearm re-enables autoheal for a stuck assignment: the server clears the
+  // stuck flag and gives the heal loop a fresh chance to converge.
+  const rearm = async (inst, app) => {
+    await act(`${inst.id}:${app.application.id}:heal`, api.setAutoHeal, inst.id, app.application.id, true)
+  }
+
   const appKey = (inst, app, suffix) => `${inst.id}:${app.application.id}:${suffix}`
 
   const stats = {
@@ -233,7 +239,16 @@ export default function Instances() {
                   </>
                 ) : (
                   <>
-                    <td>{app.application.name}</td>
+                    <td>
+                      {app.application.name}
+                      {app.stuck && (
+                        <Badge
+                          state="stuck"
+                          label="stuck"
+                          small
+                        />
+                      )}
+                    </td>
                     <td>
                       <span className="state-cell">
                         <StatusIcon state={app.latest_check?.status || 'unknown'} />
@@ -261,18 +276,32 @@ export default function Instances() {
                     </td>
                     <td className="muted">{fmtTime(app.last_check_at || app.latest_check?.finished_at)}</td>
                     <td>
-                      <label className="switch" title="auto heal / re-apply on drift detection">
-                        <input
-                          type="checkbox"
-                          checked={app.autoheal}
-                          disabled={
-                            busy[`${inst.id}:${app.application.id}:heal`] ||
-                            !can('instances', 'update')
-                          }
-                          onChange={() => toggleAutoHeal(inst, app)}
-                        />
-                        <span className="slider" />
-                      </label>
+                      {app.stuck ? (
+                        <span className="row small">
+                          <button
+                            className="small warn"
+                            title="re-enable autoheal once the playbook is fixed"
+                            disabled={!can('instances', 'update')}
+                            onClick={() => rearm(inst, app)}
+                          >
+                            Rearm
+                          </button>
+                          <span className="muted">blocked · no convergence</span>
+                        </span>
+                      ) : (
+                        <label className="switch" title="auto heal / re-apply on drift detection">
+                          <input
+                            type="checkbox"
+                            checked={app.autoheal}
+                            disabled={
+                              busy[`${inst.id}:${app.application.id}:heal`] ||
+                              !can('instances', 'update')
+                            }
+                            onChange={() => toggleAutoHeal(inst, app)}
+                          />
+                          <span className="slider" />
+                        </label>
+                      )}
                       <span className={`sub ${app.autoheal ? '' : 'muted'}`}>
                         {busy[`${inst.id}:${app.application.id}:heal`]
                           ? '…'

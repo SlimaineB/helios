@@ -69,6 +69,43 @@ echo "manual change breaks the state" > /tmp/ansiblehub-demo/state.txt
 The next check (≤ 5s) marks agent-2 **Drift** in the UI. Click **Sync** to
 re-apply, or re-enable `autoheal: true` on the app to let it self-heal.
 
+### Convergence & idempotency pitfalls
+
+Drift is defined as *at least one task that would change something in
+`--check` mode* (`ansible.go`). Two classic ways to build an app that can
+**never** converge:
+
+- a `command:`/`shell:` task **without** a `creates:`/`removes:` guard —
+  `command` always reports `changed` in check mode;
+- a `get_url`/`unarchive` pair against an artifact that **changes every run**
+  (nightly/rolling builds) or without an idempotency marker.
+
+A well-written playbook converges on the first autoheal: the `get_url` +
+`unarchive` example in `examples/playbooks/archive/` downloads once and gates
+extraction behind a `stat` marker, so the post-apply check reports `ok`.
+`examples/playbooks/cmd/` is the counter-example: `command`/`shell` tasks are
+`skipped` by Ansible in check mode, so it renders a template whose content
+embeds a fresh timestamp on *every* run — check mode reports "changed"
+forever, and applying never converges.
+
+**Heal guard** (`server`): an autoheal is applied at most once per `2 × poll`
+per app (agent cooldown). If the mandatory post-apply check still reports
+drift for `healing.maxDriftStreak` consecutive cycles (default **3**, env
+`ANH_HEAL_MAX_STREAK`), the assignment is flagged **stuck**: the server stops
+asking the agent to apply (drift checks continue), the UI shows a `stuck`
+badge + a **Rearm** button, and the counter resets automatically the moment a
+check returns `ok`. Drift/heal runs that repeat an identical state are
+deduplicated so a stuck app cannot grow the run history forever.
+
+Run the loop-safety harness against the compose setup:
+
+```sh
+docker compose up -d --build
+./hack/looptest.sh
+# 1/2 archive-test: converges, single apply (no "not sync" loop)
+# 2/2 cmd-test:     flagged stuck, applies stop
+```
+
 ## Components
 
 - **`server/`** — Go. REST API + storage. `store.Open(dsn)` selects the
@@ -120,6 +157,12 @@ GET    /api/v1/repositories
 POST   /api/v1/repositories
 PUT    /api/v1/repositories/{repoId}
 DELETE /api/v1/repositories/{repoId}
+```
+> Repositories = the git-connections registry, referenced by applications via
+> `repo_url` (ArgoCD model: register the repo, then point an app at it). It is
+> **self-maintained** in lax-first mode: creating/updating an app with an
+> unregistered URL auto-inserts a placeholder row, and `server` backfills rows
+> for pre-existing apps at startup.
 
 POST   /api/v1/agent/checkin                          (Bearer) heartbeat → apps + commands
 POST   /api/v1/agent/status                           (Bearer) run result

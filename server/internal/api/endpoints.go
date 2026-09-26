@@ -94,6 +94,13 @@ func (s *Server) handleSetAutoHeal(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// (Re)arming autoheal clears a stuck flag: the operator is telling us the
+	// playbook was fixed, so give the heal loop a fresh chance to converge.
+	if *body.Enabled {
+		if err := s.store.ResetHealState(r.Context(), instID, appID); err != nil {
+			s.log.Warn("failed to clear stuck on rearm", "instance", instID, "app", appID, "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": *body.Enabled})
 
 	// Re-evaluate instance state in case the policy change affects drift.
