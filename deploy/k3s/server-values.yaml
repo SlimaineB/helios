@@ -1,0 +1,36 @@
+# helm values for the ansiblehub-server chart (helm/ansiblehub-server).
+# Secrets are intentionally absent: pass the operator password on the CLI, or
+# pre-create a Secret with key `operator-password` and set operatorAuth.existingSecret.
+replicaCount: 1
+
+image:
+  repository: 192.168.1.21:30500/ansiblehub/server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: LoadBalancer      # Cilium LB (L2 announcement) allocates 192.168.1.10x
+  port: 80
+  targetPort: 8080
+
+# Backend: Postgres deployed with postgres.yaml (in-cluster ClusterIP). The
+# server overrides its -db flag when ANSIBLEHUB_DB is set.
+database:
+  dsn: postgres://ansiblehub:ansiblehub@ansiblehub-db:5432/ansiblehub?sslmode=disable
+
+# Stop applying after this many consecutive failed convergence cycles.
+healing:
+  maxDriftStreak: 3
+
+# Operator Basic auth for the UI/API.
+operatorAuth:
+  user: admin
+  # password: set via --set-string operatorAuth.password=<secret>
+  # existingSecret: my-secret   # key `operator-password`
+
+ingress:
+  enabled: false
+
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 512Mi}

@@ -99,13 +99,19 @@ install_binary() {
 
 write_config() {
     mkdir -p /etc/ansiblehub
+    # AUTOHEAL is accepted as 0|1 (and true|false); the config is YAML bool.
+    if [ "$AUTOHEAL" = "1" ] || [ "$AUTOHEAL" = "true" ]; then
+        AH_BOOL=true
+    else
+        AH_BOOL=false
+    fi
     cat > /etc/ansiblehub/agent.yaml <<EOF
 server: ${SERVER}
 token: ${TOKEN}
 instance_id: ${INSTANCE_ID}
 state_dir: ${STATE_DIR}
 poll_interval: 5m
-autoheal: ${AUTOHEAL}
+autoheal: ${AH_BOOL}
 EOF
     chmod 600 /etc/ansiblehub/agent.yaml
 }
