@@ -85,7 +85,15 @@ type Assignment struct {
 	// LastCheckAt is the wall-clock time of the most recent check run reported
 	// by the agent, kept fresh even when identical auto-checks are deduped.
 	LastCheckAt time.Time `json:"last_check_at,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	// ConsecutiveDrift counts the apply→after-apply cycles that failed to
+	// converge. Internal: guarded server-side, never sent to clients.
+	ConsecutiveDrift int `json:"-"`
+	// Stuck marks an assignment whose autoheal could not converge (see
+	// ConsecutiveDrift). While stuck, the agent stops applying until the
+	// playbook converges again.
+	Stuck     bool      `json:"stuck"`
+	StuckAt   time.Time `json:"stuck_at,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ChangedTask struct {

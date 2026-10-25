@@ -7,6 +7,8 @@ WORKDIR /srv
 # highest matching tag is what the agent checks out. "latest" is deliberately
 # non-semver (must be ignored by ranges).
 COPY examples/playbooks/demo /tmp/demo-src
+COPY examples/playbooks/archive /tmp/archive-src
+COPY examples/playbooks/cmd /tmp/cmd-src
 RUN set -e \
     && G() { git -C /tmp/demo-src "$@"; } \
     && C() { G -c user.email=boot@ansiblehub -c user.name=boot commit -qam "$1"; } \
@@ -20,6 +22,18 @@ RUN set -e \
     && git clone -q --bare /tmp/demo-src /srv/demo.git \
     && git --git-dir=/srv/demo.git update-server-info \
     && touch /srv/demo.git/git-daemon-export-ok \
-    && rm -rf /tmp/demo-src
+    && rm -rf /tmp/demo-src \
+    && mkdir -p /srv/static \
+    && cp /tmp/archive-src/asset/hello.tar.gz /srv/static/hello.tar.gz \
+    && rm -rf /tmp/archive-src/asset \
+    && A() { d="$1"; n="$2"; git -C "$d" init -b main -q \
+        && git -C "$d" -c user.email=boot@ansiblehub -c user.name=boot add -A \
+        && git -C "$d" -c user.email=boot@ansiblehub -c user.name=boot commit -qm init \
+        && git clone -q --bare "$d" "/srv/$n.git" \
+        && git --git-dir="/srv/$n.git" update-server-info \
+        && touch "/srv/$n.git/git-daemon-export-ok" \
+        && rm -rf "$d"; } \
+    && A /tmp/archive-src archive \
+    && A /tmp/cmd-src cmd
 EXPOSE 8000
 CMD ["python3", "-m", "http.server", "8000", "--directory", "/srv"]

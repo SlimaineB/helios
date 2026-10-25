@@ -1,0 +1,53 @@
+# Dumb-HTTP git server (built from hack/repo-server/Dockerfile). Serves the
+# baked-in example playbooks (demo.git, archive.git, cmd.git) plus static
+# assets. ClusterIP is enough while all agents run inside the cluster; expose
+# as LoadBalancer if off-cluster hosts need to pull from this repo server.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ansiblehub-repo
+  namespace: ansiblehub
+  labels:
+    app: ansiblehub-repo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ansiblehub-repo
+  template:
+    metadata:
+      labels:
+        app: ansiblehub-repo
+    spec:
+      containers:
+        - name: repo
+          image: 192.168.1.21:30500/ansiblehub/repo:latest
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /demo.git/HEAD
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /demo.git/HEAD
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ansiblehub-repo
+  namespace: ansiblehub
+spec:
+  selector:
+    app: ansiblehub-repo
+  ports:
+    - port: 8000
+      targetPort: 8000

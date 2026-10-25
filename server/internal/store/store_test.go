@@ -19,6 +19,61 @@ func TestSqliteStoreCRUD(t *testing.T) {
 	exerciseStore(t, st)
 }
 
+func TestRepositoryUpsert(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer st.Close()
+	exerciseUpsert(t, st)
+
+	if dsn := os.Getenv("ANSIBLEHUB_TEST_PG"); dsn != "" {
+		pg, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("open postgres: %v", err)
+		}
+		defer pg.Close()
+		exerciseUpsert(t, pg)
+	}
+}
+
+func exerciseUpsert(t *testing.T, st Store) {
+	ctx := context.Background()
+
+	r1, err := st.EnsureRepositoryByURL(ctx, "http://example.com/a.git")
+	if err != nil || r1.ID == 0 || r1.Name != "http://example.com/a.git" {
+		t.Fatalf("ensure create: err=%v %+v", err, r1)
+	}
+	r2, err := st.EnsureRepositoryByURL(ctx, "http://example.com/a.git")
+	if err != nil || r2.ID != r1.ID {
+		t.Fatalf("ensure idempotent: err=%v r2=%d want=%d", err, r2.ID, r1.ID)
+	}
+
+	// An app whose repo_url predates the registry is picked up by backfill.
+	app, err := st.CreateApplication(ctx, model.Application{
+		Name: "legacy", RepoURL: "http://example.com/b.git", Branch: "main",
+		Path: "site.yml", Vars: "{}",
+	})
+	if err != nil || app.ID == 0 {
+		t.Fatalf("create legacy app: %v", err)
+	}
+	if err := st.BackfillRepositoryRegistry(ctx); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	repos, err := st.ListRepositories(ctx)
+	if err != nil {
+		t.Fatalf("list repos: %v", err)
+	}
+	byURL := map[string]int64{}
+	for _, r := range repos {
+		byURL[r.URL] = r.ID
+	}
+	if byURL["http://example.com/a.git"] == 0 || byURL["http://example.com/b.git"] == 0 {
+		t.Fatalf("registry not complete after backfill: %+v", byURL)
+	}
+}
+
 // TestPostgresStoreCRUD runs the same battery against a live Postgres when
 // ANSIBLEHUB_TEST_PG is set (e.g. postgres://u:p@localhost:5432/ansiblehub_test).
 func TestPostgresStoreCRUD(t *testing.T) {
@@ -97,6 +152,27 @@ func exerciseStore(t *testing.T, st Store) {
 	as, err := st.ListAssignments(ctx, inst.ID)
 	if err != nil || len(as) != 1 || as[0].AutoHeal == nil || !*as[0].AutoHeal {
 		t.Fatalf("list assignments: %v %+v", err, as)
+	}
+
+	// Healing guard: streak bumps, stuck flag, reset.
+	for i, want := range []int{1, 2, 3} {
+		n, err := st.BumpDriftStreak(ctx, inst.ID, app.ID)
+		if err != nil || n != want {
+			t.Fatalf("bump drift streak #%d: err=%v n=%d want=%d", i+1, err, n, want)
+		}
+	}
+	if err := st.SetStuck(ctx, inst.ID, app.ID, true); err != nil {
+		t.Fatalf("set stuck: %v", err)
+	}
+	a, err := st.GetAssignment(ctx, inst.ID, app.ID)
+	if err != nil || !a.Stuck || a.ConsecutiveDrift != 3 || a.StuckAt.IsZero() {
+		t.Fatalf("stuck assignment: err=%v %+v", err, a)
+	}
+	if err := st.ResetHealState(ctx, inst.ID, app.ID); err != nil {
+		t.Fatalf("reset heal state: %v", err)
+	}
+	if a, _ := st.GetAssignment(ctx, inst.ID, app.ID); a.Stuck || a.ConsecutiveDrift != 0 || !a.StuckAt.IsZero() {
+		t.Fatalf("expected stuck cleared, got %+v", a)
 	}
 
 	vars := []model.Variable{

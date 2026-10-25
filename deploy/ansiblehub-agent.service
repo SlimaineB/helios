@@ -9,12 +9,9 @@ ExecStart=/usr/local/bin/ansiblehub-agent -config /etc/ansiblehub/agent.yaml
 Environment=HOME=/root
 Restart=always
 RestartSec=10
-# Runtime hardening
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/ansiblehub /tmp
-PrivateTmp=true
-NoNewPrivileges=true
+# A configuration-management agent runs arbitrary playbooks as root: it must
+# create users, write /etc and persist state under /tmp, so no filesystem or
+# tmp namespace restrictions here.
 
 [Install]
 WantedBy=multi-user.target

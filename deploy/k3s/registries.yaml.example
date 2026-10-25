@@ -1,0 +1,11 @@
+# k3s node containerd mirror for the in-cluster plain-HTTP registry.
+# Copy to /etc/rancher/k3s/registries.yaml on EVERY node, then restart the
+# k3s (control-plane) or k3s-agent (worker) service. k3s 1.36 (containerd 2.x)
+# materialises this as:
+#   /var/lib/rancher/k3s/agent/etc/containerd/certs.d/<registry>/hosts.toml
+# (verify it appears, otherwise the pull falls back to HTTPS and fails).
+# See configure-registry-mirrors.sh for a scripted rollout.
+mirrors:
+  "192.168.1.21:30500":
+    endpoint:
+      - http://192.168.1.21:30500

@@ -1,0 +1,79 @@
+# ansiblehub Postgres backend. Replaces the SQLite file used by the plain
+# (docker-compose / single-host) setups for a resettable, clustered state.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ansiblehub-db-data
+  namespace: ansiblehub
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ansiblehub-db
+  namespace: ansiblehub
+  labels:
+    app: ansiblehub-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ansiblehub-db
+  template:
+    metadata:
+      labels:
+        app: ansiblehub-db
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: ansiblehub
+            - name: POSTGRES_PASSWORD
+              value: ansiblehub
+            - name: POSTGRES_DB
+              value: ansiblehub
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ansiblehub", "-d", "ansiblehub"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "ansiblehub", "-d", "ansiblehub"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 1, memory: 1Gi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ansiblehub-db-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ansiblehub-db
+  namespace: ansiblehub
+spec:
+  selector:
+    app: ansiblehub-db
+  ports:
+    - port: 5432
+      targetPort: 5432

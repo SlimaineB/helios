@@ -1,0 +1,37 @@
+# Loop-safety test: download a tarball and extract it into a directory.
+#
+# Intentionally written idempotently: the download+unarchive only run when a
+# marker is missing. After the first apply the check mode reports nothing to
+# change, so the app converges and never loops.
+#
+# The bundle is served by the lab repo-server (http://localhost:8000/static/).
+- name: Tutorial archive — idempotent download & extract
+  hosts: localhost
+  gather_facts: false
+  become: true
+  become_user: root
+  tasks:
+    - name: Ensure runtime directory
+      ansible.builtin.file:
+        path: /opt/ansiblehub-demo/app
+        state: directory
+        mode: "0755"
+
+    - name: Check whether the bundle is already installed
+      ansible.builtin.stat:
+        path: /opt/ansiblehub-demo/app/VERSION
+      register: marker
+
+    - name: Download bundle
+      ansible.builtin.get_url:
+        url: http://localhost:8000/static/hello.tar.gz
+        dest: /opt/ansiblehub-demo/bundle.tar.gz
+        mode: "0644"
+      when: not marker.stat.exists
+
+    - name: Extract bundle into /opt/ansiblehub-demo/app
+      ansible.builtin.unarchive:
+        src: /opt/ansiblehub-demo/bundle.tar.gz
+        dest: /opt/ansiblehub-demo/app
+        remote_src: true
+      when: not marker.stat.exists and not ansible_check_mode

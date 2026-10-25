@@ -1,0 +1,24 @@
+# Loop-safety test: deliberately NOT idempotent.
+#
+# In check mode the `command`/`shell` modules are skipped by Ansible, so a
+# plain command can never produce drift here. Instead we render a template
+# whose content embeds a fresh timestamp on every single run: check mode sees
+# "changed" forever, and applying keeps the artifact out of sync. This app is
+# what the server-side heal guard is for: after 3 apply→still-drift cycles the
+# assignment is flagged "stuck" and the agent stops applying.
+- name: Tutorial cmd — perpetually out-of-sync template
+  hosts: localhost
+  gather_facts: false
+  become: true
+  become_user: root
+  tasks:
+    - name: Ensure runtime directory
+      ansible.builtin.file:
+        path: /opt/ansiblehub-demo
+        state: directory
+
+    - name: Write a self-refreshing stamp
+      ansible.builtin.template:
+        src: stamp.j2
+        dest: /opt/ansiblehub-demo/cmd-test.stamp
+        mode: "0600"
