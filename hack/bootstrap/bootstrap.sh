@@ -87,6 +87,7 @@ token: $token
 instance_id: $inst_id
 state_dir: /var/lib/ansiblehub
 poll_interval: 5s
+max_concurrent_apps: 4
 autoheal: true
 EOF
   echo "wrote /conf/agent-$n.yaml"

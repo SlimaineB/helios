@@ -1,10 +1,18 @@
 import { useState, useEffect, createContext, useContext } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import Instances from './pages/Instances.jsx'
 import InstanceDetail from './pages/InstanceDetail.jsx'
 import Applications from './pages/Applications.jsx'
 import Repositories from './pages/Repositories.jsx'
+import SyncWindows from './pages/SyncWindows.jsx'
+import Audit from './pages/Audit.jsx'
+import Projects from './pages/Projects.jsx'
 import { api, setBasic, clearBasic } from './api/client.js'
+import ToastContainer from './components/Toast.jsx'
+import CommandPalette from './components/CommandPalette.jsx'
+import Sidebar, { SidebarProvider } from './components/Sidebar.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { Menu } from 'lucide-react'
 
 const Auth = createContext(null)
 export const useAuth = () => useContext(Auth)
@@ -12,6 +20,8 @@ export const useAuth = () => useContext(Auth)
 export default function App() {
   const [state, setState] = useState(null)
   const [realm, setRealm] = useState({ oidc: false, basic_admin: false })
+  const [cmdOpen, setCmdOpen] = useState(false)
+  const navigate = useNavigate()
 
   const loadMe = async (setBasicCreds) => {
     try {
@@ -54,6 +64,17 @@ export default function App() {
     setState({ loggedOut: true })
   }
 
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setCmdOpen((o) => !o)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   if (state === null) {
     return (
       <div className="center-screen muted">
@@ -67,45 +88,47 @@ export default function App() {
   }
 
   return (
-    <div>
-      <Auth.Provider value={{ me: state.me, can }}>
-        <header className="topbar">
-          <div className="brand">
-            <span className="brand-mark">⌁</span>
-            <span className="brand-text">
-              <span className="brand-name">AnsibleHub</span>
-              <span className="brand-tag">pull-based drift control</span>
-            </span>
-          </div>
-          <nav>
-            <NavLink to="/" end>
-              Instances
-            </NavLink>
-            <NavLink to="/applications">Applications</NavLink>
-            <NavLink to="/repositories">Repositories</NavLink>
-          </nav>
-          <div className="user">
-            <span className="user-chip" title={state.me?.email || ''}>
-              {state.me?.name || 'operator'}
-            </span>
-            {state.me?.roles?.length > 0 && (
-              <span className="user-roles">{state.me.roles.join(', ')}</span>
-            )}
-            <button className="ghost small" onClick={logout}>
-              Sign out
-            </button>
-          </div>
-        </header>
-        <main className="content">
-          <Routes>
-            <Route path="/" element={<Instances />} />
-            <Route path="/instances/:id" element={<InstanceDetail />} />
-            <Route path="/applications" element={<Applications />} />
-            <Route path="/repositories" element={<Repositories />} />
-          </Routes>
-        </main>
-      </Auth.Provider>
-    </div>
+    <SidebarProvider>
+      <div className="app">
+        <Auth.Provider value={{ me: state.me, can }}>
+          <ToastContainer />
+          <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} can={can} navigate={navigate} />
+          <Sidebar can={can} />
+          <main className="content">
+            <header className="topbar">
+              <button className="mobile-menu-btn" onClick={() => {
+                window.dispatchEvent(new CustomEvent('sidebar:toggle'))
+              }} aria-label="Toggle menu">
+                <Menu size={20} />
+              </button>
+              <div className="user">
+                <span className="user-chip" title={state.me?.email || ''}>
+                  {state.me?.name || 'operator'}
+                </span>
+                {state.me?.roles?.length > 0 && (
+                  <span className="user-roles">{state.me.roles.join(', ')}</span>
+                )}
+                <button className="ghost small" onClick={logout}>
+                  Sign out
+                </button>
+              </div>
+            </header>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Applications />} />
+                <Route path="/instances" element={<Instances />} />
+                <Route path="/instances/:id" element={<InstanceDetail />} />
+                <Route path="/applications" element={<Navigate to="/" replace />} />
+                <Route path="/projects" element={<Projects />} />
+                <Route path="/sync-windows" element={<SyncWindows />} />
+                <Route path="/repositories" element={<Repositories />} />
+                <Route path="/audit" element={<Audit />} />
+              </Routes>
+            </ErrorBoundary>
+          </main>
+        </Auth.Provider>
+      </div>
+    </SidebarProvider>
   )
 }
 
@@ -120,8 +143,6 @@ function LoginScreen({ realm, onDone }) {
     setBusy(true)
     setError(null)
     try {
-      // Drop any lingering OIDC session cookie first, so Basic is what
-      // determines the identity (the server prefers the session cookie).
       try {
         await api.logout()
       } catch {

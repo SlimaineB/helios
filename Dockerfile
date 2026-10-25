@@ -3,10 +3,8 @@
 
 FROM node:20-alpine AS ui
 WORKDIR /build
-COPY ui/package.json ui/package-lock.json ./
-RUN npm ci
 COPY ui/ ./
-RUN npm run build
+RUN npm ci && npm run build
 
 FROM golang:1.25-alpine AS server
 WORKDIR /build

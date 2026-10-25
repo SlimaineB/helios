@@ -22,6 +22,10 @@ type Config struct {
 	StateDir string `yaml:"state_dir"`
 	// PollInterval controls both heartbeat and drift check frequency.
 	PollInterval time.Duration `yaml:"poll_interval"`
+	// MaxConcurrentApps bounds how many applications the agent reconciles in
+	// parallel during one pass. Keep this small on CPU-constrained hosts:
+	// every Ansible invocation is its own process.
+	MaxConcurrentApps int `yaml:"max_concurrent_apps"`
 	// AutoHeal applies a playbook automatically when drift is detected (like
 	// ArgoCD selfHeal). Sync commands still always apply.
 	AutoHeal bool `yaml:"autoheal"`
@@ -35,11 +39,12 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		Server:       "",
-		StateDir:     "/var/lib/ansiblehub/agent",
-		PollInterval: 5 * time.Minute,
-		AnsibleBin:   "ansible-playbook",
-		AwsRegion:    os.Getenv("AWS_REGION"),
+		Server:            "",
+		StateDir:          "/var/lib/ansiblehub/agent",
+		PollInterval:      5 * time.Minute,
+		MaxConcurrentApps: 4,
+		AnsibleBin:        "ansible-playbook",
+		AwsRegion:         os.Getenv("AWS_REGION"),
 	}
 }
 
@@ -84,6 +89,12 @@ func Load(path string) (Config, error) {
 				return fmt.Errorf("invalid ANH_POLL_INTERVAL %q: %w", v, err)
 			}
 			cfg.PollInterval = d
+		case "MAX_CONCURRENT_APPS":
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return fmt.Errorf("invalid ANH_MAX_CONCURRENT_APPS %q: must be >= 1", v)
+			}
+			cfg.MaxConcurrentApps = n
 		case "AUTOHEAL":
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -103,7 +114,7 @@ func Load(path string) (Config, error) {
 		}
 		return nil
 	}
-	for _, name := range []string{"SERVER", "TOKEN", "INSTANCE_ID", "STATE_DIR", "POLL_INTERVAL", "AUTOHEAL", "INSECURE", "ANSIBLE_BIN", "AWS_REGION"} {
+	for _, name := range []string{"SERVER", "TOKEN", "INSTANCE_ID", "STATE_DIR", "POLL_INTERVAL", "MAX_CONCURRENT_APPS", "AUTOHEAL", "INSECURE", "ANSIBLE_BIN", "AWS_REGION"} {
 		if err := applyEnv(name); err != nil {
 			return cfg, err
 		}
@@ -116,6 +127,9 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.MaxConcurrentApps < 0 {
+		return fmt.Errorf("max_concurrent_apps must be >= 0 (0 uses the default)")
+	}
 	var missing []string
 	if strings.TrimSpace(c.Server) == "" {
 		missing = append(missing, "server")

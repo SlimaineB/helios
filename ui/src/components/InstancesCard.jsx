@@ -1,0 +1,150 @@
+import CopyButton from './CopyButton.jsx'
+import Badge from './Badge.jsx'
+import { Link } from 'react-router-dom'
+import { api, stateLabel } from '../api/client.js'
+import { useAuth } from '../App.jsx'
+import { toast } from '../components/Toast.jsx'
+
+const online = (inst) =>
+  inst.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
+
+const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
+
+export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVars }) {
+  const { can } = useAuth()
+  const isOnline = online(instance)
+  const apps = instance.apps.length ? instance.apps : [null]
+
+  if (apps.length === 1 && !apps[0]) {
+    return (
+      <article className="instance-card">
+        <header className="card-head">
+          <div className="instance-main">
+            <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} aria-hidden="true" />
+            <div className="instance-title">
+              <Link to={`/instances/${instance.id}`} className="instance-link"><strong>{instance.name}</strong></Link>
+<span className="instance-meta">
+              <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
+              {instance.id} · {instance.project || 'global'}
+            </span>
+            </div>
+          </div>
+          <div className="card-actions">
+            <span className="muted">Not assigned</span>
+          </div>
+        </header>
+      </article>
+    )
+  }
+
+  return (
+    <article className="instance-card">
+      <header className="card-head">
+        <div className="instance-main">
+          <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} aria-hidden="true" />
+          <div className="instance-title">
+            <Link to={`/instances/${instance.id}`} className="instance-link"><strong>{instance.name}</strong></Link>
+            <span className="instance-meta">
+              <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
+              {instance.id} · {instance.project || 'global'}
+            </span>
+          </div>
+        </div>
+        <div className="card-actions">
+          <span className={`state-badge ${instance.state}`}>{stateLabel(instance.state)}</span>
+        </div>
+      </header>
+
+      <div className="card-body">
+        {apps.map((app, idx) => (
+          <div key={`${instance.id}-${app?.application.id || 'none'}`} className="app-row">
+            {idx === 0 && (
+              <div className="instance-info">
+                <div className="detail">
+                  <label>Last check</label>
+                  <span>{fmtTime(instance.last_check_at)}</span>
+                </div>
+                <div className="detail">
+                  <label>Apps assigned</label>
+                  <span>{apps.filter(Boolean).length}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="app-info">
+              {!app ? (
+                <div className="app-empty muted">— no application assigned —</div>
+              ) : (
+                <>
+                  <div className="app-header">
+                    <div className="app-main">
+                      <span className="app-name">{app.application.name}</span>
+                      {app.stuck && <Badge state="stuck" label="stuck" small />}
+                    </div>
+                    <div className="app-state">
+                      <Badge state={app.latest_check?.status || 'unknown'} label={app.latest_check?.status || 'no check'} small />
+                    </div>
+                  </div>
+
+                  {app.latest_check?.changed_tasks?.length && (
+                    <div className="drift-tasks">
+                      {app.latest_check.changed_tasks.map((t, i) => (
+                        <span key={i} className="drift-chip" title={t.host ? `host: ${t.host}` : undefined}>{t.task}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="app-meta">
+                    <div className="meta-item">
+                      <CopyButton value={app.latest_check?.commit_after || ''} size="small" title="Copy commit" />
+                      <span className="mono">{app.latest_check?.commit_after?.slice(0, 7) || '—'}</span>
+                      {app.latest_check?.commit_msg && <span className="commit-msg">{app.latest_check.commit_msg}</span>}
+                    </div>
+                    <div className="meta-item muted">Last check: {fmtTime(app.last_check_at || app.latest_check?.finished_at)}</div>
+                  </div>
+
+                  <div className="app-actions">
+                    {app.stuck ? (
+                      <button
+                        className="btn warn small"
+                        disabled={!can('instances', 'update') || app.autoheal}
+                        onClick={() => onAction(instance.id, app.application.id, 'rearm')}
+                        title="Re-enable autoheal once the playbook is fixed"
+                      >
+                        Rearm
+                      </button>
+                    ) : (
+                      <>
+                        <label className="switch" title="Auto-heal / re-apply on drift detection">
+                          <input
+                            type="checkbox"
+                            checked={app.autoheal}
+                            disabled={!can('instances', 'update')}
+                            onChange={() => onAction(instance.id, app.application.id, 'toggle-autoheal')}
+                          />
+                          <span className="slider" />
+                        </label>
+                        <span className={`sub ${app.autoheal ? '' : 'muted'}`}>
+                          {app.autoheal ? (app.autoheal_set ? 'on (override)' : 'on') : 'off'}
+                        </span>
+                      </>
+                    )}
+                    <button className="btn small" disabled={!can('commands', 'create')} onClick={() => onAction(instance.id, app.application.id, 'apply')}>Sync</button>
+                    <button className="btn ghost small" disabled={!can('commands', 'create')} onClick={() => onAction(instance.id, app.application.id, 'check')}>Check</button>
+                    {app.latest_check?.id && (
+                      <>
+                        <button className="btn ghost small" title="Pre-apply diff" onClick={() => onDiff(app.latest_check.id)}>Diff</button>
+                        <button className="btn ghost small" title="Full run log" onClick={() => onLogs(app.latest_check.id)}>Logs</button>
+                      </>
+                    )}
+                    <button className="btn ghost small" disabled={!can('instances', 'update')} onClick={() => onVars({ inst: instance, app })}>Vars</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </article>
+  )
+}

@@ -65,7 +65,7 @@ test:shellcheck:
   stage: test
   image: koalaman/shellcheck-alpine:stable
   script:
-    - shellcheck -S warning deploy/install-agent.sh hack/agent-entrypoint.sh
+    - shellcheck -S warning deploy/install-agent.sh deploy/install-server.sh hack/smoke.sh hack/looptest.sh hack/agent-entrypoint.sh
 
 # ------------------------------------------------------------------ build ---
 

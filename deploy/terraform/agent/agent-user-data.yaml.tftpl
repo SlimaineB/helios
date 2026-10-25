@@ -8,6 +8,7 @@ write_files:
       token: ${token}
       state_dir: /var/lib/ansiblehub
       poll_interval: 5m
+      max_concurrent_apps: 4
       autoheal: true
 
   - path: /etc/systemd/system/ansiblehub-agent.service

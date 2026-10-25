@@ -15,9 +15,9 @@ service:
   port: 80
   targetPort: 8080
 
-# Storage for the SQLite database. NOTE: the production roadmap replaces SQLite
-# with a Postgres backend (Store interface) — until then the server persists to
-# a volume, use a real PVC/storageClass here.
+# Storage for the default SQLite database. Set database.dsn below to use
+# PostgreSQL instead; the SQLite volume is then unused. Keep a real PVC/storageClass
+# for SQLite so the database survives pod restarts.
 storage:
   className: null    # null -> cluster default storage class
   size: 10Gi

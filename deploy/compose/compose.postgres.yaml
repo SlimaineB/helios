@@ -1,0 +1,28 @@
+# Optional PostgreSQL backend. Use together with compose.yaml:
+#   docker compose -f compose.yaml -f compose.postgres.yaml up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ansiblehub
+      POSTGRES_PASSWORD: ${ANH_POSTGRES_PASSWORD:?set ANH_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ansiblehub
+    volumes:
+      - ansiblehub-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ansiblehub -d ansiblehub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    environment:
+      ANSIBLEHUB_DB: postgres://ansiblehub:${ANH_POSTGRES_PASSWORD}@db:5432/ansiblehub?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  ansiblehub-postgres:
+    name: ansiblehub-postgres

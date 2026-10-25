@@ -6,3 +6,4 @@ server/ansiblehub.db
 *.db-journal
 hdata
 agentconf
+deploy/compose/.env

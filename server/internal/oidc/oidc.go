@@ -81,24 +81,30 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	return p, nil
 }
 
-// AuthURL builds the provider login URL with PKCE. It returns the generated
-// verifier the server must stash until the callback arrives.
-func (p *Provider) AuthURL(state string) (url, verifier string, err error) {
+// AuthURL builds the provider login URL with PKCE and a nonce. It returns the
+// generated verifier and nonce the server must stash until the callback.
+func (p *Provider) AuthURL(state string) (url, verifier, nonce string, err error) {
 	verifier, err = randomString()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+	nonce, err = randomString()
+	if err != nil {
+		return "", "", "", err
 	}
 	challenge := base64.RawURLEncoding.EncodeToString(sha256Sum([]byte(verifier)))
 	u := p.oauth.AuthCodeURL(state,
 		oauth2.SetAuthURLParam("code_challenge", challenge),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+		oidc.Nonce(nonce),
 	)
-	return u, verifier, nil
+	return u, verifier, nonce, nil
 }
 
-// Exchange trades the authorization code (with its PKCE verifier) for tokens
-// and returns the verified principal, reading groups from GroupClaim.
-func (p *Provider) Exchange(ctx context.Context, code, verifier string) (*Principal, error) {
+// Exchange trades the authorization code (with its PKCE verifier) for tokens,
+// checks the ID token nonce, and returns the verified principal reading groups
+// from GroupClaim.
+func (p *Provider) Exchange(ctx context.Context, code, verifier, nonce string) (*Principal, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
 	defer cancel()
 
@@ -114,6 +120,9 @@ func (p *Provider) Exchange(ctx context.Context, code, verifier string) (*Princi
 	idt, err := p.verifier.Verify(ctx, idtok)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: invalid id_token: %w", err)
+	}
+	if idt.Nonce == "" || idt.Nonce != nonce {
+		return nil, fmt.Errorf("oidc: id_token nonce mismatch")
 	}
 
 	var claims map[string]json.RawMessage

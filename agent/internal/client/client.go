@@ -37,6 +37,12 @@ type Application struct {
 	Path     string `json:"path"`
 	Vars     string `json:"vars"`
 	AutoHeal bool   `json:"autoheal"`
+	// SyncInterval is the per-app check frequency in seconds; 0 means inherit
+	// the agent's global poll interval.
+	SyncInterval int64 `json:"sync_interval"`
+	// IgnorePaths is a newline/comma separated list of glob patterns matched
+	// against changed task names and resource targets.
+	IgnorePaths string `json:"ignore_paths"`
 	// Connection is the git auth resolved server-side from the repositories
 	// registry. Nil/empty means anonymous access.
 	Connection *RepoConnection `json:"connection,omitempty"`
@@ -67,6 +73,27 @@ type CheckinIn struct {
 	Version    string `json:"version"`
 	Hostname   string `json:"hostname"`
 	Platform   string `json:"platform"`
+}
+
+// Health verifies the control plane (and its database) is reachable. The agent
+// calls it right before applying anything: if the server is down or partitioned,
+// no deployment happens on stale assignments.
+func (c *Client) Health(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v1/health", nil)
+	if err != nil {
+		return err
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("health: %s", res.Status)
+	}
+	return nil
 }
 
 func (c *Client) Checkin(ctx context.Context, in CheckinIn) (CheckinOK, error) {

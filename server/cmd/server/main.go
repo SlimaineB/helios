@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/slim/ansiblehub/server/internal/api"
 	"github.com/slim/ansiblehub/server/internal/auth"
+	"github.com/slim/ansiblehub/server/internal/metrics"
+	"github.com/slim/ansiblehub/server/internal/notify"
 	"github.com/slim/ansiblehub/server/internal/oidc"
 	"github.com/slim/ansiblehub/server/internal/rbac"
 	"github.com/slim/ansiblehub/server/internal/store"
@@ -95,6 +100,8 @@ func main() {
 	}
 
 	srv := api.New(st, log, oa, secure)
+	srv.SetNotifier(notify.FromEnv(log))
+	metrics.SetInfo("dev")
 	handler := srv.Handler()
 
 	if *uiDir != "" {
@@ -105,19 +112,40 @@ func main() {
 		Addr:              *addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
-	log.Info("listening")
-	if *tlsCert != "" && *tlsKey != "" {
-		if err := httpServer.ListenAndServeTLS(*tlsCert, *tlsKey); err != nil && err != http.ErrServerClosed {
+	// Drain in-flight requests on SIGINT/SIGTERM (k8s pod termination, systemd
+	// stop) instead of cutting them off mid-response.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		if *tlsCert != "" && *tlsKey != "" {
+			errCh <- httpServer.ListenAndServeTLS(*tlsCert, *tlsKey)
+			return
+		}
+		errCh <- httpServer.ListenAndServe()
+	}()
+
+	log.Info("listening", "addr", *addr)
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server failed", "error", err)
 			os.Exit(1)
 		}
-		return
-	}
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error("server failed", "error", err)
-		os.Exit(1)
+	case <-ctx.Done():
+		log.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Error("graceful shutdown failed", "error", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -145,7 +173,7 @@ func splitList(s string) []string {
 func uiMiddleware(next http.Handler, uiDir string) http.Handler {
 	fileServer := http.FileServer(http.Dir(uiDir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") {
+		if strings.HasPrefix(r.URL.Path, "/api") || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}

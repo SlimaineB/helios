@@ -23,6 +23,7 @@ token: {{ .Values.config.token | quote }}
 instance_id: {{ .Values.config.instanceId | quote }}
 state_dir: {{ .Values.config.stateDir | quote }}
 poll_interval: {{ .Values.config.pollInterval | quote }}
+max_concurrent_apps: {{ .Values.config.maxConcurrentApps }}
 autoheal: {{ .Values.config.autoheal }}
 insecure_skip_verify: {{ .Values.config.insecureSkipVerify }}
 ansible_bin: {{ .Values.config.ansibleBin | quote }}

@@ -113,11 +113,11 @@ export default function VariableEditor({ title, subtitle, load, save, onClose })
           </div>
         </div>
         <div className="modal-foot">
-          <button type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>{' '}
           <button type="button" className="ghost" onClick={onClose}>
             Cancel
+          </button>
+          <button type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </form>

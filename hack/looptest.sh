@@ -49,6 +49,10 @@ assign_app() { # instance_id app_id
   api_post "/api/v1/instances/$1/assign" "{}" "{\"app_id\":$2}" >/dev/null || true
 }
 
+apply_baseline() { # prints the current stored apply-run count
+  count_apply_runs "$1" "$2"
+}
+
 count_apply_runs() { # instance_id app_id -> number of stored apply runs
   api "/api/v1/instances/$1/runs?limit=500&mode=apply&app_id=$2" | jq -r '.total'
 }
@@ -74,6 +78,10 @@ for g in $GHOST_AGENTS; do
   assign_app "$iid" "$archive_id"
   assign_app "$iid" "$cmd_id"
   insts="$insts $(printf '%s:%s' "$g" "$iid")"
+  case "$g" in
+    agent-1) archive_base_1=$(apply_baseline "$iid" "$archive_id") ;;
+    agent-2) archive_base_2=$(apply_baseline "$iid" "$archive_id") ;;
+  esac
 done
 
 # ---- 1. archive-test must converge, not loop ----
@@ -86,8 +94,12 @@ while deadline "$end"; do
     a="$(app_latest "$iid" "$archive_id")"
     status="$(printf '%s' "$a" | jq -r '.status // "none"')"
     applies="$(count_apply_runs "$iid" "$archive_id")"
+    case "$g" in
+      agent-1) base=$archive_base_1 ;;
+      agent-2) base=$archive_base_2 ;;
+    esac
     if [ "$status" != "ok" ]; then pending=1; fi
-    printf '  %-9s status=%-7s apply_runs=%s\n' "$g" "$status" "$applies"
+    printf '  %-9s status=%-7s apply_runs=%s (+%s)\n' "$g" "$status" "$applies" "$((applies - base))"
   done
   [ "$pending" -eq 0 ] && break
   sleep "$POLL"
@@ -97,9 +109,14 @@ for pair in $insts; do
   g="${pair%%:*}" iid="${pair##*:}"
   status="$(app_latest "$iid" "$archive_id" | jq -r '.status // "none"')"
   applies="$(count_apply_runs "$iid" "$archive_id")"
-  echo "RESULT $ARCHIVE_APP/$g status=$status apply_runs=$applies"
+  case "$g" in
+    agent-1) base=$archive_base_1 ;;
+    agent-2) base=$archive_base_2 ;;
+  esac
+  delta=$((applies - base))
+  echo "RESULT $ARCHIVE_APP/$g status=$status apply_runs=$applies (+$delta)"
   [ "$status" != "ok" ] && { echo "  ✗ $ARCHIVE_APP did not converge (still $status)" >&2; fail=1; }
-  [ "$applies" -gt 1 ] && { echo "  ✗ $ARCHIVE_APP applied multiple times → looping" >&2; fail=1; }
+  [ "$delta" -le 1 ] || { echo "  ✗ $ARCHIVE_APP applied multiple times → looping" >&2; fail=1; }
 done
 
 # ---- 2. cmd-test must be flagged stuck and stop applying ----

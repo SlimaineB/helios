@@ -6,13 +6,15 @@
 //	role:admin    -> every action on every resource
 //	role:readonly -> get on every resource
 //
-// The policy file adds/overrides rules. A request is allowed when at least one
-// rule matching (role or group, resource, action) grants it; otherwise it is
-// denied. There is no deny-list.
+// The policy file adds rules. A request is allowed when at least one rule
+// matching (role or group, resource, action, object) grants it; otherwise it is
+// denied. The object is a project name, or "*" for every project. There is no
+// deny-list.
 //
 //	# rbac.yaml
 //	policies:
 //	  - "p, role:viewer, applications, get, *"
+//	  - "p, role:dev, applications, update, finance"   # finance project only
 //	  - "g, Engineering, role:readonly"   # Okta group -> builtin role
 //	  - "g, SRE, role:admin"
 package rbac
@@ -32,6 +34,9 @@ const (
 	ResRepositories = "repositories"
 	ResRuns         = "runs"
 	ResCommands     = "commands"
+	ResWindows      = "windows"
+	ResAudit        = "audit"
+	ResProjects     = "projects"
 )
 
 const (
@@ -43,7 +48,7 @@ const (
 )
 
 // AllResources is used by the built-in roles.
-var AllResources = []string{ResApplications, ResInstances, ResRepositories, ResRuns, ResCommands}
+var AllResources = []string{ResApplications, ResInstances, ResRepositories, ResRuns, ResCommands, ResWindows, ResAudit, ResProjects}
 
 // AllActions is used by the built-in admin role.
 var AllActions = []string{ActionGet, ActionCreate, ActionUpdate, ActionDelete, ActionSync}
@@ -52,10 +57,10 @@ var AllActions = []string{ActionGet, ActionCreate, ActionUpdate, ActionDelete, A
 var builtinRules = func() []rule {
 	var out []rule
 	for _, r := range AllResources {
-		out = append(out, rule{Role: "role:admin", Resource: r, Action: "*"})
+		out = append(out, rule{Role: "role:admin", Resource: r, Action: "*", Object: "*"})
 	}
 	for _, r := range AllResources {
-		out = append(out, rule{Role: "role:readonly", Resource: r, Action: ActionGet})
+		out = append(out, rule{Role: "role:readonly", Resource: r, Action: ActionGet, Object: "*"})
 	}
 	return out
 }()
@@ -64,6 +69,7 @@ type rule struct {
 	Role     string // role name, optionally bound to groups via bindings
 	Resource string
 	Action   string
+	Object   string // project name, or "*" for every project
 }
 
 type binding struct {
@@ -122,8 +128,8 @@ func New(cfg Config) (*RBAC, error) {
 	return r, nil
 }
 
-// parsePolicy handles "p, <rolename>, <resource>, <action>, <object>".
-// An optional object expression is accepted but only "*" is honoured today.
+// parsePolicy handles "p, <rolename>, <resource>, <action>, <object>". The
+// object defaults to "*" (all projects).
 func parsePolicy(line string) (rule, error) {
 	parts := splitTrim(line)
 	if len(parts) < 4 || parts[0] != "p" {
@@ -133,10 +139,10 @@ func parsePolicy(line string) (rule, error) {
 	if len(parts) >= 5 {
 		object = parts[4]
 	}
-	if object != "*" {
-		return rule{}, fmt.Errorf("only '%s' object scope is supported (got %q): %s", "*", object, line)
+	if object == "" {
+		return rule{}, fmt.Errorf("empty object scope: %s", line)
 	}
-	return rule{Role: parts[1], Resource: parts[2], Action: parts[3]}, nil
+	return rule{Role: parts[1], Resource: parts[2], Action: parts[3], Object: object}, nil
 }
 
 // parseBinding handles "g, <group>, <role>".
@@ -159,10 +165,30 @@ func splitTrim(s string) []string {
 	return out
 }
 
-// Authorize reports whether a principal with the given groups/roles may
-// perform action on resource. Roles are matched directly; groups are
-// resolved to roles through bindings.
-func (r *RBAC) Authorize(groups, roles []string, resource, action string) bool {
+// Authorize reports whether a principal may perform action on resource within
+// object (a project name, "" for global). A "*" rule matches every object; a
+// project-scoped rule never grants access to the global scope.
+func (r *RBAC) Authorize(groups, roles []string, resource, action, object string) bool {
+	for _, rule := range r.rules {
+		if rule.Resource != resource && rule.Resource != "*" {
+			continue
+		}
+		if rule.Action != action && rule.Action != "*" {
+			continue
+		}
+		if rule.Object != "*" && (object == "" || rule.Object != object) {
+			continue
+		}
+		if matchIdentity(rule.Role, roles, groups, r.bindings) {
+			return true
+		}
+	}
+	return false
+}
+
+// AuthorizeAny reports whether the principal has the operation on at least one
+// object. It is the coarse gate used before handlers resolve a concrete scope.
+func (r *RBAC) AuthorizeAny(groups, roles []string, resource, action string) bool {
 	for _, rule := range r.rules {
 		if rule.Resource != resource && rule.Resource != "*" {
 			continue
@@ -175,6 +201,31 @@ func (r *RBAC) Authorize(groups, roles []string, resource, action string) bool {
 		}
 	}
 	return false
+}
+
+// VisibleObjects returns every project the principal can act on for
+// resource.action. all is true when a "*" rule grants global visibility.
+func (r *RBAC) VisibleObjects(groups, roles []string, resource, action string) (all bool, objects []string) {
+	seen := map[string]bool{}
+	for _, rule := range r.rules {
+		if rule.Resource != resource && rule.Resource != "*" {
+			continue
+		}
+		if rule.Action != action && rule.Action != "*" {
+			continue
+		}
+		if !matchIdentity(rule.Role, roles, groups, r.bindings) {
+			continue
+		}
+		if rule.Object == "*" {
+			return true, nil
+		}
+		if !seen[rule.Object] {
+			seen[rule.Object] = true
+			objects = append(objects, rule.Object)
+		}
+	}
+	return false, objects
 }
 
 // matchIdentity reports whether the rule's identity (a role or group) matches
@@ -228,7 +279,7 @@ func (r *RBAC) Permissions(groups, roles []string) []string {
 	set := map[string]bool{}
 	for _, res := range AllResources {
 		for _, act := range AllActions {
-			if r.Authorize(groups, roles, res, act) {
+			if r.AuthorizeAny(groups, roles, res, act) {
 				set[res+"."+act] = true
 			}
 		}

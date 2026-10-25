@@ -26,6 +26,9 @@ func (s *Server) handleRunLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !s.requireInstanceScope(w, r, run.InstanceID, "runs.get") {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":           run.ID,
 		"instance_id":  run.InstanceID,
@@ -63,6 +66,9 @@ func (s *Server) handleSetAutoHeal(w http.ResponseWriter, r *http.Request) {
 	appID, ok := appIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "missing app id")
+		return
+	}
+	if !s.requireInstanceScope(w, r, instID, "instances.update") {
 		return
 	}
 	var body autoHealBody
