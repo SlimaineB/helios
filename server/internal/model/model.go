@@ -37,17 +37,28 @@ type Instance struct {
 	LastSeen   time.Time `json:"last_seen"`
 	Hostname   string    `json:"hostname,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	// Project scopes this instance (empty = global/default project).
+	Project   string    `json:"project"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Application struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	RepoURL   string    `json:"repo_url"`
-	Branch    string    `json:"branch"` // target revision: branch, tag, SHA or semver range
-	Path      string    `json:"path"`
-	Vars      string    `json:"vars"`
-	AutoHeal  bool      `json:"autoheal"`
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	RepoURL  string `json:"repo_url"`
+	Branch   string `json:"branch"` // target revision: branch, tag, SHA or semver range
+	Path     string `json:"path"`
+	Vars     string `json:"vars"`
+	AutoHeal bool   `json:"autoheal"`
+	// SyncInterval is the per-application check/sync frequency in seconds.
+	// Zero means "inherit the agent's poll interval".
+	SyncInterval int `json:"sync_interval"`
+	// IgnorePaths is a newline/comma separated list of glob patterns matched
+	// against changed task names and resource targets. Matching drift is hidden
+	// and no longer counts as drift (ArgoCD ignoreDifferences analogue).
+	IgnorePaths string `json:"ignore_paths"`
+	// Project scopes this application (empty = global/default project).
+	Project   string    `json:"project"`
 	CreatedAt time.Time `json:"created_at"`
 	// Connection is the git auth resolved from the repositories registry at
 	// checkin time (sent to the agent). It is never persisted on the app.
@@ -91,9 +102,12 @@ type Assignment struct {
 	// Stuck marks an assignment whose autoheal could not converge (see
 	// ConsecutiveDrift). While stuck, the agent stops applying until the
 	// playbook converges again.
-	Stuck     bool      `json:"stuck"`
-	StuckAt   time.Time `json:"stuck_at,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Stuck   bool      `json:"stuck"`
+	StuckAt time.Time `json:"stuck_at,omitempty"`
+	// TargetRevision pins this assignment to a specific git revision (rollback).
+	// Empty means "track the application branch".
+	TargetRevision string    `json:"target_revision,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type ChangedTask struct {
@@ -150,4 +164,41 @@ type RunFilter struct {
 	Mode       string
 	Limit      int
 	Offset     int
+}
+
+// Project groups applications and instances and optionally restricts the git
+// repositories applications in it may use (RepoPatterns, newline-separated
+// globs). The empty project name is the implicit global/default project.
+type Project struct {
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	RepoPatterns string    `json:"repo_patterns"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// SyncWindow freezes or allows syncs for all applications (AppID 0) or one
+// application. Kinds: "deny" freezes while active; "allow" freezes outside the
+// window when at least one allow window exists for that scope.
+type SyncWindow struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"` // deny | allow
+	AppID     int64     `json:"app_id"`
+	Timezone  string    `json:"timezone"`
+	Days      string    `json:"days"` // comma list: mon,tue,... (empty = every day)
+	StartMin  int       `json:"start_min"`
+	EndMin    int       `json:"end_min"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// AuditEntry is one mutating operator action.
+type AuditEntry struct {
+	ID       int64     `json:"id"`
+	At       time.Time `json:"at"`
+	User     string    `json:"user"`
+	Method   string    `json:"method"`
+	Path     string    `json:"path"`
+	Status   int       `json:"status"`
+	RemoteIP string    `json:"remote_ip,omitempty"`
 }

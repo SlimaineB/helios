@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/slim/ansiblehub/server/internal/auth"
+	"github.com/slim/ansiblehub/server/internal/metrics"
 	"github.com/slim/ansiblehub/server/internal/model"
 	"github.com/slim/ansiblehub/server/internal/store"
 )
@@ -24,6 +25,7 @@ func (s *Server) routes() {
 
 	// Health is public (probes).
 	m.HandleFunc("GET /api/v1/health", s.handleHealth)
+	m.HandleFunc("GET /metrics", metrics.Handler())
 
 	// Operator authentication surface (public entry points).
 	m.HandleFunc("GET /api/v1/auth/realm", s.handleRealm)
@@ -40,6 +42,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/instances/{id}/assign", s.op("instances.update", s.handleAssign))
 	m.HandleFunc("DELETE /api/v1/instances/{id}/assign/{appId}", s.op("instances.update", s.handleUnassign))
 	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/autoheal", s.op("instances.update", s.handleSetAutoHeal))
+	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/revision", s.op("instances.update", s.handleSetRevision))
 	m.HandleFunc("POST /api/v1/instances/{id}/{action}", s.op("commands.create", s.handleCreateInstanceCommand))
 	m.HandleFunc("GET /api/v1/instances/{id}/runs", s.op("runs.get", s.handleListRuns))
 	m.HandleFunc("GET /api/v1/runs/{runId}/log", s.op("runs.get", s.handleRunLog))
@@ -54,6 +57,18 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/applications/{appId}/variables", s.op("applications.update", s.handleUpdateAppVariables))
 	m.HandleFunc("GET /api/v1/instances/{id}/assign/{appId}/variables", s.op("instances.get", s.handleListAssignedVariables))
 	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/variables", s.op("instances.update", s.handleUpdateAssignedVariables))
+
+	m.HandleFunc("GET /api/v1/audit", s.op("audit.get", s.handleListAudit))
+
+	m.HandleFunc("GET /api/v1/projects", s.op("projects.get", s.handleListProjects))
+	m.HandleFunc("POST /api/v1/projects", s.op("projects.create", s.handleCreateProject))
+	m.HandleFunc("PUT /api/v1/projects/{projectId}", s.op("projects.update", s.handleUpdateProject))
+	m.HandleFunc("DELETE /api/v1/projects/{projectId}", s.op("projects.delete", s.handleDeleteProject))
+
+	m.HandleFunc("GET /api/v1/sync-windows", s.op("windows.get", s.handleListSyncWindows))
+	m.HandleFunc("POST /api/v1/sync-windows", s.op("windows.create", s.handleCreateSyncWindow))
+	m.HandleFunc("PUT /api/v1/sync-windows/{windowId}", s.op("windows.update", s.handleUpdateSyncWindow))
+	m.HandleFunc("DELETE /api/v1/sync-windows/{windowId}", s.op("windows.delete", s.handleDeleteSyncWindow))
 
 	m.HandleFunc("GET /api/v1/repositories", s.op("repositories.get", s.handleListRepositories))
 	m.HandleFunc("POST /api/v1/repositories", s.op("repositories.create", s.handleCreateRepository))
@@ -110,7 +125,7 @@ func (s *Server) handleCommandResult(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "status must be done|failed")
 		return
 	}
-	if err := s.store.CompleteCommand(r.Context(), cmdID, body.Status, body.Result, body.Commit); err != nil {
+	if err := s.store.CompleteCommand(r.Context(), inst.ID, cmdID, body.Status, body.Result, body.Commit); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "command not found")
 			return

@@ -106,6 +106,96 @@ docker compose up -d --build
 # 2/2 cmd-test:     flagged stuck, applies stop
 ```
 
+### Per-app sync interval
+
+Each application carries a `sync_interval` (seconds, editable in the UI, `0`
+= inherit). The agent wakes at the shortest interval due across its apps, still
+checks in on every pass, and skips a git sync/drift check until that app's
+interval has elapsed. The smallest accepted non-zero value is 10s. Manual
+Sync/Check commands always run immediately.
+
+### Fail-closed safety
+
+The agent only acts on assignments/commands from a successful checkin. Before
+any **apply** (autoheal or a Sync command) it probes `/api/v1/health` (which
+also pings the database) and **refuses to deploy if the control plane is
+unreachable**. A server outage or network partition therefore cannot trigger
+changes from stale state; work resumes on the next successful checkin.
+
+### Ignore drift patterns
+
+An application can list `ignore_paths` (newline/comma separated globs, UI field
+on the application form). The agent filters the check result before reporting:
+patterns are matched case-insensitively against changed **task names**, **hosts**
+and **resource targets** (`*` matches any sequence, including `/`). If every
+change is ignored, the run is reported as `ok` instead of `drift`, which also
+prevents autoheal from firing on cosmetic tasks. Checks are still recorded.
+
+### Rollback (pinned revisions)
+
+Every run carries the commit it ran. In the instance run history, **Rollback**
+sets a per-assignment `target_revision` to that commit and queues an apply; the
+agent simply sees a different `branch` at checkin, so no agent upgrade is
+needed. While pinned, the UI shows a `pinned @sha` badge and a **Track branch**
+button that clears the pin. Autoheal keeps applying the pinned revision, not the
+branch tip. Rollback is blocked by sync windows like any other apply.
+
+### Sync windows
+
+`Sync windows` (UI page, `/api/v1/sync-windows`) freeze syncs per application or
+globally:
+
+- **deny** — freeze while the window is active;
+- **allow** — freeze outside the window whenever at least one allow window
+  exists for that scope.
+
+Windows have an IANA timezone, weekday mask and start/end time (`start == end`
+means all day; overnight windows such as 23:00→02:00 work). While frozen:
+checks and drift reporting keep running, autoheal is turned off in the checkin
+response, and manual Sync/Rollback return `409` (events still record the
+attempt). This is the ArgoCD maintenance-window analogue, evaluated server-side.
+
+### Notifications, metrics, audit
+
+- **Webhook**: set `ANH_WEBHOOK_URL` (optionally `ANH_WEBHOOK_SECRET` for an
+  HMAC-SHA256 `X-AnsibleHub-Signature: sha256=…` header and
+  `ANH_WEBHOOK_TIMEOUT`). Events: `run_failed`, `assignment_stuck`, `apply_ok`,
+  `command_failed`, `sync_blocked`. Delivery is async/best-effort.
+- **Metrics**: `GET /metrics` exposes Prometheus text with
+  `ansiblehub_runs_total{instance,app,mode,status}`,
+  `ansiblehub_commands_total{status}`,
+  `ansiblehub_agent_checkins_total{instance}`,
+  `ansiblehub_sync_frozen_total{app}` and `ansiblehub_build_info`. No client
+  library dependency.
+- **Audit**: every mutating operator API call (POST/PUT/PATCH/DELETE) is stored
+  in `audit_log` with user, method, path, HTTP status and remote IP, and exposed
+  at `/api/v1/audit` (UI **Audit** page).
+
+### Projects and project-scoped RBAC
+
+Projects group applications and instances and can restrict the git repositories
+their applications may use (`repo_patterns`, newline-separated globs; empty =
+any). Applications and instances carry a `project` (empty = global/default), an
+application can only be assigned to an instance in the same project, and its
+`repo_url` must match the project's patterns. Renaming a project cascades to its
+applications/instances.
+
+RBAC rules may scope an operation to a project through the rule object:
+
+```yaml
+policies:
+  - "p, role:dev, applications, get, finance"
+  - "p, role:dev, applications, update, finance"
+  - "p, role:dev, instances, get, finance"
+  - "p, role:dev, commands, create, finance"
+```
+
+A project-scoped rule never grants access to the global scope; `*` still means
+every project. List endpoints filter by the caller's visible projects, and
+detail/mutation handlers enforce the object scope (the web UI hides controls it
+knows are unavailable, but the server is authoritative). Repositories, projects,
+sync windows and the audit log are global-admin surfaces.
+
 ## Components
 
 - **`server/`** — Go. REST API + storage. `store.Open(dsn)` selects the
@@ -140,12 +230,13 @@ GET    /api/v1/auth/callback              # OIDC callback → session cookie (an
 GET    /api/v1/auth/logout
 GET    /api/v1/auth/me                    # identity + effective permissions (RBAC)
 GET    /api/v1/instances                          # dashboard list (with per-app latest runs)
-POST   /api/v1/instances          {name}          # register → {instance, token} (token shown once)
+POST   /api/v1/instances          {name, project} # register → {instance, token} (token shown once)
 GET    /api/v1/instances/{id}
 DELETE /api/v1/instances/{id}
 POST   /api/v1/instances/{id}/assign   {app_id}
 DELETE /api/v1/instances/{id}/assign/{appId}
 PUT    /api/v1/instances/{id}/assign/{appId}/autoheal   # {enabled} or {inherit} → per-assignment auto-sync override
+PUT    /api/v1/instances/{id}/assign/{appId}/revision   # {revision: "<sha>" | ""} — rollback pin / track branch
 POST   /api/v1/instances/{id}/{action}   {app_id}    # action ∈ check|apply — create a command
 GET    /api/v1/instances/{id}/runs?mode=&limit=
 GET    /api/v1/runs/{runId}/log       # run detail: output (json raw), output_text (readable), diff, resources
@@ -157,12 +248,26 @@ GET    /api/v1/repositories
 POST   /api/v1/repositories
 PUT    /api/v1/repositories/{repoId}
 DELETE /api/v1/repositories/{repoId}
+
+GET    /api/v1/projects
+POST   /api/v1/projects          {name, repo_patterns}
+PUT    /api/v1/projects/{projectId}
+DELETE /api/v1/projects/{projectId}
+
+GET    /api/v1/sync-windows
+POST   /api/v1/sync-windows      {name, kind, app_id, timezone, days, start_min, end_min, enabled}
+PUT    /api/v1/sync-windows/{windowId}
+DELETE /api/v1/sync-windows/{windowId}
+
+GET    /api/v1/audit?limit=&offset=
+GET    /metrics                        # Prometheus text (public, IDs only)
 ```
 > Repositories = the git-connections registry, referenced by applications via
 > `repo_url` (ArgoCD model: register the repo, then point an app at it). It is
 > **self-maintained** in lax-first mode: creating/updating an app with an
 > unregistered URL auto-inserts a placeholder row, and `server` backfills rows
-> for pre-existing apps at startup.
+> for pre-existing apps at startup. Application bodies also accept
+> `sync_interval` (seconds, `0` = agent `poll_interval`, minimum 10s otherwise).
 
 POST   /api/v1/agent/checkin                          (Bearer) heartbeat → apps + commands
 POST   /api/v1/agent/status                           (Bearer) run result
@@ -214,6 +319,10 @@ envelope: `{items, total, limit, offset}` so the UI can render Prev/Next.
 - **Auto-sync override**: `autoheal_set:true` in the API means the value is an
   explicit override; otherwise it inherits the application default. `{inherit}`
   on the toggle endpoint clears the override.
+- **Command palette**: press **⌘K** (or Ctrl+K) anywhere to jump between pages
+  and see keyboard shortcuts; scoped to the caller's RBAC permissions.
+- **Toast notifications**: success/error/warn/info toasts replace inline banners
+  and auto-dismiss.
 
 ## Operator authentication & RBAC
 
@@ -246,13 +355,16 @@ bindings:
 
 Built-in roles always exist: `role:admin` (every action on every resource) and
 `role:readonly` (get on every resource). The local admin is bound to
-`role:admin`. Only `*` object scope is honoured today; rules are a union
-(no deny lists). Unauthenticated → `401`; unprivileged → `403`.
+`role:admin`. Rule objects may be `*` (all projects) or a project name; a
+project-scoped rule never matches the global scope. Rules are a union (no deny
+lists). Unauthenticated → `401`; unprivileged → `403`.
 
 Route map (what each permission unlocks in the UI): `instances.get` list/detail,
 `instances.create` register, `instances.update` assign/unassign/auto-sync,
 `commands.create` Sync & Check, `runs.get` logs/diffs, plus the natural
-`applications.*` and `repositories.*` CRUD pairs.
+`applications.*`, `repositories.*`, `projects.*`, `windows.*` and `audit.get`
+pairs. `repositories.*`, `projects.*`, `windows.*` and `audit.get` require the
+global (`*`) object scope.
 
 ## EC2 deployment
 
@@ -288,7 +400,8 @@ only one of its packaging options.
 `server`: `-addr`, `-db` (sqlite file **or** `postgres://` URL), `-ui`,
 `-base-url`, `-session-ttl`, `-rbac`, `-tls-cert`/`-tls-key`;
 OIDC via `ANSIBLEHUB_OIDC_*` env (see "Operator authentication & RBAC"
-above). With `-base-url https://…` cookies are marked Secure.
+above). With `-base-url https://…` cookies are marked Secure. Webhooks:
+`ANH_WEBHOOK_URL`, `ANH_WEBHOOK_SECRET`, `ANH_WEBHOOK_TIMEOUT`.
 
 `agent` (`/etc/ansiblehub/agent.yaml` or `ANH_*` env vars):
 
@@ -297,11 +410,14 @@ server: http://hub:8080
 token: <bootstrap token>
 instance_id: ""            # empty → auto (EC2 metadata / local fingerprint)
 state_dir: /var/lib/ansiblehub
-poll_interval: 5m
+poll_interval: 5m         # default heartbeat + check cadence
 autoheal: true             # apply automatically when drift is detected
 insecure_skip_verify: false
 ansible_bin: ansible-playbook
 ```
+
+Per-application cadence is set on the application (`sync_interval`, seconds;
+`0` inherits `poll_interval`).
 
 ## Roadmap
 
@@ -310,6 +426,11 @@ ansible_bin: ansible-playbook
 - [x] OIDC single sign-on (Authorization Code + PKCE, group claim → RBAC)
 - [x] ArgoCD-style RBAC (`p`/`g` policies, builtin `role:admin`/`role:readonly`)
 - [x] Git auth for private repos (per-connection creds via the Repositories registry)
+- [x] Sync windows / maintenance freezes
+- [x] Rollback by pinning an assignment to a commit
+- [x] Webhook notifications, Prometheus metrics, operator audit log
+- [x] Projects with repository allowlists and project-scoped RBAC
+- [x] Ignored drift patterns (`ignore_paths`)
 - [ ] Filename-level diffs (not just changed-task names) from the `--diff` output
 - [ ] SSE/websocket push so the UI updates without polling
 - [ ] Jitter per agent to avoid stampeding `--check` waves

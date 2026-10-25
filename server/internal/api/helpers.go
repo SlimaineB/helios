@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
@@ -28,6 +30,18 @@ func readJSON(r *http.Request, v any) error {
 	return dec.Decode(v)
 }
 
+// readRawJSON buffers the (already size-limited) request body so a handler can
+// decode it and still tell which fields were explicitly present.
+func readRawJSON(r *http.Request) ([]byte, error) {
+	return io.ReadAll(r.Body)
+}
+
+func decodeJSON(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
 func ok200(w http.ResponseWriter) { w.WriteHeader(http.StatusOK) }
 
 // instanceListEnvelope carries each instance plus its apps for the dashboard.
@@ -48,4 +62,9 @@ type AppStatus struct {
 	LatestApply model.Run `json:"latest_apply,omitempty"`
 	HasCheck    bool      `json:"has_check"`
 	LastCheckAt time.Time `json:"last_check_at,omitempty"`
+	// TargetRevision is set when this assignment is pinned to a git revision
+	// (rollback) instead of tracking the application branch.
+	TargetRevision string `json:"target_revision,omitempty"`
+	// Frozen means a maintenance window currently blocks syncs for this app.
+	Frozen bool `json:"frozen"`
 }

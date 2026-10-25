@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
 	"github.com/slim/ansiblehub/server/internal/auth"
+	"github.com/slim/ansiblehub/server/internal/model"
 	"github.com/slim/ansiblehub/server/internal/oidc"
 	"github.com/slim/ansiblehub/server/internal/rbac"
 )
@@ -66,12 +68,53 @@ func (s *Server) op(operation string, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		res, act, _ := strings.Cut(operation, ".")
-		if !s.opAuth.RBAC.Authorize(pr.Groups, pr.Roles, res, act) {
+		if s.opAuth != nil && s.opAuth.RBAC != nil && !s.opAuth.RBAC.AuthorizeAny(pr.Groups, pr.Roles, res, act) {
 			writeErr(w, http.StatusForbidden, fmt.Sprintf("forbidden: missing %s", operation))
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxPrincipal, pr)))
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next(sw, r.WithContext(context.WithValue(r.Context(), ctxPrincipal, pr)))
+		if mutating(r.Method) {
+			entry := model.AuditEntry{
+				User:     pr.label(),
+				Method:   r.Method,
+				Path:     r.URL.Path,
+				Status:   sw.status,
+				RemoteIP: remoteIP(r),
+			}
+			go func() {
+				if err := s.store.AppendAudit(context.Background(), entry); err != nil {
+					s.log.Warn("audit write failed", "error", err)
+				}
+			}()
+		}
 	}
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	return w.ResponseWriter.Write(b)
+}
+
+func mutating(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+}
+
+func remoteIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // resolvePrincipal authenticates the request via an OIDC session cookie or the
@@ -119,12 +162,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := base64.RawURLEncoding.EncodeToString(randBytes(16))
-	url, verifier, err := s.opAuth.OIDC.AuthURL(state)
+	url, verifier, nonce, err := s.opAuth.OIDC.AuthURL(state)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "oidc: "+err.Error())
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state + "." + verifier,
+	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state + "." + verifier + "." + nonce,
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secureCookies})
 	http.Redirect(w, r, url, http.StatusFound)
 }
@@ -141,12 +184,12 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "missing oauth state or code")
 		return
 	}
-	sts := strings.SplitN(c.Value, ".", 2)
-	if len(sts) != 2 || sts[0] != state {
+	sts := strings.SplitN(c.Value, ".", 3)
+	if len(sts) != 3 || sts[0] != state {
 		writeErr(w, http.StatusBadRequest, "oauth state mismatch")
 		return
 	}
-	pr, err := s.opAuth.OIDC.Exchange(r.Context(), code, sts[1])
+	pr, err := s.opAuth.OIDC.Exchange(r.Context(), code, sts[1], sts[2])
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "oidc: "+err.Error())
 		return

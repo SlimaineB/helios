@@ -65,29 +65,67 @@ func (a *Agent) ResolveInstanceID(ctx context.Context) error {
 	return nil
 }
 
-// Run is the main poll loop: checkin -> drift check per app -> run commands.
-func (a *Agent) Run(ctx context.Context) error {
-	interval := a.cfg.PollInterval
-	if interval <= 0 {
-		interval = 5 * time.Minute
+func (a *Agent) pollInterval() time.Duration {
+	if a.cfg.PollInterval > 0 {
+		return a.cfg.PollInterval
 	}
+	return 5 * time.Minute
+}
+
+// Run is the main poll loop: checkin -> drift check per app -> run commands.
+// The wake-up delay is the shortest of the global poll interval and every
+// application's own sync interval, so an app can be checked more (or less)
+// often than the others.
+func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent starting",
 		"server", a.cfg.Server, "instance_id", a.instanceID,
-		"poll", interval.String(), "autoheal", a.cfg.AutoHeal)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	a.pass(ctx) // immediate first pass; errors are logged inside
+		"poll", a.pollInterval().String(), "autoheal", a.cfg.AutoHeal)
 
 	for {
+		a.pass(ctx) // errors are logged inside
+		timer := time.NewTimer(a.nextWake())
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-ticker.C:
-			a.pass(ctx)
+		case <-timer.C:
 		}
 	}
+}
+
+// nextWake returns the delay until the next due app check or heartbeat.
+func (a *Agent) nextWake() time.Duration {
+	wait := a.pollInterval()
+	now := time.Now()
+	a.mu.Lock()
+	for _, st := range a.states {
+		iv := intervalFor(st.app, a.pollInterval())
+		if st.lastCheck.IsZero() {
+			wait = time.Second
+			continue
+		}
+		d := iv - now.Sub(st.lastCheck)
+		if d < time.Second {
+			d = time.Second
+		}
+		if d < wait {
+			wait = d
+		}
+	}
+	a.mu.Unlock()
+	if wait < time.Second {
+		wait = time.Second
+	}
+	return wait
+}
+
+// intervalFor is the app's check/sync frequency: its own sync_interval when
+// set, otherwise the global poll interval.
+func intervalFor(app client.Application, poll time.Duration) time.Duration {
+	if app.SyncInterval > 0 {
+		return time.Duration(app.SyncInterval) * time.Second
+	}
+	return poll
 }
 
 // pass is a single reconciliation: heartbeat + drift checks + command processing.
@@ -99,7 +137,7 @@ func (a *Agent) pass(ctx context.Context) {
 		Platform:   a.platform,
 	})
 	if err != nil {
-		a.log.Error("checkin failed", "error", err)
+		a.log.Error("checkin failed; skipping all apps and commands", "error", err)
 		return
 	}
 
@@ -120,7 +158,7 @@ func (a *Agent) pass(ctx context.Context) {
 
 // processApp syncs the repo and runs a drift check when needed.
 // The git sync itself is a network hit against the repo server, so it only
-// happens once per poll interval (or on the first pass) — never on every tick.
+// happens once per app sync interval (or on the first pass).
 func (a *Agent) processApp(ctx context.Context, app client.Application) error {
 	st := a.stateFor(app)
 
@@ -128,9 +166,14 @@ func (a *Agent) processApp(ctx context.Context, app client.Application) error {
 	lastCheck := st.lastCheck
 	a.mu.Unlock()
 
-	if !(lastCheck.IsZero() || time.Since(lastCheck) >= a.cfg.PollInterval) {
+	if !lastCheck.IsZero() && time.Since(lastCheck) < intervalFor(app, a.pollInterval()) {
 		return nil
 	}
+	// Record the attempt up front so a failing repo/playbook is retried at the
+	// app's interval instead of immediately on the next wake-up.
+	a.mu.Lock()
+	st.lastCheck = time.Now()
+	a.mu.Unlock()
 
 	before, after, err := gitops.OpenSync(ctx, st.RepoDir(), app.RepoURL, app.Branch, credsFor(app))
 	if err != nil {
@@ -153,6 +196,7 @@ func (a *Agent) processApp(ctx context.Context, app client.Application) error {
 func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appState, playbook, commit, commitMsg, trigger string) error {
 	started := time.Now().UTC()
 	res, err := a.runner.Check(ctx, &gitops.Repo{Dir: st.RepoDir()}, playbook, app.Vars)
+	ansible.FilterIgnored(&res, app.IgnorePaths)
 
 	a.mu.Lock()
 	st.lastCheck = time.Now()
@@ -161,17 +205,25 @@ func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appSta
 	a.report(ctx, app, "check", res, commit, commitMsg, trigger, started, err)
 
 	// Autoheal: drift present and enabled → apply (once per pass).
+	// Safety: never apply when the control plane is unreachable — a partition
+	// must not trigger changes from stale assignments.
 	// Cooldown: never autoheal more than once per 2×poll interval, so a
 	// playbook that does not converge cannot pin the box in a apply/reload
 	// loop (each cycle would also hammer the git server).
-	if err == nil && trigger != "after_apply" && res.Status == ansible.StatusDrift && app.AutoHeal && a.autoHealSlot(st) {
-		a.log.Info("autohealing drift", "app", app.Name)
-		astarted := time.Now().UTC()
-		ares, aerr := a.runner.Apply(ctx, &gitops.Repo{Dir: st.RepoDir()}, playbook, app.Vars)
-		a.report(ctx, app, "apply", ares, commit, commitMsg, "autoheal", astarted, aerr)
-		if aerr == nil {
-			// Recheck right after to confirm convergence (no nested autoheal).
-			_ = a.runCheck(ctx, app, st, playbook, commit, commitMsg, "after_apply")
+	if err == nil && trigger != "after_apply" && res.Status == ansible.StatusDrift && app.AutoHeal {
+		if herr := a.client.Health(ctx); herr != nil {
+			a.log.Warn("not autohealing: control plane unreachable", "app", app.Name, "error", herr)
+			return err
+		}
+		if a.autoHealSlot(st) {
+			a.log.Info("autohealing drift", "app", app.Name)
+			astarted := time.Now().UTC()
+			ares, aerr := a.runner.Apply(ctx, &gitops.Repo{Dir: st.RepoDir()}, playbook, app.Vars)
+			a.report(ctx, app, "apply", ares, commit, commitMsg, "autoheal", astarted, aerr)
+			if aerr == nil {
+				// Recheck right after to confirm convergence (no nested autoheal).
+				_ = a.runCheck(ctx, app, st, playbook, commit, commitMsg, "after_apply")
+			}
 		}
 	}
 	return err
@@ -208,10 +260,16 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 
 	var res ansible.Result
 	if cmd.Action == "apply" {
+		// Safety: refuse to deploy if the control plane went away after the
+		// command was claimed.
+		if err := a.client.Health(ctx); err != nil {
+			return fmt.Errorf("control plane unreachable, refusing to apply: %w", err)
+		}
 		res, err = a.runner.Apply(ctx, repo, playbook, app.Vars)
 	} else {
 		res, err = a.runner.Check(ctx, repo, playbook, app.Vars)
 	}
+	ansible.FilterIgnored(&res, app.IgnorePaths)
 	msg, _ := repo.Subject(ctx, after)
 	a.report(ctx, app, cmd.Action, res, after, msg, "command", started, err)
 

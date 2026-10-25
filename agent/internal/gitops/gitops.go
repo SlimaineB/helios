@@ -3,7 +3,6 @@ package gitops
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,8 +25,8 @@ type Repo struct {
 	cloned  bool
 }
 
-// Creds is the git connection: optional HTTP credentials (embedded in the
-// remote URL as userinfo) or an SSH private key (materialized to a temp file).
+// Creds is the git connection: optional HTTP credentials (passed to git via
+// GIT_ASKPASS) or an SSH private key (materialized to a temp file).
 type Creds struct {
 	Username           string
 	Password           string
@@ -77,54 +76,62 @@ func OpenSync(ctx context.Context, dir, url, target string, c Creds) (before, af
 	return before, after, err
 }
 
-// env builds the extra process environment plus a cleanup func. With an SSH
-// key it writes the key to a temp file and returns a GIT_SSH_COMMAND that uses
-// it (IdentitiesOnly so only that key is offered).
+// env builds the extra process environment plus a cleanup func.
+//
+// HTTP credentials go through a short-lived GIT_ASKPASS script instead of being
+// embedded in the remote URL: they never land in .git/config, in `ps` argv, or
+// in git's error output. With an SSH key, the key is written to a temp file and
+// exposed via GIT_SSH_COMMAND (IdentitiesOnly so only that key is offered).
 func (c Creds) env() (_ []string, cleanup func(), err error) {
 	cleanup = func() {}
-	if c.SSHKey == "" {
+	if c.SSHKey != "" {
+		f, err := os.CreateTemp("", "ansiblehub-repo-*")
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("temp ssh key: %w", err)
+		}
+		cleanup = func() { os.Remove(f.Name()) }
+		if _, err := f.WriteString(c.SSHKey); err != nil {
+			f.Close()
+			return nil, cleanup, err
+		}
+		if err := f.Close(); err != nil {
+			return nil, cleanup, err
+		}
+		if err := os.Chmod(f.Name(), 0o600); err != nil {
+			return nil, cleanup, err
+		}
+		ssh := "ssh -i " + f.Name() + " -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+		return []string{"GIT_SSH_COMMAND=" + ssh}, cleanup, nil
+	}
+	if c.Username == "" && c.Password == "" {
 		return nil, cleanup, nil
 	}
-	f, err := os.CreateTemp("", "ansiblehub-repo-*")
+	user, pass := c.Username, c.Password
+	if user == "" {
+		user, pass = c.Password, ""
+	}
+	f, err := os.CreateTemp("", "ansiblehub-askpass-*")
 	if err != nil {
-		return nil, cleanup, fmt.Errorf("temp ssh key: %w", err)
+		return nil, cleanup, fmt.Errorf("temp askpass: %w", err)
 	}
 	cleanup = func() { os.Remove(f.Name()) }
-	if _, err := f.WriteString(c.SSHKey); err != nil {
+	script := "#!/bin/sh\ncase \"$1\" in\n  *[Uu]sername*) printf '%s\\n' \"$ANH_GIT_USERNAME\" ;;\n  *) printf '%s\\n' \"$ANH_GIT_PASSWORD\" ;;\nesac\n"
+	if _, err := f.WriteString(script); err != nil {
 		f.Close()
 		return nil, cleanup, err
 	}
 	if err := f.Close(); err != nil {
 		return nil, cleanup, err
 	}
-	if err := os.Chmod(f.Name(), 0o600); err != nil {
+	if err := os.Chmod(f.Name(), 0o700); err != nil {
 		return nil, cleanup, err
 	}
-	ssh := "ssh -i " + f.Name() + " -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-	return []string{"GIT_SSH_COMMAND=" + ssh}, cleanup, nil
-}
-
-// remoteURL returns the remote with HTTP credentials embedded as userinfo (so
-// `git clone`/`fetch` authenticate via basic auth). When only a password is
-// set it is used as the token-style user, which GitHub/GitLab accept.
-func remoteURL(remote string, c Creds) string {
-	if c.Username == "" && c.Password == "" {
-		return remote
-	}
-	u, err := url.Parse(remote)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return remote
-	}
-	user, pass := c.Username, c.Password
-	if user == "" {
-		user, pass = c.Password, ""
-	}
-	if pass == "" {
-		u.User = url.User(user)
-	} else {
-		u.User = url.UserPassword(user, pass)
-	}
-	return u.String()
+	return []string{
+		"GIT_ASKPASS=" + f.Name(),
+		"GIT_TERMINAL_PROMPT=0",
+		"ANH_GIT_USERNAME=" + user,
+		"ANH_GIT_PASSWORD=" + pass,
+	}, cleanup, nil
 }
 
 // gitArgs prefixes global config (-c) before a subcommand.
@@ -149,7 +156,7 @@ func (r *Repo) clone(ctx context.Context, c Creds, env []string) error {
 		return err
 	}
 	args := gitArgs(c.InsecureSkipVerify,
-		"git", "clone", "--no-single-branch", "--branch", r.Target, remoteURL(r.URL, c), r.Dir)
+		"git", "clone", "--no-single-branch", "--branch", r.Target, r.URL, r.Dir)
 	out, err := runGit(ctx, env, args...)
 	if err != nil {
 		return fmt.Errorf("git clone %s: %w: %s", r.URL, err, strings.TrimSpace(string(out)))
@@ -158,7 +165,7 @@ func (r *Repo) clone(ctx context.Context, c Creds, env []string) error {
 }
 
 func (r *Repo) setOrigin(ctx context.Context, c Creds, env []string) error {
-	out, err := runGit(ctx, env, "git", "-C", r.Dir, "remote", "set-url", "origin", remoteURL(r.URL, c))
+	out, err := runGit(ctx, env, "git", "-C", r.Dir, "remote", "set-url", "origin", r.URL)
 	if err != nil {
 		return fmt.Errorf("git remote set-url: %w: %s", err, strings.TrimSpace(string(out)))
 	}

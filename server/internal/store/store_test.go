@@ -228,7 +228,10 @@ func exerciseStore(t *testing.T, st Store) {
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim commands: %v n=%d", err, len(claimed))
 	}
-	if err := st.CompleteCommand(ctx, cmd.ID, "ok", "all good", "abc123"); err != nil {
+	if err := st.CompleteCommand(ctx, "ins-other", cmd.ID, "failed", "nope", ""); err != ErrNotFound {
+		t.Fatalf("complete command from another instance: want ErrNotFound, got %v", err)
+	}
+	if err := st.CompleteCommand(ctx, inst.ID, cmd.ID, "ok", "all good", "abc123"); err != nil {
 		t.Fatalf("complete command: %v", err)
 	}
 	if c, err := st.LatestCommand(ctx, inst.ID, app.ID, "apply"); err != nil || c.Status != "ok" {

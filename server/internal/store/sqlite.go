@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS instances (
   last_seen   TEXT NOT NULL DEFAULT '',
   hostname    TEXT NOT NULL DEFAULT '',
   platform    TEXT NOT NULL DEFAULT '',
+  project     TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
 
@@ -34,9 +35,12 @@ CREATE TABLE IF NOT EXISTS applications (
   repo_url   TEXT NOT NULL,
   branch     TEXT NOT NULL DEFAULT 'main',
   path       TEXT NOT NULL DEFAULT 'site.yml',
-  vars       TEXT NOT NULL DEFAULT '{}',
-  autoheal   INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  vars          TEXT NOT NULL DEFAULT '{}',
+  autoheal      INTEGER NOT NULL DEFAULT 0,
+  sync_interval INTEGER NOT NULL DEFAULT 0,
+  ignore_paths  TEXT NOT NULL DEFAULT '',
+  project       TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -58,6 +62,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   consecutive_drift INTEGER NOT NULL DEFAULT 0,
   stuck         INTEGER NOT NULL DEFAULT 0,
   stuck_at      TEXT NOT NULL DEFAULT '',
+  target_revision TEXT NOT NULL DEFAULT '',
   created_at   TEXT NOT NULL,
   PRIMARY KEY (instance_id, app_id)
 );
@@ -111,9 +116,41 @@ CREATE TABLE IF NOT EXISTS commands (
   result      TEXT NOT NULL DEFAULT '',
   repo_commit TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL,
-  done_at     TEXT
+  done_at     TEXT,
+  claimed_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  repo_patterns TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_windows (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'deny',
+  app_id     INTEGER NOT NULL DEFAULT 0,
+  timezone   TEXT NOT NULL DEFAULT 'UTC',
+  days       TEXT NOT NULL DEFAULT '',
+  start_min  INTEGER NOT NULL DEFAULT 0,
+  end_min    INTEGER NOT NULL DEFAULT 0,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  at        TEXT NOT NULL,
+  user      TEXT NOT NULL DEFAULT '',
+  method    TEXT NOT NULL DEFAULT '',
+  path      TEXT NOT NULL DEFAULT '',
+  status    INTEGER NOT NULL DEFAULT 0,
+  remote_ip TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 `
 
 // pgSchema mirrors `schema` for Postgres. Time columns stay TEXT so the
@@ -130,6 +167,7 @@ CREATE TABLE IF NOT EXISTS instances (
   last_seen   TEXT NOT NULL DEFAULT '',
   hostname    TEXT NOT NULL DEFAULT '',
   platform    TEXT NOT NULL DEFAULT '',
+  project     TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
 
@@ -139,9 +177,12 @@ CREATE TABLE IF NOT EXISTS applications (
   repo_url   TEXT NOT NULL,
   branch     TEXT NOT NULL DEFAULT 'main',
   path       TEXT NOT NULL DEFAULT 'site.yml',
-  vars       TEXT NOT NULL DEFAULT '{}',
-  autoheal   INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  vars          TEXT NOT NULL DEFAULT '{}',
+  autoheal      INTEGER NOT NULL DEFAULT 0,
+  sync_interval INTEGER NOT NULL DEFAULT 0,
+  ignore_paths  TEXT NOT NULL DEFAULT '',
+  project       TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -163,6 +204,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   consecutive_drift INTEGER NOT NULL DEFAULT 0,
   stuck         INTEGER NOT NULL DEFAULT 0,
   stuck_at      TEXT NOT NULL DEFAULT '',
+  target_revision TEXT NOT NULL DEFAULT '',
   created_at   TEXT NOT NULL,
   PRIMARY KEY (instance_id, app_id)
 );
@@ -216,9 +258,41 @@ CREATE TABLE IF NOT EXISTS commands (
   result      TEXT NOT NULL DEFAULT '',
   repo_commit TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL,
-  done_at     TEXT
+  done_at     TEXT,
+  claimed_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id            BIGSERIAL PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  repo_patterns TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_windows (
+  id         BIGSERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'deny',
+  app_id     BIGINT NOT NULL DEFAULT 0,
+  timezone   TEXT NOT NULL DEFAULT 'UTC',
+  days       TEXT NOT NULL DEFAULT '',
+  start_min  INTEGER NOT NULL DEFAULT 0,
+  end_min    INTEGER NOT NULL DEFAULT 0,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id        BIGSERIAL PRIMARY KEY,
+  at        TEXT NOT NULL,
+  "user"    TEXT NOT NULL DEFAULT '',
+  method    TEXT NOT NULL DEFAULT '',
+  path      TEXT NOT NULL DEFAULT '',
+  status    INTEGER NOT NULL DEFAULT 0,
+  remote_ip TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 `
 
 type sqlstore struct {
@@ -272,6 +346,12 @@ func openPostgres(dsn string) (Store, error) {
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS consecutive_drift INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS stuck INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS stuck_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS sync_interval INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS ignore_paths TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
 		if _, err := db.Exec(ddl); err != nil {
 			return nil, fmt.Errorf("postgres migrate: %w", err)
@@ -338,6 +418,12 @@ func migrate(db *sql.DB) error {
 		{"assignments", "consecutive_drift", "ALTER TABLE assignments ADD COLUMN consecutive_drift INTEGER NOT NULL DEFAULT 0"},
 		{"assignments", "stuck", "ALTER TABLE assignments ADD COLUMN stuck INTEGER NOT NULL DEFAULT 0"},
 		{"assignments", "stuck_at", "ALTER TABLE assignments ADD COLUMN stuck_at TEXT NOT NULL DEFAULT ''"},
+		{"applications", "sync_interval", "ALTER TABLE applications ADD COLUMN sync_interval INTEGER NOT NULL DEFAULT 0"},
+		{"applications", "ignore_paths", "ALTER TABLE applications ADD COLUMN ignore_paths TEXT NOT NULL DEFAULT ''"},
+		{"applications", "project", "ALTER TABLE applications ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
+		{"instances", "project", "ALTER TABLE instances ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
+		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
+		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output", "ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output_text", "ALTER TABLE runs ADD COLUMN output_text TEXT NOT NULL DEFAULT ''"},
@@ -380,6 +466,8 @@ func hasColumn(db *sql.DB, table, name string) (bool, error) {
 
 func (s *sqlstore) Close() error { return s.db.Close() }
 
+func (s *sqlstore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 func tm(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -401,7 +489,7 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, created_at`
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
@@ -409,7 +497,7 @@ func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 		lastSeen, created string
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
-		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &created)
+		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &created)
 	if err != nil {
 		return inst, err
 	}
@@ -468,8 +556,8 @@ func (s *sqlstore) GetInstanceByToken(ctx context.Context, tokenHash string) (mo
 func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error) {
 	in.CreatedAt = nowCtx(ctx)
 	res, err := s.exec(ctx,
-		`INSERT INTO instances (id, name, token_hash, state, created_at) VALUES (?,?,?,?,?)`,
-		in.ID, in.Name, in.TokenHash, model.StateUnknown, tm(in.CreatedAt))
+		`INSERT INTO instances (id, name, token_hash, state, project, created_at) VALUES (?,?,?,?,?,?)`,
+		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create instance: %w", err)
 	}
@@ -479,8 +567,8 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 
 func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error {
 	_, err := s.exec(ctx,
-		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=? WHERE id=?`,
-		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.ID)
+		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=? WHERE id=?`,
+		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project, in.ID)
 	if err != nil {
 		return fmt.Errorf("update instance: %w", err)
 	}
@@ -497,7 +585,7 @@ func (s *sqlstore) DeleteInstance(ctx context.Context, id string) error {
 
 // ---- Applications ----
 
-const appCols = `id, name, repo_url, branch, path, vars, autoheal, created_at`
+const appCols = `id, name, repo_url, branch, path, vars, autoheal, sync_interval, ignore_paths, project, created_at`
 
 func scanApp(row interface{ Scan(...any) error }) (model.Application, error) {
 	var (
@@ -505,7 +593,7 @@ func scanApp(row interface{ Scan(...any) error }) (model.Application, error) {
 		created string
 	)
 	var autoheal int
-	err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.Vars, &autoheal, &created)
+	err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.Vars, &autoheal, &app.SyncInterval, &app.IgnorePaths, &app.Project, &created)
 	if err != nil {
 		return app, err
 	}
@@ -556,8 +644,8 @@ func (s *sqlstore) CreateApplication(ctx context.Context, in model.Application) 
 		autoheal = 1
 	}
 	id, err := s.insertID(ctx,
-		`INSERT INTO applications (name, repo_url, branch, path, vars, autoheal, created_at) VALUES (?,?,?,?,?,?,?)`,
-		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, tm(in.CreatedAt))
+		`INSERT INTO applications (name, repo_url, branch, path, vars, autoheal, sync_interval, ignore_paths, project, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create application: %w", err)
 	}
@@ -571,8 +659,8 @@ func (s *sqlstore) UpdateApplication(ctx context.Context, in model.Application) 
 		autoheal = 1
 	}
 	_, err := s.exec(ctx,
-		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, vars=?, autoheal=? WHERE id=?`,
-		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.ID)
+		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, vars=?, autoheal=?, sync_interval=?, ignore_paths=?, project=? WHERE id=?`,
+		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ID)
 	if err != nil {
 		return fmt.Errorf("update application: %w", err)
 	}
@@ -716,7 +804,7 @@ func (s *sqlstore) BackfillRepositoryRegistry(ctx context.Context) error {
 
 // ---- Assignments ----
 
-const assignmentCols = `instance_id, app_id, autoheal, last_check_at, consecutive_drift, stuck, stuck_at, created_at`
+const assignmentCols = `instance_id, app_id, autoheal, last_check_at, consecutive_drift, stuck, stuck_at, target_revision, created_at`
 
 func (s *sqlstore) ListAssignments(ctx context.Context, instanceID string) ([]model.Assignment, error) {
 	rows, err := s.query(ctx,
@@ -770,7 +858,7 @@ func scanAssignment(row interface{ Scan(...any) error }) (model.Assignment, erro
 		stuck        int
 		last, sa, cr string
 	)
-	err := row.Scan(&a.InstanceID, &a.AppID, &autoheal, &last, &a.ConsecutiveDrift, &stuck, &sa, &cr)
+	err := row.Scan(&a.InstanceID, &a.AppID, &autoheal, &last, &a.ConsecutiveDrift, &stuck, &sa, &a.TargetRevision, &cr)
 	if err != nil {
 		return a, err
 	}
@@ -796,9 +884,19 @@ func (s *sqlstore) Assign(ctx context.Context, instanceID string, appID int64) e
 		`INSERT INTO assignments (instance_id, app_id, created_at) VALUES (?,?,?)`,
 		instanceID, appID, tm(nowCtx(ctx)))
 	if err != nil {
-		return ErrAlreadyBound
+		if isUniqueViolation(err) {
+			return ErrAlreadyBound
+		}
+		return fmt.Errorf("assign: %w", err)
 	}
 	return nil
+}
+
+// isUniqueViolation detects a duplicate-key error across SQLite and Postgres so
+// callers only map real "already bound" conflicts to ErrAlreadyBound.
+func isUniqueViolation(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "unique") || strings.Contains(s, "duplicate key")
 }
 
 func (s *sqlstore) SetAssignmentAutoHeal(ctx context.Context, instanceID string, appID int64, autoHeal bool) error {
@@ -1120,7 +1218,19 @@ func (s *sqlstore) PendingCommands(ctx context.Context, instanceID string) ([]mo
 		`SELECT * FROM commands WHERE instance_id=? AND status=? ORDER BY id ASC`, instanceID, model.CmdPending)
 }
 
+// staleCommandAge is how long a command may stay 'running' before the server
+// assumes the agent died mid-run and offers it again on the next checkin.
+const staleCommandAge = 30 * time.Minute
+
 func (s *sqlstore) ClaimCommands(ctx context.Context, instanceID string) ([]model.Command, error) {
+	now := nowCtx(ctx)
+	// Requeue commands left 'running' by an agent that crashed or was killed
+	// before reporting the result, otherwise they are lost forever.
+	if _, err := s.exec(ctx,
+		`UPDATE commands SET status=?, claimed_at=NULL WHERE instance_id=? AND status='running' AND (claimed_at IS NULL OR claimed_at < ?)`,
+		model.CmdPending, instanceID, tm(now.Add(-staleCommandAge))); err != nil {
+		return nil, fmt.Errorf("requeue stale commands: %w", err)
+	}
 	cmds, err := s.queryCommands(ctx,
 		`SELECT * FROM commands WHERE instance_id=? AND status=? ORDER BY id ASC`, instanceID, model.CmdPending)
 	if err != nil {
@@ -1132,7 +1242,7 @@ func (s *sqlstore) ClaimCommands(ctx context.Context, instanceID string) ([]mode
 	// Atomically flip pending -> running so a concurrent agent can't double-execute.
 	for _, c := range cmds {
 		res, err := s.exec(ctx,
-			`UPDATE commands SET status='running' WHERE id=? AND status=?`, c.ID, model.CmdPending)
+			`UPDATE commands SET status='running', claimed_at=? WHERE id=? AND status=?`, tm(now), c.ID, model.CmdPending)
 		if err != nil {
 			return nil, fmt.Errorf("claim command: %w", err)
 		}
@@ -1143,11 +1253,12 @@ func (s *sqlstore) ClaimCommands(ctx context.Context, instanceID string) ([]mode
 	return cmds, nil
 }
 
-func (s *sqlstore) CompleteCommand(ctx context.Context, id int64, status, result, commit string) error {
-	// 'running' as well as stale 'pending' can be completed (single agent path).
+func (s *sqlstore) CompleteCommand(ctx context.Context, instanceID string, id int64, status, result, commit string) error {
+	// 'running' as well as stale 'pending' can be completed (single agent path),
+	// but only for a command owned by the reporting instance.
 	res, err := s.exec(ctx,
-		`UPDATE commands SET status=?, result=?, repo_commit=?, done_at=? WHERE id=?`,
-		status, result, commit, tm(time.Now().UTC()), id)
+		`UPDATE commands SET status=?, result=?, repo_commit=?, done_at=? WHERE id=? AND instance_id=?`,
+		status, result, commit, tm(time.Now().UTC()), id, instanceID)
 	if err != nil {
 		return fmt.Errorf("complete command: %w", err)
 	}
@@ -1189,9 +1300,10 @@ func scanCommand(row interface{ Scan(...any) error }) (model.Command, error) {
 		c       model.Command
 		created string
 		done    *string
+		claimed *string
 	)
 	err := row.Scan(&c.ID, &c.InstanceID, &c.AppID, &c.Action, &c.Status, &c.Result,
-		&c.RepoCommit, &created, &done)
+		&c.RepoCommit, &created, &done, &claimed)
 	if err != nil {
 		return c, err
 	}
@@ -1201,4 +1313,288 @@ func scanCommand(row interface{ Scan(...any) error }) (model.Command, error) {
 		c.DoneAt = &t
 	}
 	return c, nil
+}
+
+// ---- Scoped listings (RBAC project scopes) ----
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+func anyArgs(projects []string) []any {
+	out := make([]any, len(projects))
+	for i, p := range projects {
+		out[i] = p
+	}
+	return out
+}
+
+func (s *sqlstore) ListInstancesScoped(ctx context.Context, projects []string, limit, offset int) ([]model.Instance, error) {
+	if len(projects) == 0 {
+		return []model.Instance{}, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	q := `SELECT ` + instanceCols + ` FROM instances WHERE project IN (` + placeholders(len(projects)) + `) ORDER BY name LIMIT ? OFFSET ?`
+	args := append(anyArgs(projects), limit, offset)
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "list scoped instances")
+	}
+	defer rows.Close()
+	out := []model.Instance{}
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, wrap(err, "scan instance")
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) CountInstancesScoped(ctx context.Context, projects []string) (int, error) {
+	if len(projects) == 0 {
+		return 0, nil
+	}
+	var n int
+	q := `SELECT COUNT(*) FROM instances WHERE project IN (` + placeholders(len(projects)) + `)`
+	if err := s.queryRow(ctx, q, anyArgs(projects)...).Scan(&n); err != nil {
+		return 0, wrap(err, "count scoped instances")
+	}
+	return n, nil
+}
+
+func (s *sqlstore) ListApplicationsScoped(ctx context.Context, projects []string) ([]model.Application, error) {
+	if len(projects) == 0 {
+		return []model.Application{}, nil
+	}
+	q := `SELECT ` + appCols + ` FROM applications WHERE project IN (` + placeholders(len(projects)) + `) ORDER BY name`
+	rows, err := s.query(ctx, q, anyArgs(projects)...)
+	if err != nil {
+		return nil, wrap(err, "list scoped apps")
+	}
+	defer rows.Close()
+	out := []model.Application{}
+	for rows.Next() {
+		app, err := scanApp(rows)
+		if err != nil {
+			return nil, wrap(err, "scan app")
+		}
+		out = append(out, app)
+	}
+	return out, rows.Err()
+}
+
+// ---- Projects ----
+
+const projectCols = `id, name, repo_patterns, created_at`
+
+func scanProject(row interface{ Scan(...any) error }) (model.Project, error) {
+	var p model.Project
+	var created string
+	if err := row.Scan(&p.ID, &p.Name, &p.RepoPatterns, &created); err != nil {
+		return p, err
+	}
+	p.CreatedAt = parseTime(created)
+	return p, nil
+}
+
+func (s *sqlstore) ListProjects(ctx context.Context) ([]model.Project, error) {
+	rows, err := s.query(ctx, `SELECT `+projectCols+` FROM projects ORDER BY name`)
+	if err != nil {
+		return nil, wrap(err, "list projects")
+	}
+	defer rows.Close()
+	out := []model.Project{}
+	for rows.Next() {
+		p, err := scanProject(rows)
+		if err != nil {
+			return nil, wrap(err, "scan project")
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) GetProjectByName(ctx context.Context, name string) (model.Project, error) {
+	p, err := scanProject(s.queryRow(ctx, `SELECT `+projectCols+` FROM projects WHERE name=?`, name))
+	if err != nil {
+		return p, wrap(err, "get project")
+	}
+	return p, nil
+}
+
+func (s *sqlstore) CreateProject(ctx context.Context, in model.Project) (model.Project, error) {
+	in.CreatedAt = nowCtx(ctx)
+	id, err := s.insertID(ctx,
+		`INSERT INTO projects (name, repo_patterns, created_at) VALUES (?,?,?)`,
+		in.Name, in.RepoPatterns, tm(in.CreatedAt))
+	if err != nil {
+		return in, fmt.Errorf("create project: %w", err)
+	}
+	in.ID = id
+	return in, nil
+}
+
+func (s *sqlstore) UpdateProject(ctx context.Context, in model.Project) error {
+	var old string
+	if err := s.queryRow(ctx, `SELECT name FROM projects WHERE id=?`, in.ID).Scan(&old); err != nil {
+		return wrap(err, "get project name")
+	}
+	if _, err := s.exec(ctx, `UPDATE projects SET name=?, repo_patterns=? WHERE id=?`, in.Name, in.RepoPatterns, in.ID); err != nil {
+		return fmt.Errorf("update project: %w", err)
+	}
+	// Cascade a rename so applications/instances stay inside their project.
+	if old != "" && old != in.Name {
+		if _, err := s.exec(ctx, `UPDATE applications SET project=? WHERE project=?`, in.Name, old); err != nil {
+			return fmt.Errorf("cascade application project: %w", err)
+		}
+		if _, err := s.exec(ctx, `UPDATE instances SET project=? WHERE project=?`, in.Name, old); err != nil {
+			return fmt.Errorf("cascade instance project: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteProject(ctx context.Context, id int64) error {
+	_, err := s.exec(ctx, `DELETE FROM projects WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	return nil
+}
+
+// ---- Sync windows ----
+
+const windowCols = `id, name, kind, app_id, timezone, days, start_min, end_min, enabled, created_at`
+
+func scanWindow(row interface{ Scan(...any) error }) (model.SyncWindow, error) {
+	var w model.SyncWindow
+	var enabled int
+	var created string
+	if err := row.Scan(&w.ID, &w.Name, &w.Kind, &w.AppID, &w.Timezone, &w.Days, &w.StartMin, &w.EndMin, &enabled, &created); err != nil {
+		return w, err
+	}
+	w.Enabled = enabled != 0
+	w.CreatedAt = parseTime(created)
+	return w, nil
+}
+
+func (s *sqlstore) ListSyncWindows(ctx context.Context) ([]model.SyncWindow, error) {
+	rows, err := s.query(ctx, `SELECT `+windowCols+` FROM sync_windows ORDER BY app_id, name`)
+	if err != nil {
+		return nil, wrap(err, "list sync windows")
+	}
+	defer rows.Close()
+	out := []model.SyncWindow{}
+	for rows.Next() {
+		w, err := scanWindow(rows)
+		if err != nil {
+			return nil, wrap(err, "scan sync window")
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) GetSyncWindow(ctx context.Context, id int64) (model.SyncWindow, error) {
+	w, err := scanWindow(s.queryRow(ctx, `SELECT `+windowCols+` FROM sync_windows WHERE id=?`, id))
+	if err != nil {
+		return w, wrap(err, "get sync window")
+	}
+	return w, nil
+}
+
+func (s *sqlstore) CreateSyncWindow(ctx context.Context, in model.SyncWindow) (model.SyncWindow, error) {
+	in.CreatedAt = nowCtx(ctx)
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	id, err := s.insertID(ctx,
+		`INSERT INTO sync_windows (name, kind, app_id, timezone, days, start_min, end_min, enabled, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		in.Name, in.Kind, in.AppID, in.Timezone, in.Days, in.StartMin, in.EndMin, enabled, tm(in.CreatedAt))
+	if err != nil {
+		return in, fmt.Errorf("create sync window: %w", err)
+	}
+	in.ID = id
+	return in, nil
+}
+
+func (s *sqlstore) UpdateSyncWindow(ctx context.Context, in model.SyncWindow) error {
+	enabled := 0
+	if in.Enabled {
+		enabled = 1
+	}
+	_, err := s.exec(ctx,
+		`UPDATE sync_windows SET name=?, kind=?, app_id=?, timezone=?, days=?, start_min=?, end_min=?, enabled=? WHERE id=?`,
+		in.Name, in.Kind, in.AppID, in.Timezone, in.Days, in.StartMin, in.EndMin, enabled, in.ID)
+	if err != nil {
+		return fmt.Errorf("update sync window: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteSyncWindow(ctx context.Context, id int64) error {
+	_, err := s.exec(ctx, `DELETE FROM sync_windows WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete sync window: %w", err)
+	}
+	return nil
+}
+
+// ---- Audit log ----
+
+func (s *sqlstore) AppendAudit(ctx context.Context, e model.AuditEntry) error {
+	e.At = nowCtx(ctx)
+	_, err := s.exec(ctx,
+		`INSERT INTO audit_log (at, "user", method, path, status, remote_ip) VALUES (?,?,?,?,?,?)`,
+		tm(e.At), e.User, e.Method, e.Path, e.Status, e.RemoteIP)
+	if err != nil {
+		return fmt.Errorf("append audit: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var total int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&total); err != nil {
+		return nil, 0, wrap(err, "count audit")
+	}
+	rows, err := s.query(ctx, `SELECT id, at, "user", method, path, status, remote_ip FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, wrap(err, "list audit")
+	}
+	defer rows.Close()
+	out := []model.AuditEntry{}
+	for rows.Next() {
+		var e model.AuditEntry
+		var at string
+		if err := rows.Scan(&e.ID, &at, &e.User, &e.Method, &e.Path, &e.Status, &e.RemoteIP); err != nil {
+			return nil, 0, wrap(err, "scan audit")
+		}
+		e.At = parseTime(at)
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
+func (s *sqlstore) SetAssignmentTargetRevision(ctx context.Context, instanceID string, appID int64, revision string) error {
+	res, err := s.exec(ctx,
+		`UPDATE assignments SET target_revision=? WHERE instance_id=? AND app_id=?`, revision, instanceID, appID)
+	if err != nil {
+		return fmt.Errorf("set target revision: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

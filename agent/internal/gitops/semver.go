@@ -324,7 +324,7 @@ func satisfiesAll(cons []constraint, v sv) bool {
 // latestTag lists remote tags and resolves the highest one matching expr.
 func (r Repo) latestTag(ctx context.Context, c Creds, env []string, expr string) (string, error) {
 	args := gitArgs(c.InsecureSkipVerify,
-		"git", "ls-remote", "--tags", "--refs", remoteURL(r.URL, c))
+		"git", "ls-remote", "--tags", "--refs", r.URL)
 	out, err := runGit(ctx, env, args...)
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote --tags %s: %w: %s", r.URL, err, strings.TrimSpace(string(out)))

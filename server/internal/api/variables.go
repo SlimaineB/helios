@@ -22,6 +22,9 @@ func (s *Server) handleListAppVariables(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid app id")
 		return
 	}
+	if !s.requireAppScope(w, r, appID, "applications.get") {
+		return
+	}
 	vars, err := s.store.AppVariables(r.Context(), appID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -34,6 +37,9 @@ func (s *Server) handleUpdateAppVariables(w http.ResponseWriter, r *http.Request
 	appID, ok := appIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "invalid app id")
+		return
+	}
+	if !s.requireAppScope(w, r, appID, "applications.update") {
 		return
 	}
 	in, err := readVarsPayload(r)
@@ -69,6 +75,9 @@ func (s *Server) handleListAssignedVariables(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusBadRequest, "invalid app id")
 		return
 	}
+	if !s.requireInstanceScope(w, r, instID, "instances.get") {
+		return
+	}
 	vars, err := s.store.AssignmentVariables(r.Context(), instID, appID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -86,6 +95,9 @@ func (s *Server) handleUpdateAssignedVariables(w http.ResponseWriter, r *http.Re
 	appID, ok := appIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "invalid app id")
+		return
+	}
+	if !s.requireInstanceScope(w, r, instID, "instances.update") {
 		return
 	}
 	in, err := readVarsPayload(r)

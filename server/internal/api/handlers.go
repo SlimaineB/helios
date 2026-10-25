@@ -4,18 +4,26 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/slim/ansiblehub/server/internal/auth"
+	"github.com/slim/ansiblehub/server/internal/metrics"
 	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/ansiblehub/server/internal/notify"
 	"github.com/slim/ansiblehub/server/internal/store"
+	"github.com/slim/ansiblehub/server/internal/syncwindows"
 )
+
+var revisionRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
 type Server struct {
 	store         store.Store
@@ -27,6 +35,23 @@ type Server struct {
 	// may fail to converge before an assignment is flagged stuck (autoheal
 	// stops until the playbook converges again).
 	maxHealStreak int
+	notifier      *notify.Notifier
+}
+
+// SetNotifier enables webhook notifications (nil disables them).
+func (s *Server) SetNotifier(n *notify.Notifier) { s.notifier = n }
+
+// notifyEvent enriches the event with the application name and dispatches it.
+func (s *Server) notifyEvent(ctx context.Context, ev notify.Event) {
+	if s.notifier == nil {
+		return
+	}
+	if ev.AppID != 0 && ev.AppName == "" {
+		if app, err := s.store.GetApplication(ctx, ev.AppID); err == nil {
+			ev.AppName = app.Name
+		}
+	}
+	s.notifier.Send(ev)
 }
 
 func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *Server {
@@ -47,7 +72,21 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 	return s
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
+// maxRequestBody bounds every request body: agent checkins carry run logs and
+// diffs, but nothing legitimate approaches this size.
+const maxRequestBody = 8 << 20 // 8 MiB
+
+func (s *Server) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
 func genInstanceID() string {
 	b := make([]byte, 6)
@@ -116,6 +155,13 @@ func writePage(w http.ResponseWriter, items any, total, limit, offset int) {
 // ---- health ----
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.store.Ping(ctx); err != nil {
+		s.log.Warn("health check failed", "error", err)
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
 }
 
@@ -123,19 +169,31 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	limit, offset := paginate(r, 20)
-	total, err := s.store.CountInstances(r.Context())
+	all, scopes := s.visibleProjects(r, "instances", "get")
+	var (
+		total int
+		insts []model.Instance
+		err   error
+	)
+	if all {
+		total, err = s.store.CountInstances(r.Context())
+		if err == nil {
+			insts, err = s.store.ListInstances(r.Context(), limit, offset)
+		}
+	} else {
+		total, err = s.store.CountInstancesScoped(r.Context(), scopes)
+		if err == nil {
+			insts, err = s.store.ListInstancesScoped(r.Context(), scopes, limit, offset)
+		}
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	insts, err := s.store.ListInstances(r.Context(), limit, offset)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	windows, _ := s.store.ListSyncWindows(r.Context())
 	out := make([]InstanceWithApps, 0, len(insts))
 	for _, inst := range insts {
-		as, err := s.appsForInstance(r.Context(), inst.ID)
+		as, err := s.appsForInstance(r.Context(), inst.ID, windows)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -145,7 +203,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	writePage(w, out, total, limit, offset)
 }
 
-func (s *Server) appsForInstance(ctx context.Context, instanceID string) ([]AppStatus, error) {
+func (s *Server) appsForInstance(ctx context.Context, instanceID string, windows []model.SyncWindow) ([]AppStatus, error) {
 	ass, err := s.store.ListAssignments(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -157,11 +215,13 @@ func (s *Server) appsForInstance(ctx context.Context, instanceID string) ([]AppS
 			continue
 		}
 		as := AppStatus{
-			Application: app,
-			AutoHeal:    effectiveAutoHeal(app, a),
-			Stuck:       a.Stuck,
-			StuckAt:     a.StuckAt,
-			LastCheckAt: a.LastCheckAt,
+			Application:    app,
+			AutoHeal:       effectiveAutoHeal(app, a),
+			Stuck:          a.Stuck,
+			StuckAt:        a.StuckAt,
+			LastCheckAt:    a.LastCheckAt,
+			TargetRevision: a.TargetRevision,
+			Frozen:         syncwindows.Frozen(windows, app.ID, time.Now()),
 		}
 		if a.AutoHeal != nil {
 			as.AutoHealSet = true
@@ -192,7 +252,8 @@ func effectiveAutoHeal(app model.Application, a model.Assignment) bool {
 // handleCreateInstance registers a new instance and returns its bootstrap token once.
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Project string `json:"project"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -200,6 +261,14 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Name) == "" {
 		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	body.Project = strings.TrimSpace(body.Project)
+	if !s.requireObject(w, r, "instances.create", body.Project) {
+		return
+	}
+	if msg := s.validateProjectOnly(r.Context(), body.Project); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	token, err := auth.NewToken()
@@ -210,6 +279,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	inst, err := s.store.CreateInstance(r.Context(), model.Instance{
 		ID:        genInstanceID(),
 		Name:      body.Name,
+		Project:   body.Project,
 		TokenHash: auth.Hash(token),
 	})
 	if err != nil {
@@ -230,7 +300,11 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "instance not found")
 		return
 	}
-	as, err := s.appsForInstance(r.Context(), inst.ID)
+	if !s.requireObject(w, r, "instances.get", inst.Project) {
+		return
+	}
+	windows, _ := s.store.ListSyncWindows(r.Context())
+	as, err := s.appsForInstance(r.Context(), inst.ID, windows)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -240,6 +314,14 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	id, _ := idParam(r, "id")
+	inst, err := s.store.GetInstance(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if !s.requireObject(w, r, "instances.delete", inst.Project) {
+		return
+	}
 	if err := s.store.DeleteInstance(r.Context(), id); err != nil {
 		writeErr(w, http.StatusNotFound, "instance not found")
 		return
@@ -254,6 +336,26 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(r, &body); err != nil || body.AppID == 0 {
 		writeErr(w, http.StatusBadRequest, "app_id is required")
+		return
+	}
+	inst, err := s.store.GetInstance(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	app, err := s.store.GetApplication(r.Context(), body.AppID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireObject(w, r, "instances.update", inst.Project) {
+		return
+	}
+	if !s.requireObject(w, r, "applications.get", app.Project) {
+		return
+	}
+	if app.Project != inst.Project {
+		writeErr(w, http.StatusConflict, "application and instance belong to different projects")
 		return
 	}
 	if err := s.store.Assign(r.Context(), id, body.AppID); err != nil {
@@ -274,11 +376,73 @@ func (s *Server) handleUnassign(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "missing app id")
 		return
 	}
+	if !s.requireInstanceScope(w, r, id, "instances.update") {
+		return
+	}
 	if err := s.store.Unassign(r.Context(), id, appID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	ok200(w)
+}
+
+// handleSetRevision pins or unpins an assignment to a git revision. Pinning a
+// revision immediately queues an apply so the rollback happens on the next
+// agent pass; unpinning resumes tracking the application branch.
+func (s *Server) handleSetRevision(w http.ResponseWriter, r *http.Request) {
+	id, _ := idParam(r, "id")
+	appID, ok := appIDParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "missing app id")
+		return
+	}
+	var body struct {
+		Revision string `json:"revision"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	rev := strings.TrimSpace(body.Revision)
+	if rev != "" && !revisionRe.MatchString(rev) {
+		writeErr(w, http.StatusBadRequest, "revision must be a full or abbreviated git commit SHA")
+		return
+	}
+	if !s.requireInstanceScope(w, r, id, "instances.update") {
+		return
+	}
+	if _, err := s.store.GetAssignment(r.Context(), id, appID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusConflict, "instance is not bound to this application")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rev != "" && s.frozen(r.Context(), appID) {
+		metrics.Frozen(appID)
+		s.notifyEvent(r.Context(), notify.Event{
+			Event: "sync_blocked", InstanceID: id, AppID: appID,
+			Mode: model.ActionApply, Message: "rollback frozen by a maintenance window",
+		})
+		writeErr(w, http.StatusConflict, "sync is frozen by a maintenance window")
+		return
+	}
+	if err := s.store.SetAssignmentTargetRevision(r.Context(), id, appID, rev); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rev != "" {
+		if _, err := s.store.CreateCommand(r.Context(), model.Command{
+			InstanceID: id,
+			AppID:      appID,
+			Action:     model.ActionApply,
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"target_revision": rev})
 }
 
 func (s *Server) handleCreateInstanceCommand(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +459,9 @@ func (s *Server) handleCreateInstanceCommand(w http.ResponseWriter, r *http.Requ
 		writeErr(w, http.StatusBadRequest, "action must be check|apply")
 		return
 	}
+	if !s.requireInstanceScope(w, r, id, "commands.create") {
+		return
+	}
 	// Reject sync commands for an app the instance isn't bound to.
 	ass, _ := s.store.ListAssignments(r.Context(), id)
 	bound := false
@@ -306,6 +473,15 @@ func (s *Server) handleCreateInstanceCommand(w http.ResponseWriter, r *http.Requ
 	}
 	if !bound {
 		writeErr(w, http.StatusConflict, "instance is not bound to this application")
+		return
+	}
+	if action == model.ActionApply && s.frozen(r.Context(), body.AppID) {
+		metrics.Frozen(body.AppID)
+		s.notifyEvent(r.Context(), notify.Event{
+			Event: "sync_blocked", InstanceID: id, AppID: body.AppID,
+			Mode: model.ActionApply, Message: "sync frozen by a maintenance window",
+		})
+		writeErr(w, http.StatusConflict, "sync is frozen by a maintenance window")
 		return
 	}
 	c, err := s.store.CreateCommand(r.Context(), model.Command{
@@ -322,6 +498,9 @@ func (s *Server) handleCreateInstanceCommand(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	id, _ := idParam(r, "id")
+	if !s.requireInstanceScope(w, r, id, "runs.get") {
+		return
+	}
 	limit, offset := paginate(r, 50)
 	f := model.RunFilter{InstanceID: id, Limit: limit, Offset: offset}
 	if v := r.URL.Query().Get("app_id"); v != "" {
@@ -343,10 +522,185 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	writePage(w, runs, total, limit, offset)
 }
 
+func (s *Server) frozen(ctx context.Context, appID int64) bool {
+	windows, err := s.store.ListSyncWindows(ctx)
+	if err != nil {
+		// A window lookup failure must not block operations; the caller still
+		// enforces every other safety gate.
+		s.log.Warn("sync window lookup failed", "error", err)
+		return false
+	}
+	return syncwindows.Frozen(windows, appID, time.Now())
+}
+
+// ---- audit log (operator) ----
+
+func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "audit.get") {
+		return
+	}
+	limit, offset := paginate(r, 50)
+	entries, total, err := s.store.ListAudit(r.Context(), limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writePage(w, entries, total, limit, offset)
+}
+
+// ---- sync windows (operator) ----
+
+func (s *Server) handleListSyncWindows(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "windows.get") {
+		return
+	}
+	out, err := s.store.ListSyncWindows(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateSyncWindow(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "windows.create") {
+		return
+	}
+	raw, err := readRawJSON(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	var in model.SyncWindow
+	if err := decodeJSON(raw, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	var present map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &present)
+	if _, ok := present["enabled"]; !ok {
+		in.Enabled = true
+	}
+	in, msg := syncwindows.Validate(in)
+	if msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	if in.AppID != 0 {
+		if _, err := s.store.GetApplication(r.Context(), in.AppID); err != nil {
+			writeErr(w, http.StatusBadRequest, "unknown app_id")
+			return
+		}
+	}
+	out, err := s.store.CreateSyncWindow(r.Context(), in)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, out)
+}
+
+func (s *Server) handleUpdateSyncWindow(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "windows.update") {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("windowId"), 10, 64)
+	if err != nil || id == 0 {
+		writeErr(w, http.StatusBadRequest, "invalid window id")
+		return
+	}
+	old, err := s.store.GetSyncWindow(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "window not found")
+		return
+	}
+	raw, err := readRawJSON(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	var in model.SyncWindow
+	if err := decodeJSON(raw, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	in.ID = old.ID
+	if _, ok := present["name"]; !ok || in.Name == "" {
+		in.Name = old.Name
+	}
+	if _, ok := present["kind"]; !ok || in.Kind == "" {
+		in.Kind = old.Kind
+	}
+	if _, ok := present["app_id"]; !ok {
+		in.AppID = old.AppID
+	}
+	if _, ok := present["timezone"]; !ok || in.Timezone == "" {
+		in.Timezone = old.Timezone
+	}
+	if _, ok := present["days"]; !ok {
+		in.Days = old.Days
+	}
+	if _, ok := present["start_min"]; !ok {
+		in.StartMin = old.StartMin
+	}
+	if _, ok := present["end_min"]; !ok {
+		in.EndMin = old.EndMin
+	}
+	if _, ok := present["enabled"]; !ok {
+		in.Enabled = old.Enabled
+	}
+	in, msg := syncwindows.Validate(in)
+	if msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
+	if in.AppID != 0 {
+		if _, err := s.store.GetApplication(r.Context(), in.AppID); err != nil {
+			writeErr(w, http.StatusBadRequest, "unknown app_id")
+			return
+		}
+	}
+	if err := s.store.UpdateSyncWindow(r.Context(), in); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, in)
+}
+
+func (s *Server) handleDeleteSyncWindow(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "windows.delete") {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("windowId"), 10, 64)
+	if err != nil || id == 0 {
+		writeErr(w, http.StatusBadRequest, "invalid window id")
+		return
+	}
+	if err := s.store.DeleteSyncWindow(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok200(w)
+}
+
 // ---- applications (operator) ----
 
 func (s *Server) handleListApplications(w http.ResponseWriter, r *http.Request) {
-	apps, err := s.store.ListApplications(r.Context())
+	all, scopes := s.visibleProjects(r, "applications", "get")
+	var (
+		apps []model.Application
+		err  error
+	)
+	if all {
+		apps, err = s.store.ListApplications(r.Context())
+	} else {
+		apps, err = s.store.ListApplicationsScoped(r.Context(), scopes)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -373,6 +727,18 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 	if in.Vars == "" {
 		in.Vars = "{}"
 	}
+	if in.SyncInterval < 0 || (in.SyncInterval > 0 && in.SyncInterval < 10) {
+		writeErr(w, http.StatusBadRequest, "sync_interval must be 0 (inherit) or at least 10 seconds")
+		return
+	}
+	in.Project = strings.TrimSpace(in.Project)
+	if !s.requireObject(w, r, "applications.create", in.Project) {
+		return
+	}
+	if msg := s.validateAppProject(r.Context(), in.Project, in.RepoURL); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
 	// Ensure the repo is registered (ArgoCD-style: app → registry upsert).
 	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to register repository: "+err.Error())
@@ -396,8 +762,18 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "missing app id")
 		return
 	}
+	raw, err := readRawJSON(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
 	var in model.Application
-	if err := readJSON(r, &in); err != nil {
+	if err := decodeJSON(raw, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
@@ -406,7 +782,26 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusNotFound, "application not found")
 		return
 	}
+	if !s.requireObject(w, r, "applications.update", old.Project) {
+		return
+	}
+	if _, ok := present["project"]; !ok {
+		in.Project = old.Project
+	}
+	in.Project = strings.TrimSpace(in.Project)
+	if in.Project != old.Project {
+		if !s.requireObject(w, r, "applications.update", in.Project) {
+			return
+		}
+	}
+	if msg := s.validateAppProject(r.Context(), in.Project, in.RepoURL); msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
 	in.ID = old.ID
+	if in.Name == "" {
+		in.Name = old.Name
+	}
 	if in.RepoURL == "" {
 		in.RepoURL = old.RepoURL
 	}
@@ -415,6 +810,24 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 	}
 	if in.Path == "" {
 		in.Path = old.Path
+	}
+	// Omitted fields keep their stored value: a partial PUT must not silently
+	// clear vars or flip autoheal to false.
+	if _, ok := present["vars"]; !ok || in.Vars == "" {
+		in.Vars = old.Vars
+	}
+	if _, ok := present["autoheal"]; !ok {
+		in.AutoHeal = old.AutoHeal
+	}
+	if _, ok := present["sync_interval"]; !ok {
+		in.SyncInterval = old.SyncInterval
+	}
+	if _, ok := present["ignore_paths"]; !ok {
+		in.IgnorePaths = old.IgnorePaths
+	}
+	if in.SyncInterval < 0 || (in.SyncInterval > 0 && in.SyncInterval < 10) {
+		writeErr(w, http.StatusBadRequest, "sync_interval must be 0 (inherit) or at least 10 seconds")
+		return
 	}
 	if in.Vars == "" {
 		in.Vars = "{}"
@@ -435,6 +848,14 @@ func (s *Server) handleDeleteApplication(w http.ResponseWriter, r *http.Request)
 	id, ok := appIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "missing app id")
+		return
+	}
+	app, err := s.store.GetApplication(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireObject(w, r, "applications.delete", app.Project) {
 		return
 	}
 	if err := s.store.DeleteApplication(r.Context(), id); err != nil {
@@ -473,6 +894,9 @@ func toRepoView(r model.Repository) repoView {
 }
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "repositories.get") {
+		return
+	}
 	repos, err := s.store.ListRepositories(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -486,6 +910,9 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "repositories.create") {
+		return
+	}
 	var in model.Repository
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -511,6 +938,9 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "repositories.update") {
+		return
+	}
 	id, ok := repoIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "missing repo id")
@@ -533,13 +963,17 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 	if in.Name == "" {
 		in.Name = in.URL
 	}
-	// Empty password/ssh_key means "keep existing".
+	// Empty username/password/ssh_key means "keep existing".
+	if in.Username == "" {
+		in.Username = old.Username
+	}
 	if in.Password == "" {
 		in.Password = old.Password
 	}
 	if in.SSHKey == "" {
 		in.SSHKey = old.SSHKey
 	}
+	in.CreatedAt = old.CreatedAt
 	if err := s.store.UpdateRepository(r.Context(), in); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "repository url already exists")
@@ -552,6 +986,9 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "repositories.delete") {
+		return
+	}
 	id, ok := repoIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "missing repo id")
@@ -600,6 +1037,8 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	windows, _ := s.store.ListSyncWindows(r.Context())
+	metrics.Checkin(inst.ID)
 	resp := checkinResponse{}
 	ass, err := s.store.ListAssignments(r.Context(), inst.ID)
 	if err != nil {
@@ -612,9 +1051,18 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		app.AutoHeal = effectiveAutoHeal(app, a)
+		// Rollback/pinned revision wins over the application branch. The agent
+		// stays unaware: it just sees a different target revision.
+		if a.TargetRevision != "" {
+			app.Branch = a.TargetRevision
+		}
 		// A non-converging assignment is stuck: keep drifting checks but stop
 		// the apply side, so the box isn't pinned in an apply loop forever.
 		if a.Stuck {
+			app.AutoHeal = false
+		}
+		// Maintenance windows suppress autoheal but never checks.
+		if syncwindows.Frozen(windows, app.ID, time.Now()) {
 			app.AutoHeal = false
 		}
 		// Resolve the git connection from the repositories registry so the
@@ -668,6 +1116,21 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "mode must be check|apply")
 		return
 	}
+	switch body.Status {
+	case model.RunOK, model.RunDrift, model.RunFailed:
+	default:
+		writeErr(w, http.StatusBadRequest, "status must be ok|drift|failed")
+		return
+	}
+	if _, err := s.store.GetAssignment(r.Context(), inst.ID, body.AppID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusConflict, "instance is not bound to this application")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	metrics.Run(inst.ID, body.AppID, body.Mode, body.Status)
 	run := model.Run{
 		InstanceID:   inst.ID,
 		AppID:        body.AppID,
@@ -709,6 +1172,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 						} else {
 							s.log.Warn("assignment stuck: autoheal did not converge",
 								"instance", inst.ID, "app", body.AppID, "streak", streak)
+							s.notifyEvent(r.Context(), notify.Event{
+								Event: "assignment_stuck", InstanceID: inst.ID, AppID: body.AppID,
+								Status: model.RunDrift, Message: fmt.Sprintf("autoheal did not converge after %d cycles", streak),
+							})
 						}
 					}
 				}
@@ -750,6 +1217,21 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.store.CreateRun(r.Context(), run); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	switch {
+	case body.Status == model.RunFailed:
+		s.notifyEvent(r.Context(), notify.Event{
+			Event: "run_failed", InstanceID: inst.ID, AppID: body.AppID,
+			Mode: body.Mode, Status: body.Status, Trigger: body.Trigger,
+			Commit: body.CommitAfter, Message: body.OutputTail,
+		})
+	case body.Mode == model.ActionApply && body.Status == model.RunOK &&
+		(body.Trigger == "autoheal" || body.Trigger == "command"):
+		s.notifyEvent(r.Context(), notify.Event{
+			Event: "apply_ok", InstanceID: inst.ID, AppID: body.AppID,
+			Mode: body.Mode, Status: body.Status, Trigger: body.Trigger,
+			Commit: body.CommitAfter,
+		})
 	}
 	if body.Mode == "check" {
 		if err := s.refreshInstanceState(r.Context(), inst); err != nil {
