@@ -722,12 +722,10 @@ label.row.small { font-size: 12px; }
 .confirm-icon.warn { background: var(--warn-soft); color: var(--warn); }
 .confirm-icon.info { background: var(--accent-soft); color: var(--accent); }
 
-.action-modal { width: min(480px, 92vw); height: auto; min-height: 190px; }
-.action-body { flex: 1; padding: 26px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
-.action-wait { display: flex; align-items: center; gap: 16px; max-width: 380px; text-align: left; }
 .spinner { width: 22px; height: 22px; flex: none; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: aspin .8s linear infinite; }
+.spinner.xs { width: 13px; height: 13px; border-width: 2px; }
 @keyframes aspin { to { transform: rotate(360deg); } }
-.pulse-note { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.diff-loading { display: flex; align-items: center; gap: 10px; }
 
 /* ------------------------------------------------------------------ toast */
 
@@ -1149,3 +1147,24 @@ details summary { cursor: pointer; color: var(--muted); }
 @media (max-width: 640px) {
   .choice-grid { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------- revisions */
+.rev-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rev-link:hover { background: transparent; color: var(--accent-hover); text-decoration: underline; }
+.rev-cell { display: flex; flex-direction: column; min-width: 0; }
+.rev-cell .commit-msg { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-table td { padding: 6px 10px; font-size: 12px; vertical-align: middle; }
+.history-table .entity-link { font-size: 12px; }

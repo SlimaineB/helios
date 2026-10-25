@@ -5,6 +5,11 @@ backend, dumb-HTTP git repo server and pull-agents — on a k3s cluster with
 Cilium LoadBalancers. Written from the reference deployment on a 10-node
 miniPC cluster (`192.168.1.x`).
 
+> This is the k3s reference deployment. For the hub/agent installation matrix,
+> TLS, backup and the post-install checklist, see
+> [docs/INSTALL.md](../../docs/INSTALL.md). Agent capacity and
+> `maxConcurrentApps` tuning are in [docs/CAPACITY.md](../../docs/CAPACITY.md).
+
 ## Architecture
 
 | Component          | docker-compose (lab)      | k3s (this directory)              |
@@ -131,7 +136,7 @@ for n in 1 2; do
   id=$(echo "$reg" | jq -r .instance.id)
   curl -su admin:$PW -X POST $B/api/v1/instances/$id/assign \
        -H 'Content-Type: application/json' -d "{\"app_id\":$app_id}"
-  echo "$reg" | jq -r .token > /tmp/opencode/agent-$n-token.txt
+  echo "$reg" | jq -r .token > /tmp/ansiblehub-agent-$n-token.txt
 done
 ```
 
@@ -145,7 +150,7 @@ helm install agent-k8s-1 helm/ansiblehub-agent -n ansiblehub \
   --set image.repository=192.168.1.21:30500/ansiblehub/agent \
   --set image.tag=latest \
   --set config.server=http://ansiblehub-server-ansiblehub-server:80 \
-  --set config.token=$(cat /tmp/opencode/agent-1-token.txt) \
+  --set config.token=$(cat /tmp/ansiblehub-agent-1-token.txt) \
   --set config.instanceId=ins-xxxxxxxx --set config.pollInterval=30s \
   --set config.autoheal=true \
   --set 'securityContext.runAsNonRoot=false' \

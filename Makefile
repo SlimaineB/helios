@@ -1,4 +1,4 @@
-.PHONY: build build-agent build-server ui build-local test compose-up compose-down compose-logs clean
+.PHONY: build build-agent build-server ui build-local test test-race test-ui smoke loop-test compose-up compose-down compose-logs compose-clean clean
 
 ## Local development (no docker)
 ui:
@@ -17,6 +17,20 @@ test:
 	cd server && go vet ./... && go test ./...
 	cd agent && go vet ./... && go test ./...
 
+test-race:
+	cd server && go test -race ./...
+	cd agent && go test -race ./...
+
+test-ui:
+	cd ui && npm ci && npm run build
+
+## Running compose stack (start it first: make compose-up)
+smoke:
+	./hack/smoke.sh
+
+loop-test:
+	./hack/looptest.sh
+
 ## docker compose harness
 compose-up:
 	docker compose up -d --build
@@ -25,9 +39,10 @@ compose-logs:
 	docker compose logs -f
 
 compose-down:
-	docker compose down -v
+	docker compose down
 
-compose-clean: compose-down
+compose-clean:
+	docker compose down -v
 	@rm -rf hdata
 
 clean:

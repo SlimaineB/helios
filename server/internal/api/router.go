@@ -51,6 +51,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/applications", s.op("applications.create", s.handleCreateApplication))
 	m.HandleFunc("PUT /api/v1/applications/{appId}", s.op("applications.update", s.handleUpdateApplication))
 	m.HandleFunc("DELETE /api/v1/applications/{appId}", s.op("applications.delete", s.handleDeleteApplication))
+	m.HandleFunc("GET /api/v1/applications/{appId}/runs", s.op("runs.get", s.handleListApplicationRuns))
 
 	// Variables (app defaults + per-assignment host overrides); secrets write-only.
 	m.HandleFunc("GET /api/v1/applications/{appId}/variables", s.op("applications.get", s.handleListAppVariables))

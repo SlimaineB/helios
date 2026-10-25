@@ -32,6 +32,7 @@ config:
   instanceId: ""         # empty -> auto-register (metadata or local id)
   stateDir: /var/lib/ansiblehub/agent
   pollInterval: 30s
+  maxConcurrentApps: 4
   autoheal: true
   insecureSkipVerify: false
   ansibleBin: ansible-playbook

@@ -5,8 +5,8 @@ import { api, stateLabel, DEFAULT_PROJECT, projectForApi, projectLabel } from '.
 import Badge from '../components/Badge.jsx'
 import LogsModal from '../components/LogsModal.jsx'
 import DiffModal from '../components/DiffModal.jsx'
-import ActionModal from '../components/ActionModal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
+import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import Modal from '../components/Modal.jsx'
 import Pager from '../components/Pager.jsx'
 import CopyButton from '../components/CopyButton.jsx'
@@ -41,7 +41,7 @@ function appState(app) {
   return s === 'failed' ? 'error' : s || 'unknown'
 }
 
-function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, collapsed, toggle }) {
+function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, collapsed, toggle, pendingFor }) {
   const groups = useMemo(() => {
     const map = new Map()
     for (const inst of instances) {
@@ -139,7 +139,9 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                       </td>
                     </tr>
 
-                    {iOpen && inst.apps.map((app) => (
+                    {iOpen && inst.apps.map((app) => {
+                      const pending = pendingFor(inst.id, app.application.id)
+                      return (
                       <tr className="tree-app" key={`${inst.id}-${app.application.id}`}>
                         <td />
                         <td>
@@ -216,16 +218,20 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                             )}
                             <button
                               className="btn small"
-                              disabled={!can('commands', 'create')}
+                              disabled={!can('commands', 'create') || !!pending}
+                              aria-busy={pending?.action === 'apply'}
                               onClick={() => onAction(inst.id, app.application.id, 'apply')}
                             >
+                              {pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}
                               Sync
                             </button>
                             <button
                               className="btn ghost small"
-                              disabled={!can('commands', 'create')}
+                              disabled={!can('commands', 'create') || !!pending}
+                              aria-busy={pending?.action === 'check'}
                               onClick={() => onAction(inst.id, app.application.id, 'check')}
                             >
+                              {pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}
                               Check
                             </button>
                             {app.latest_check?.id && (
@@ -256,7 +262,8 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
 
                     {iOpen && !inst.apps.length && (
                       <tr className="tree-app tree-empty">
@@ -293,7 +300,6 @@ export default function Instances() {
   const [busy, setBusy] = useState({})
   const [runModal, setRunModal] = useState(null)
   const [diffModal, setDiffModal] = useState(null)
-  const [actionModal, setActionModal] = useState(null)
   const [varsApp, setVarsApp] = useState(null)
   const [pageOff, setPageOff] = useState(0)
   const [collapsed, setCollapsed] = useState(() => new Set())
@@ -317,7 +323,8 @@ export default function Instances() {
     }
   }, [])
 
-  const modalOpen = showReg || !!runModal || !!diffModal || !!actionModal || !!varsApp
+  const commands = useCommandRunner(refresh)
+  const modalOpen = showReg || !!runModal || !!diffModal || !!varsApp
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -370,8 +377,7 @@ export default function Instances() {
 
   const act = async (instId, appId, action) => {
     if (action === 'apply' || action === 'check') {
-      const inst = instances.find((i) => i.id === instId)
-      setActionModal({ instId, instName: inst?.name || instId, appId, action })
+      commands.run(instId, appId, action)
       return
     }
     const key = `${instId}:${appId}:${action}`
@@ -593,12 +599,12 @@ export default function Instances() {
           can={can}
           collapsed={collapsed}
           toggle={toggleCollapse}
+          pendingFor={(instId, appId) => commands.pending[`${instId}:${appId}`] || null}
         />
       )}
 
       {runModal && <LogsModal runId={runModal.runId} initialView={runModal.view} onClose={() => setRunModal(null)} />}
       {diffModal && <DiffModal runId={diffModal} onClose={() => setDiffModal(null)} />}
-      {actionModal && <ActionModal instId={actionModal.instId} instName={actionModal.instName} appId={actionModal.appId} action={actionModal.action} onClose={() => { setActionModal(null); refresh() }} />}
       {varsApp && <VariableEditor title={`Host variables · ${varsApp.inst.name}`} subtitle={`Overrides for ${varsApp.app.application.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(varsApp.inst.id, varsApp.app.application.id)} save={(items) => api.saveAssignmentVariables(varsApp.inst.id, varsApp.app.application.id, items)} onClose={() => setVarsApp(null)} />}
       <Pager total={filtered.length} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
     </section>

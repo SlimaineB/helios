@@ -160,7 +160,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "project not found")
 			return
 		}
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if errors.Is(err, store.ErrConflict) || strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "project name already exists")
 			return
 		}

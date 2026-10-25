@@ -6,3 +6,4 @@ server/ansiblehub-server
 agent/ansiblehub-agent
 .idea/
 .vscode/
+deploy/compose/.env

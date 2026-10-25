@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,6 +101,21 @@ func exerciseStore(t *testing.T, st Store) {
 	})
 	if err != nil || app.ID == 0 {
 		t.Fatalf("create app: %v (id=%d)", err, app.ID)
+	}
+	if _, err := st.CreateApplication(ctx, model.Application{
+		Name: name, RepoURL: "https://example.com/dup.git", Branch: "main", Path: "site.yml", Vars: "{}",
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate application: want ErrConflict, got %v", err)
+	}
+	other, err := st.CreateApplication(ctx, model.Application{
+		Name: name + "-other", RepoURL: "https://example.com/other.git", Branch: "main", Path: "site.yml", Vars: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create other app: %v", err)
+	}
+	other.Name = name
+	if err := st.UpdateApplication(ctx, other); !errors.Is(err, ErrConflict) {
+		t.Fatalf("rename onto existing application: want ErrConflict, got %v", err)
 	}
 
 	got, err := st.GetApplicationByName(ctx, name)

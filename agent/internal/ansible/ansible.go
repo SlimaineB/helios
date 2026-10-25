@@ -61,13 +61,16 @@ func (r *Runner) Apply(ctx context.Context, repo *gitops.Repo, playbook, varsJSO
 }
 
 func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string, check bool) (Result, error) {
-	if r.Bin == "" {
-		r.Bin = "ansible-playbook"
+	// Keep run read-only on Runner: checks are executed concurrently and the
+	// previous lazy defaults were a data race on Bin/Timeout.
+	bin, timeout := r.Bin, r.Timeout
+	if bin == "" {
+		bin = "ansible-playbook"
 	}
-	if r.Timeout <= 0 {
-		r.Timeout = 15 * time.Minute
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	args := []string{"-i", "localhost,", "--connection", "local"}
@@ -80,7 +83,7 @@ func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON 
 	}
 	args = append(args, playbook)
 
-	cmd := exec.CommandContext(ctx, r.Bin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = repo.Dir
 	cmd.Env = append(os.Environ(),
 		"ANSIBLE_STDOUT_CALLBACK=json",

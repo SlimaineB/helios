@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { LayoutGrid, List } from 'lucide-react'
+import { GitCommit, LayoutGrid, List } from 'lucide-react'
 import { api, DEFAULT_PROJECT, projectForUi, projectForApi, projectLabel } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
@@ -8,6 +8,7 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
 import HealthBadge from '../components/HealthBadge.jsx'
 import ApplicationCard from '../components/ApplicationCard.jsx'
+import ApplicationHistory from '../components/ApplicationHistory.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -50,6 +51,7 @@ export default function Applications() {
   const loadedRef = useRef(false)
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
+  const [historyApp, setHistoryApp] = useState(null)
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [repoFilter, setRepoFilter] = useState(searchParams.get('repo') || '')
@@ -74,7 +76,7 @@ export default function Applications() {
       setLoading(false)
     }
   }, [])
-  const modalOpen = showForm || !!confirm || !!varsApp
+  const modalOpen = showForm || !!confirm || !!varsApp || !!historyApp
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -204,9 +206,11 @@ export default function Applications() {
     onChange: (e) => setRepo((p) => ({ ...p, [k]: e.target.value })),
   })
 
+  const instanceNames = useMemo(() => new Map(instances.map((i) => [i.id, i.name])), [instances])
+
   const appStats = useMemo(() => {
     const map = new Map()
-    for (const app of apps) map.set(app.id, { instances: 0, drift: 0, error: 0, stuck: 0 })
+    for (const app of apps) map.set(app.id, { instances: 0, drift: 0, error: 0, stuck: 0, revision: '', revisionMsg: '', revisionAt: 0 })
     for (const inst of instances) {
       for (const a of inst.apps || []) {
         const s = map.get(a.application.id)
@@ -216,6 +220,15 @@ export default function Applications() {
         const st = a.latest_check?.status
         if (st === 'drift') s.drift++
         if (st === 'failed' || st === 'error') s.error++
+        const run = a.latest_check
+        if (run?.commit_after) {
+          const at = new Date(run.finished_at || 0).getTime()
+          if (at >= s.revisionAt) {
+            s.revision = run.commit_after
+            s.revisionMsg = run.commit_msg || ''
+            s.revisionAt = at
+          }
+        }
       }
     }
     return map
@@ -458,6 +471,7 @@ export default function Applications() {
               app={a}
               stats={appStats.get(a.id)}
               repo={repos.find((r) => r.url === a.repo_url)}
+              onHistory={() => setHistoryApp(a)}
               can={can}
               onEdit={openEdit}
               onDelete={confirmDelete}
@@ -494,6 +508,15 @@ export default function Applications() {
                           <span className="mono">id {a.id}</span>
                           {a.autoheal && <span className="project-badge">auto-heal</span>}
                         </span>
+                        <button
+                          type="button"
+                          className="rev-link"
+                          onClick={() => setHistoryApp(a)}
+                          title={s.revisionMsg || 'View revision history'}
+                        >
+                          <GitCommit size={12} />
+                          <span className="mono">{s.revision ? s.revision.slice(0, 7) : 'History'}</span>
+                        </button>
                       </div>
                     </td>
                     <td><span className="project-badge">{projectLabel(a.project)}</span></td>
@@ -544,6 +567,14 @@ export default function Applications() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {historyApp && (
+        <ApplicationHistory
+          app={historyApp}
+          instancesById={instanceNames}
+          onClose={() => setHistoryApp(null)}
+        />
       )}
 
       {varsApp && (

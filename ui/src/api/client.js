@@ -70,6 +70,7 @@ export const api = {
   sync: (id, appId) => request('POST', `/api/v1/instances/${id}/apply`, { app_id: appId }),
   check: (id, appId) => request('POST', `/api/v1/instances/${id}/check`, { app_id: appId }),
   runs: (id, query) => request('GET', `/api/v1/instances/${id}/runs${query || ''}`),
+  appRuns: (id, query) => request('GET', `/api/v1/applications/${id}/runs${query || ''}`),
   runLog: (runId) => request('GET', `/api/v1/runs/${runId}/log`),
 
   setAutoHeal: (id, appId, enabled, inherit) =>

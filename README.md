@@ -1,5 +1,8 @@
 # AnsibleHub
 
+> **Start here:** [2-minute demo](docs/QUICKSTART.md) · [Install](docs/INSTALL.md) ·
+> [Test](docs/TESTING.md) · [Capacity](docs/CAPACITY.md)
+
 An **ArgoCD-like GitOps control plane for EC2 instances** (or any host with
 `git` + `ansible-playbook`), built by a thin **Go agent** on each instance that
 performs `ansible-pull` + drift detection and reports to a **central API + UI**.
@@ -32,17 +35,28 @@ performs `ansible-pull` + drift detection and reports to a **central API + UI**.
 - **Multi-app**: an instance can be bound to several applications, each with its
   own repo/branch/path/vars and drift state.
 
-## Quick start (docker compose)
+## 2-minute demo (docker compose)
+
+Requirements: Docker 24+ with Compose v2, `git`, `make`, `curl` and `jq`. Ports
+**8080**, **8000**, **5556** and **5432** must be free.
 
 ```sh
+git clone <your-fork-or-mirror> ansiblehub
+cd ansiblehub
 docker compose up -d --build
+make smoke
 ```
+
+The first build takes a few minutes. `make smoke` waits for the API, checks
+login and the demo app, triggers a check on each agent and fails with a useful
+message if anything is missing. Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 Brings up:
 
 | Service  | Role                                                        |
 |----------|-------------------------------------------------------------|
-| `server` | API + Postgres + dashboard (React) → http://localhost:8080 |
+| `server` | API + dashboard (React) → http://localhost:8080             |
+| `db`     | Postgres 16 (separate service)                               |
 | `repo`   | dumb-HTTP git server serving the demo playbook              |
 | `bootstrap` | one-shot: registers demo app + 2 agents, writes their tokens |
 | `agent-1/2` | Go agents doing drift checks every 5s                    |
@@ -53,11 +67,14 @@ Open **http://localhost:8080** — sign in as local admin (`admin` /
 (admin@example.com / `admin123` = full admin, reader@example.com / `reader123`
 = read-only). Both agents should be *Synced* within a minute.
 
-> The compose harness runs everything on the host network and ships a Dex
-> single-sign-on for lab use. Dex's local password connector does not emit a
-> `groups` claim, so the lab binds RBAC on the OIDC `email` claim
-> (`ANSIBLEHUB_OIDC_GROUP_CLAIM=email`); with a real provider keep
-> `groups` and bind the actual group names (see `hack/dex/rbac.yaml`).
+> This compose file is a **lab**: host networking, demo credentials, local SSO
+> and a demo git server. It is not a production topology. For TLS, OIDC, RBAC
+> and production credentials, use [docs/INSTALL.md](docs/INSTALL.md).
+>
+> Dex's local password connector does not emit a `groups` claim, so the lab
+> binds RBAC on the OIDC `email` claim (`ANSIBLEHUB_OIDC_GROUP_CLAIM=email`);
+> with a real provider keep `groups` and bind the actual group names (see
+> `hack/dex/rbac.yaml`).
 
 ### Watch drift live
 
@@ -68,6 +85,13 @@ echo "manual change breaks the state" > /tmp/ansiblehub-demo/state.txt
 
 The next check (≤ 5s) marks agent-2 **Drift** in the UI. Click **Sync** to
 re-apply, or re-enable `autoheal: true` on the app to let it self-heal.
+
+### Stop and reset
+
+```sh
+make compose-down     # stop, keep the database and agent state
+make compose-clean    # stop and delete the compose volumes (clean slate)
+```
 
 ### Convergence & idempotency pitfalls
 
@@ -101,10 +125,15 @@ Run the loop-safety harness against the compose setup:
 
 ```sh
 docker compose up -d --build
-./hack/looptest.sh
+make smoke            # fast API + agent + demo check
+make loop-test        # archive-test converges; cmd-test becomes stuck
 # 1/2 archive-test: converges, single apply (no "not sync" loop)
 # 2/2 cmd-test:     flagged stuck, applies stop
 ```
+
+See [docs/TESTING.md](docs/TESTING.md) for the test levels, manual UI
+scenarios, troubleshooting and the race detector. Capacity numbers and tuning
+are in [docs/CAPACITY.md](docs/CAPACITY.md).
 
 ### Per-app sync interval
 
@@ -366,7 +395,23 @@ Route map (what each permission unlocks in the UI): `instances.get` list/detail,
 pairs. `repositories.*`, `projects.*`, `windows.*` and `audit.get` require the
 global (`*`) object scope.
 
-## EC2 deployment
+## Install the hub
+
+| Path | Best for | How |
+|------|----------|-----|
+| [Docker Compose](deploy/compose/) | a single Linux VM | in `deploy/compose/`: `cp .env.example .env`, then `docker compose up -d --build` |
+| [systemd binary](deploy/install-server.sh) | a VM without Docker | `make build-local`, then run the installer |
+| [Helm](helm/ansiblehub-server/) | Kubernetes / k3s | `helm install ...` |
+
+The compose path stores SQLite in a volume by default and supports PostgreSQL
+with an overlay. The systemd installer writes `/etc/ansiblehub/server.env` and
+runs the server as the `ansiblehub` user. Helm supports an external Postgres,
+Ingress/TLS and an existing operator secret.
+
+Full instructions, TLS/reverse-proxy notes, backup/upgrade and the post-install
+checklist: [docs/INSTALL.md](docs/INSTALL.md).
+
+## Deploy agents (EC2 and any Linux host)
 
 1. Build the agent for linux/amd64 and publish it (S3 or a simple HTTP URL):
    ```sh
@@ -384,13 +429,32 @@ global (`*`) object scope.
 
 For non-EC2 hosts, `deploy/install-agent.sh` installs git + ansible-core + the
 agent and registers a systemd unit. It auto-detects apt/dnf/yum/zypper and
-works on any architecture shipped in the release tarball:
+works on any architecture shipped in the release tarball.
+
+From an extracted release tarball (the installer finds the matching binary next
+to it):
+
+```sh
+mkdir -p /tmp/ansiblehub-agent
+curl -fL -o /tmp/ansiblehub-agent.tar.gz \
+  <release-url>/ansiblehub-agent-<ver>.tar.gz
+tar -C /tmp/ansiblehub-agent -xzf /tmp/ansiblehub-agent.tar.gz
+sudo /tmp/ansiblehub-agent/install-agent.sh \
+  --server https://hub.example.com --token '<instance-token>'
+```
+
+Or point at a binary directly:
 
 ```sh
 sudo ./deploy/install-agent.sh --server https://hub.example.com \
-  --token <bootstrap-token> \
-  --download-url <ansiblehub-agent-<ver>.tar.gz from the CI "release:binary" job>
+  --token '<instance-token>' \
+  --binary-url https://downloads.example.com/ansiblehub-agent-linux-amd64
 ```
+
+Useful flags: `--autoheal 0|1`, `--max-concurrent N`, `--poll-interval 5m`,
+`--state-dir`, `--instance-id`. Verify with `systemctl status ansiblehub-agent`
+and `journalctl -u ansiblehub-agent -f`. Full guide:
+[docs/INSTALL.md](docs/INSTALL.md#install-an-agent).
 
 The agent itself is a single static Go binary (`make build-agent`) — Docker is
 only one of its packaging options.
@@ -411,13 +475,26 @@ token: <bootstrap token>
 instance_id: ""            # empty → auto (EC2 metadata / local fingerprint)
 state_dir: /var/lib/ansiblehub
 poll_interval: 5m         # default heartbeat + check cadence
+max_concurrent_apps: 4    # parallel app reconciliations per pass
 autoheal: true             # apply automatically when drift is detected
 insecure_skip_verify: false
 ansible_bin: ansible-playbook
 ```
 
 Per-application cadence is set on the application (`sync_interval`, seconds;
-`0` inherits `poll_interval`).
+`0` inherits `poll_interval`). `max_concurrent_apps` (env
+`ANH_MAX_CONCURRENT_APPS`, default `4`) bounds parallel reconciliations per
+pass. Raise it on hosts with spare CPU; lower it on small instances, since each
+Ansible run is a separate process.
+
+## Documentation
+
+- [Quickstart](docs/QUICKSTART.md) — run the lab stack and see drift.
+- [Install](docs/INSTALL.md) — hub (compose/systemd/Helm) and agents.
+- [Testing](docs/TESTING.md) — unit, smoke, loop-safety, UI and capacity tests.
+- [Capacity](docs/CAPACITY.md) — measured limits and `max_concurrent_apps` tuning.
+- [k3s reference](deploy/k3s/README.md) — full cluster walkthrough.
+- [Demo playbook](examples/playbooks/demo/README.md) — revisions, vars, drift.
 
 ## Roadmap
 

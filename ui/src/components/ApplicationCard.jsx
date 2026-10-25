@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { GitCommit } from 'lucide-react'
 import CopyButton from './CopyButton.jsx'
 import HealthBadge from './HealthBadge.jsx'
 import { projectLabel } from '../api/client.js'
@@ -7,7 +8,7 @@ const EMPTY = { instances: 0, drift: 0, error: 0, stuck: 0 }
 
 const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
 
-export default function ApplicationCard({ app, stats, repo, can, onEdit, onDelete, onVars }) {
+export default function ApplicationCard({ app, stats, repo, can, onEdit, onDelete, onVars, onHistory }) {
   const s = stats || EMPTY
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0 ? 'failed' : s.instances === 0 ? 'unknown' : s.drift > 0 ? 'drift' : 'ok'
@@ -51,7 +52,18 @@ export default function ApplicationCard({ app, stats, repo, can, onEdit, onDelet
           </div>
           <div className="detail">
             <label>Revision</label>
-            <div className="value mono">{app.branch}</div>
+            <div className="value">
+              <span className="mono">{app.branch}</span>
+              <button
+                type="button"
+                className="rev-link"
+                onClick={onHistory}
+                title={s.revisionMsg || 'View revision history'}
+              >
+                <GitCommit size={12} />
+                <span className="mono">{s.revision ? s.revision.slice(0, 7) : 'History'}</span>
+              </button>
+            </div>
           </div>
         </div>
 

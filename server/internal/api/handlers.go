@@ -522,6 +522,46 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	writePage(w, runs, total, limit, offset)
 }
 
+// handleListApplicationRuns returns the revision history of an application
+// across every instance it is assigned to.
+func (s *Server) handleListApplicationRuns(w http.ResponseWriter, r *http.Request) {
+	id, ok := appIDParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "missing app id")
+		return
+	}
+	app, err := s.store.GetApplication(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireObject(w, r, "runs.get", app.Project) {
+		return
+	}
+	limit, offset := paginate(r, 50)
+	f := model.RunFilter{AppID: id, Limit: limit, Offset: offset}
+	if v := r.URL.Query().Get("mode"); v != "" {
+		f.Mode = v
+	}
+	total, err := s.store.CountRuns(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	runs, err := s.store.ListRuns(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// The history view only needs the revision metadata, not console output.
+	for i := range runs {
+		runs[i].OutputTail = ""
+		runs[i].ChangedTasks = nil
+		runs[i].Summary = nil
+	}
+	writePage(w, runs, total, limit, offset)
+}
+
 func (s *Server) frozen(ctx context.Context, appID int64) bool {
 	windows, err := s.store.ListSyncWindows(ctx)
 	if err != nil {
@@ -838,6 +878,10 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.store.UpdateApplication(r.Context(), in); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeErr(w, http.StatusConflict, "application name already exists")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -927,7 +971,7 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 	}
 	repo, err := s.store.CreateRepository(r.Context(), in)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if errors.Is(err, store.ErrConflict) || strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "repository url already exists")
 			return
 		}
@@ -975,7 +1019,7 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 	}
 	in.CreatedAt = old.CreatedAt
 	if err := s.store.UpdateRepository(r.Context(), in); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if errors.Is(err, store.ErrConflict) || strings.Contains(err.Error(), "UNIQUE") {
 			writeErr(w, http.StatusConflict, "repository url already exists")
 			return
 		}

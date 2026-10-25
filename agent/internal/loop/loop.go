@@ -142,18 +142,84 @@ func (a *Agent) pass(ctx context.Context) {
 	}
 
 	starts := time.Now()
-	for _, app := range checkin.Applications {
+	a.processApps(ctx, checkin.Applications)
+	a.processCommands(ctx, checkin.Commands)
+	a.log.Info("pass complete", "apps", len(checkin.Applications), "commands", len(checkin.Commands),
+		"workers", a.maxConcurrent(), "took", time.Since(starts).Round(time.Millisecond).String())
+}
+
+const defaultMaxConcurrentApps = 4
+
+// maxConcurrent keeps zero-valued Configs (tests, older callers) safe. The
+// YAML default is 4 through config.Default()/Load().
+func (a *Agent) maxConcurrent() int {
+	if a.cfg.MaxConcurrentApps > 0 {
+		return a.cfg.MaxConcurrentApps
+	}
+	return defaultMaxConcurrentApps
+}
+
+// processApps reconciles app checks in parallel. A single Ansible invocation is
+// its own process, so serial execution made the real check interval N× slower
+// than the configured interval. The pool is intentionally small because the
+// host CPU (not the control plane) is the bottleneck.
+func (a *Agent) processApps(ctx context.Context, apps []client.Application) {
+	runPool(a.maxConcurrent(), apps, func(app client.Application) {
 		if err := a.processApp(ctx, app); err != nil {
 			a.log.Error("app processing failed", "app", app.Name, "error", err)
 		}
-	}
-	for _, cmd := range checkin.Commands {
-		if err := a.processCommand(ctx, cmd); err != nil {
-			a.log.Error("command failed", "cmd_id", cmd.ID, "action", cmd.Action, "error", err)
-			_ = a.client.ReportCommandResult(ctx, cmd.ID, client.CommandResult{Status: "failed", Result: err.Error()})
+	})
+}
+
+// processCommands runs independent app queues concurrently while preserving
+// the order of commands for the same app (e.g. apply then check). This avoids
+// a long apply on one host blocking every other app on the same instance.
+func (a *Agent) processCommands(ctx context.Context, cmds []client.Command) {
+	order, groups := groupCommands(cmds)
+	runPool(a.maxConcurrent(), order, func(appID int64) {
+		for _, cmd := range groups[appID] {
+			if err := a.processCommand(ctx, cmd); err != nil {
+				a.log.Error("command failed", "cmd_id", cmd.ID, "action", cmd.Action, "error", err)
+				_ = a.client.ReportCommandResult(ctx, cmd.ID, client.CommandResult{Status: "failed", Result: err.Error()})
+			}
 		}
+	})
+}
+
+// groupCommands preserves the queue order of apps and the command order within
+// each app. Commands for the same app must never run concurrently.
+func groupCommands(cmds []client.Command) ([]int64, map[int64][]client.Command) {
+	order := make([]int64, 0, len(cmds))
+	groups := make(map[int64][]client.Command, len(cmds))
+	for _, cmd := range cmds {
+		if _, ok := groups[cmd.AppID]; !ok {
+			order = append(order, cmd.AppID)
+		}
+		groups[cmd.AppID] = append(groups[cmd.AppID], cmd)
 	}
-	a.log.Info("pass complete", "apps", len(checkin.Applications), "commands", len(checkin.Commands), "took", time.Since(starts).Round(time.Millisecond).String())
+	return order, groups
+}
+
+// runPool executes fn for every item with at most limit goroutines. It is a
+// package-level helper so the concurrency/ordering semantics are unit-testable
+// without a real Ansible runner.
+func runPool[T any](limit int, items []T, fn func(T)) {
+	if limit < 1 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, item := range items {
+		item := item
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(item)
+		}()
+	}
+	wg.Wait()
 }
 
 // processApp syncs the repo and runs a drift check when needed.

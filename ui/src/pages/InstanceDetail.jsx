@@ -5,7 +5,7 @@ import Badge from '../components/Badge.jsx'
 import StatusIcon from '../components/StatusIcon.jsx'
 import LogsModal from '../components/LogsModal.jsx'
 import DiffModal from '../components/DiffModal.jsx'
-import ActionModal from '../components/ActionModal.jsx'
+import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import VariableEditor from '../components/VariableEditor.jsx'
 import Pager from '../components/Pager.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
@@ -25,7 +25,6 @@ export default function InstanceDetail() {
   const loadedRef = useRef(false)
   const [logRun, setLogRun] = useState(null)
   const [diffRun, setDiffRun] = useState(null)
-  const [actionModal, setActionModal] = useState(null)
   const [varsApp, setVarsApp] = useState(null)
   const [runsOff, setRunsOff] = useState(0)
   const [runsTotal, setRunsTotal] = useState(0)
@@ -47,7 +46,8 @@ export default function InstanceDetail() {
     }
   }, [id, runsOff])
 
-  const modalOpen = !!logRun || !!diffRun || !!actionModal || !!varsApp || !!confirm
+  const commands = useCommandRunner(refresh)
+  const modalOpen = !!logRun || !!diffRun || !!varsApp || !!confirm
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -148,7 +148,9 @@ export default function InstanceDetail() {
 
       <h2>Applications</h2>
       {inst.apps.length === 0 && <SkeletonEmpty lines={2} />}
-      {inst.apps.map((a) => (
+      {inst.apps.map((a) => {
+        const pending = commands.pending[`${inst.id}:${a.application.id}`]
+        return (
         <div className="card" key={a.application.id}>
           <div className="card-head">
             <strong>{a.application.name}</strong>
@@ -173,8 +175,8 @@ export default function InstanceDetail() {
             <span className="mono muted"><CopyButton value={a.application.repo_url} label="" size="small" title="Copy repo URL" />{a.application.repo_url}</span>
             <span className="actions">
               <button className="small" disabled={!can('instances', 'update')} onClick={() => setVarsApp(a.application)}>Host vars</button>{' '}
-              <button className="small warn" disabled={!can('commands', 'create')} onClick={() => setActionModal({ instId: inst.id, instName: inst.name, appId: a.application.id, action: 'apply' })}>Sync</button>{' '}
-              <button className="small" disabled={!can('commands', 'create')} onClick={() => setActionModal({ instId: inst.id, instName: inst.name, appId: a.application.id, action: 'check' })}>Check</button>
+              <button className="small warn" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'apply'} onClick={() => commands.run(inst.id, a.application.id, 'apply')}>{pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}Sync</button>{' '}
+              <button className="small" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check</button>
             </span>
           </div>
 
@@ -192,7 +194,8 @@ export default function InstanceDetail() {
             </div>
           )}
         </div>
-      ))}
+        )
+      })}
 
       <h2>Run history</h2>
       <table className="grid">
@@ -220,7 +223,6 @@ export default function InstanceDetail() {
 
       {logRun && <LogsModal runId={logRun.runId} initialView={logRun.view} onClose={() => setLogRun(null)} />}
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
-      {actionModal && <ActionModal instId={actionModal.instId} instName={actionModal.instName} appId={actionModal.appId} action={actionModal.action} onClose={() => { setActionModal(null); refresh() }} />}
       {varsApp && <VariableEditor title={`Host variables · ${inst.name}`} subtitle={`Overrides for ${varsApp.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(id, varsApp.id)} save={(items) => api.saveAssignmentVariables(id, varsApp.id, items)} onClose={() => setVarsApp(null)} />}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
       <Pager total={runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />

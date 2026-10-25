@@ -1,0 +1,25 @@
+[Unit]
+Description=AnsibleHub server (API + UI)
+Documentation=https://github.com/slim/ansiblehub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ansiblehub
+Group=ansiblehub
+EnvironmentFile=-/etc/ansiblehub/server.env
+ExecStart=/usr/local/bin/ansiblehub-server -addr @ADDR@ -db /var/lib/ansiblehub/ansiblehub.db -ui /usr/share/ansiblehub/ui
+StateDirectory=ansiblehub
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/ansiblehub
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ansiblehub
+
+[Install]
+WantedBy=multi-user.target

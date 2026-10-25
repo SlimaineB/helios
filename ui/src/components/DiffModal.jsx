@@ -41,7 +41,7 @@ export default function DiffModal({ runId, onClose }) {
           </button>
         </div>
         <div className="modal-body">
-          {state.loading && <div className="muted pad">Loading…</div>}
+          {state.loading && <div className="muted pad diff-loading"><span className="spinner" aria-hidden="true" /> Loading diff…</div>}
           {state.error && <div className="error pad">{state.error}</div>}
           {!state.loading && !state.error && sections.length === 0 && (
             <div className="muted pad">No diff — this run would change nothing.</div>

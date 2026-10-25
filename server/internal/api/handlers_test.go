@@ -200,6 +200,19 @@ func TestCreateApplicationValidatesSyncInterval(t *testing.T) {
 	}
 }
 
+func TestCreateApplicationDuplicateReturnsConflict(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := `{"name":"dup","repo_url":"http://repo/dup.git"}`
+	for i, want := range []int{http.StatusCreated, http.StatusConflict} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/applications", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		s.handleCreateApplication(rec, req)
+		if rec.Code != want {
+			t.Fatalf("attempt %d: status = %d body %s, want %d", i+1, rec.Code, rec.Body.String(), want)
+		}
+	}
+}
+
 func TestSyncWindowFreezesApplyButNotCheck(t *testing.T) {
 	s, st := newTestServer(t)
 	ctx := context.Background()

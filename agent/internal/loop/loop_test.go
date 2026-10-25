@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -71,5 +72,74 @@ func TestPassDoesNothingWhenServerIsDown(t *testing.T) {
 
 	if !st.lastCheck.IsZero() {
 		t.Fatalf("app was processed while the server was down")
+	}
+}
+
+func TestMaxConcurrent(t *testing.T) {
+	a := testAgent("http://example.invalid")
+	if got := a.maxConcurrent(); got != 4 {
+		t.Fatalf("zero config maxConcurrent = %d, want default 4", got)
+	}
+	a.cfg.MaxConcurrentApps = 2
+	if got := a.maxConcurrent(); got != 2 {
+		t.Fatalf("configured maxConcurrent = %d, want 2", got)
+	}
+}
+
+func TestRunPoolBoundsConcurrency(t *testing.T) {
+	var current, peak int32
+	items := make([]int, 12)
+	runPool(3, items, func(int) {
+		n := atomic.AddInt32(&current, 1)
+		for {
+			old := atomic.LoadInt32(&peak)
+			if n <= old || atomic.CompareAndSwapInt32(&peak, old, n) {
+				break
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+		atomic.AddInt32(&current, -1)
+	})
+
+	if got := atomic.LoadInt32(&peak); got != 3 {
+		t.Fatalf("peak concurrency = %d, want 3", got)
+	}
+	if got := atomic.LoadInt32(&current); got != 0 {
+		t.Fatalf("current concurrency after pool = %d, want 0", got)
+	}
+}
+
+func TestRunPoolProcessesEveryItem(t *testing.T) {
+	seen := make([]int32, 20)
+	items := make([]int, len(seen))
+	for i := range items {
+		items[i] = i
+	}
+	runPool(4, items, func(i int) {
+		atomic.AddInt32(&seen[i], 1)
+	})
+	for i, n := range seen {
+		if n != 1 {
+			t.Fatalf("item %d processed %d times, want 1", i, n)
+		}
+	}
+}
+
+func TestGroupCommandsPreservesPerAppOrder(t *testing.T) {
+	cmds := []client.Command{
+		{ID: 1, AppID: 2, Action: "apply"},
+		{ID: 2, AppID: 1, Action: "check"},
+		{ID: 3, AppID: 2, Action: "check"},
+		{ID: 4, AppID: 3, Action: "apply"},
+	}
+	order, groups := groupCommands(cmds)
+	if len(order) != 3 || order[0] != 2 || order[1] != 1 || order[2] != 3 {
+		t.Fatalf("order = %v, want [2 1 3]", order)
+	}
+	if got := len(groups[2]); got != 2 || groups[2][0].ID != 1 || groups[2][1].ID != 3 {
+		t.Fatalf("app 2 group = %+v, want IDs [1 3]", groups[2])
+	}
+	if got := len(groups[1]); got != 1 || groups[1][0].ID != 2 {
+		t.Fatalf("app 1 group = %+v, want ID [2]", groups[1])
 	}
 }

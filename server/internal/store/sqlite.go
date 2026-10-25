@@ -647,6 +647,9 @@ func (s *sqlstore) CreateApplication(ctx context.Context, in model.Application) 
 		`INSERT INTO applications (name, repo_url, branch, path, vars, autoheal, sync_interval, ignore_paths, project, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, tm(in.CreatedAt))
 	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrConflict
+		}
 		return in, fmt.Errorf("create application: %w", err)
 	}
 	in.ID = id
@@ -662,6 +665,9 @@ func (s *sqlstore) UpdateApplication(ctx context.Context, in model.Application) 
 		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, vars=?, autoheal=?, sync_interval=?, ignore_paths=?, project=? WHERE id=?`,
 		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ID)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
 		return fmt.Errorf("update application: %w", err)
 	}
 	return nil
@@ -739,6 +745,9 @@ func (s *sqlstore) CreateRepository(ctx context.Context, in model.Repository) (m
 		`INSERT INTO repositories (name, url, username, password, ssh_key, insecure_skip_verify, created_at) VALUES (?,?,?,?,?,?,?)`,
 		in.Name, in.URL, in.Username, in.Password, in.SSHKey, insecure, tm(in.CreatedAt))
 	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrConflict
+		}
 		return in, fmt.Errorf("create repository: %w", err)
 	}
 	in.ID = id
@@ -754,6 +763,9 @@ func (s *sqlstore) UpdateRepository(ctx context.Context, in model.Repository) er
 		`UPDATE repositories SET name=?, url=?, username=?, password=?, ssh_key=?, insecure_skip_verify=? WHERE id=?`,
 		in.Name, in.URL, in.Username, in.Password, in.SSHKey, insecure, in.ID)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
 		return fmt.Errorf("update repository: %w", err)
 	}
 	return nil
@@ -1435,6 +1447,9 @@ func (s *sqlstore) CreateProject(ctx context.Context, in model.Project) (model.P
 		`INSERT INTO projects (name, repo_patterns, created_at) VALUES (?,?,?)`,
 		in.Name, in.RepoPatterns, tm(in.CreatedAt))
 	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrConflict
+		}
 		return in, fmt.Errorf("create project: %w", err)
 	}
 	in.ID = id
@@ -1447,6 +1462,9 @@ func (s *sqlstore) UpdateProject(ctx context.Context, in model.Project) error {
 		return wrap(err, "get project name")
 	}
 	if _, err := s.exec(ctx, `UPDATE projects SET name=?, repo_patterns=? WHERE id=?`, in.Name, in.RepoPatterns, in.ID); err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
 		return fmt.Errorf("update project: %w", err)
 	}
 	// Cascade a rename so applications/instances stay inside their project.
