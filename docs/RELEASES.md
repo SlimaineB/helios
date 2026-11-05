@@ -20,8 +20,10 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-A manual **Actions → Release → Run workflow** only builds and pushes the
-container images (no GitHub Release, because there is no tag).
+A manual **Actions → Release → Run workflow** builds the images, bare-metal
+packages and Helm charts without creating a GitHub Release. The packages and
+charts are uploaded as workflow artifacts; images and charts are only pushed
+to GHCR when the **publish** input is enabled.
 
 ## Container images
 

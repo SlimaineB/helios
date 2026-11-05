@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Push images and Helm charts to GHCR
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -68,6 +73,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
+        if: github.ref_type == 'tag' || inputs.publish
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -95,7 +101,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.ref_type == 'tag' || inputs.publish }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
@@ -103,7 +109,6 @@ jobs:
 
   helm:
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,18 +117,24 @@ jobs:
         with:
           version: v3.18.0
 
-      - name: Prepare release charts
+      - name: Prepare charts
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+            image_tag="$version"
+          else
+            version="0.0.0-${GITHUB_SHA:0:7}"
+            image_tag="sha-${GITHUB_SHA:0:7}"
+          fi
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           for chart in helios-server helios-agent; do
             sed -i \
               -e "s/^version:.*/version: ${version}/" \
               -e "s/^appVersion:.*/appVersion: \"${version}\"/" \
               -e "s|^  repository: .*|  repository: ${REGISTRY}/${owner}/${chart}|" \
-              -e "s|^  tag: .*|  tag: ${version}|" \
+              -e "s|^  tag: .*|  tag: ${image_tag}|" \
               "helm/${chart}/Chart.yaml" "helm/${chart}/values.yaml"
           done
 
@@ -134,6 +145,7 @@ jobs:
           helm package --destination dist/charts helm/helios-server helm/helios-agent
 
       - name: Log in to GHCR
+        if: github.ref_type == 'tag' || inputs.publish
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             helm registry login "$REGISTRY" \
@@ -141,6 +153,7 @@ jobs:
               --password-stdin
 
       - name: Push Helm charts
+        if: github.ref_type == 'tag' || inputs.publish
         shell: bash
         run: |
           set -euo pipefail
@@ -158,7 +171,6 @@ jobs:
 
   baremetal:
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,7 +198,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-${GITHUB_SHA:0:7}"
+          fi
           mkdir -p dist/release
 
           for arch in amd64 arm64; do
