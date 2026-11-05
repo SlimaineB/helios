@@ -1,9 +1,19 @@
-{{- define "ansiblehub-agent.pod" -}}
+{{- define "helios-agent.pod" -}}
+{{- if not .Values.existingConfigSecret }}
+{{- if not .Values.config.token }}
+{{- fail "config.token is required unless existingConfigSecret is set" }}
+{{- end }}
+{{- end }}
+{{- if eq .Values.statePersistence.type "pvc" }}
+{{- if not .Values.statePersistence.pvcName }}
+{{- fail "statePersistence.pvcName is required when statePersistence.type=pvc" }}
+{{- end }}
+{{- end }}
 metadata:
   labels:
-    app.kubernetes.io/name: {{ include "ansiblehub-agent.name" . }}
+    app.kubernetes.io/name: {{ include "helios-agent.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app: ansiblehub-agent
+    app: helios-agent
   {{- with .Values.podAnnotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -25,6 +35,8 @@ spec:
   affinity:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 35
   securityContext:
     {{- toYaml .Values.securityContext | nindent 4 }}
   containers:
@@ -33,10 +45,10 @@ spec:
       imagePullPolicy: {{ .Values.image.pullPolicy }}
       env:
         - name: CONFIG_FILE
-          value: /etc/ansiblehub/agent.yaml
+          value: /etc/helios/agent.yaml
       volumeMounts:
         - name: config
-          mountPath: /etc/ansiblehub
+          mountPath: /etc/helios
           readOnly: true
         - name: state
           mountPath: {{ .Values.config.stateDir }}
@@ -45,6 +57,6 @@ spec:
   volumes:
     - name: config
       secret:
-        secretName: {{ include "ansiblehub-agent.configSecret" . }}
-    {{- include "ansiblehub-agent.stateVolume" . | nindent 4 }}
+        secretName: {{ include "helios-agent.configSecret" . }}
+    {{- include "helios-agent.stateVolume" . | nindent 4 }}
 {{- end }}

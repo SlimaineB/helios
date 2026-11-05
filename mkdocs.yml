@@ -1,0 +1,77 @@
+site_name: Helios
+site_description: GitOps-style drift detection and self-healing for Ansible.
+# GitHub Actions sets SITE_URL from actions/configure-pages; this fallback is
+# only for local builds. Change it if your Pages URL is different.
+site_url: !ENV [SITE_URL, "https://slimaineb.github.io/helios/"]
+# Point this at the GitHub mirror if you want "Edit this page" to use GitHub.
+repo_url: https://gitlab.com/slimaineb/helios
+repo_name: slimaineb/helios
+edit_uri: -/edit/main/docs/
+copyright: Helios contributors
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Quickstart: QUICKSTART.md
+  - Installation:
+      - Hub and agents: INSTALL.md
+      - Kubernetes (k3s): K3S.md
+  - Operations:
+      - Authentication & RBAC: AUTH.md
+      - Releases and packages: RELEASES.md
+      - Testing: TESTING.md
+      - Capacity: CAPACITY.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

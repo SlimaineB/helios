@@ -9,18 +9,18 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/auth"
-	"github.com/slim/ansiblehub/server/internal/metrics"
-	"github.com/slim/ansiblehub/server/internal/model"
-	"github.com/slim/ansiblehub/server/internal/notify"
-	"github.com/slim/ansiblehub/server/internal/store"
-	"github.com/slim/ansiblehub/server/internal/syncwindows"
+	"github.com/slim/helios/server/internal/auth"
+	"github.com/slim/helios/server/internal/envutil"
+	"github.com/slim/helios/server/internal/metrics"
+	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/notify"
+	"github.com/slim/helios/server/internal/store"
+	"github.com/slim/helios/server/internal/syncwindows"
 )
 
 var revisionRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
@@ -63,7 +63,7 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 		secureCookies: secureCookies,
 		maxHealStreak: 3,
 	}
-	if v := os.Getenv("ANH_HEAL_MAX_STREAK"); v != "" {
+	if v := envutil.Get("HELIOS_HEAL_MAX_STREAK"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			s.maxHealStreak = n
 		}
@@ -78,9 +78,7 @@ const maxRequestBody = 8 << 20 // 8 MiB
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		SetSecurityHeaders(w, r, s.secureCookies)
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 		}
@@ -187,7 +185,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	windows, _ := s.store.ListSyncWindows(r.Context())
@@ -195,7 +193,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	for _, inst := range insts {
 		as, err := s.appsForInstance(r.Context(), inst.ID, windows)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.internalError(w, r, err)
 			return
 		}
 		out = append(out, InstanceWithApps{Instance: inst, Apps: as})
@@ -267,13 +265,16 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	if !s.requireObject(w, r, "instances.create", body.Project) {
 		return
 	}
-	if msg := s.validateProjectOnly(r.Context(), body.Project); msg != "" {
+	if msg, err := s.validateProjectOnly(r.Context(), body.Project); err != nil {
+		s.internalError(w, r, err)
+		return
+	} else if msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	token, err := auth.NewToken()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	inst, err := s.store.CreateInstance(r.Context(), model.Instance{
@@ -283,7 +284,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		TokenHash: auth.Hash(token),
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"instance": inst, "token": token})
@@ -306,7 +307,7 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	as, err := s.appsForInstance(r.Context(), inst.ID, windows)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, InstanceWithApps{Instance: inst, Apps: as})
@@ -363,7 +364,7 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "already bound")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	ok200(w)
@@ -380,7 +381,7 @@ func (s *Server) handleUnassign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.Unassign(r.Context(), id, appID); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	ok200(w)
@@ -416,7 +417,7 @@ func (s *Server) handleSetRevision(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "instance is not bound to this application")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if rev != "" && s.frozen(r.Context(), appID) {
@@ -429,7 +430,7 @@ func (s *Server) handleSetRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SetAssignmentTargetRevision(r.Context(), id, appID, rev); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if rev != "" {
@@ -438,7 +439,7 @@ func (s *Server) handleSetRevision(w http.ResponseWriter, r *http.Request) {
 			AppID:      appID,
 			Action:     model.ActionApply,
 		}); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.internalError(w, r, err)
 			return
 		}
 	}
@@ -490,7 +491,7 @@ func (s *Server) handleCreateInstanceCommand(w http.ResponseWriter, r *http.Requ
 		Action:     action,
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, c)
@@ -511,12 +512,12 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	total, err := s.store.CountRuns(r.Context(), f)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	runs, err := s.store.ListRuns(r.Context(), f)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writePage(w, runs, total, limit, offset)
@@ -545,12 +546,12 @@ func (s *Server) handleListApplicationRuns(w http.ResponseWriter, r *http.Reques
 	}
 	total, err := s.store.CountRuns(r.Context(), f)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	runs, err := s.store.ListRuns(r.Context(), f)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	// The history view only needs the revision metadata, not console output.
@@ -582,7 +583,7 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 	limit, offset := paginate(r, 50)
 	entries, total, err := s.store.ListAudit(r.Context(), limit, offset)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writePage(w, entries, total, limit, offset)
@@ -596,7 +597,7 @@ func (s *Server) handleListSyncWindows(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.store.ListSyncWindows(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -634,7 +635,7 @@ func (s *Server) handleCreateSyncWindow(w http.ResponseWriter, r *http.Request) 
 	}
 	out, err := s.store.CreateSyncWindow(r.Context(), in)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
@@ -706,7 +707,7 @@ func (s *Server) handleUpdateSyncWindow(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err := s.store.UpdateSyncWindow(r.Context(), in); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, in)
@@ -722,7 +723,7 @@ func (s *Server) handleDeleteSyncWindow(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.store.DeleteSyncWindow(r.Context(), id); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	ok200(w)
@@ -742,7 +743,7 @@ func (s *Server) handleListApplications(w http.ResponseWriter, r *http.Request) 
 		apps, err = s.store.ListApplicationsScoped(r.Context(), scopes)
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, apps)
@@ -775,13 +776,16 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 	if !s.requireObject(w, r, "applications.create", in.Project) {
 		return
 	}
-	if msg := s.validateAppProject(r.Context(), in.Project, in.RepoURL); msg != "" {
+	if msg, err := s.validateAppProject(r.Context(), in.Project, in.RepoURL); err != nil {
+		s.internalError(w, r, err)
+		return
+	} else if msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	// Ensure the repo is registered (ArgoCD-style: app → registry upsert).
 	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed to register repository: "+err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	app, err := s.store.CreateApplication(r.Context(), in)
@@ -790,7 +794,7 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 			writeErr(w, http.StatusConflict, "application name already exists")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, app)
@@ -834,7 +838,10 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	if msg := s.validateAppProject(r.Context(), in.Project, in.RepoURL); msg != "" {
+	if msg, err := s.validateAppProject(r.Context(), in.Project, in.RepoURL); err != nil {
+		s.internalError(w, r, err)
+		return
+	} else if msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -874,7 +881,7 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 	}
 	// Keep the registry in sync with the (possibly re-pointed) repo URL.
 	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed to register repository: "+err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if err := s.store.UpdateApplication(r.Context(), in); err != nil {
@@ -882,7 +889,7 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 			writeErr(w, http.StatusConflict, "application name already exists")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, in)
@@ -943,7 +950,7 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 	}
 	repos, err := s.store.ListRepositories(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	out := make([]repoView, 0, len(repos))
@@ -975,7 +982,7 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 			writeErr(w, http.StatusConflict, "repository url already exists")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toRepoView(repo))
@@ -1023,7 +1030,7 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 			writeErr(w, http.StatusConflict, "repository url already exists")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toRepoView(in))
@@ -1077,7 +1084,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	inst.Platform = body.Platform
 	inst.LastSeen = time.Now().UTC()
 	if err := s.store.UpdateInstance(r.Context(), inst); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 
@@ -1086,7 +1093,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	resp := checkinResponse{}
 	ass, err := s.store.ListAssignments(r.Context(), inst.ID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	for _, a := range ass {
@@ -1123,7 +1130,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	// Claim pending commands atomically and hand them to this agent.
 	resp.Commands, err = s.store.ClaimCommands(r.Context(), inst.ID)
 	if err != nil && !errors.Is(err, store.ErrNoCommand) {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -1171,7 +1178,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "instance is not bound to this application")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	metrics.Run(inst.ID, body.AppID, body.Mode, body.Status)
@@ -1239,7 +1246,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if prev, err := s.store.LatestRun(r.Context(), inst.ID, body.AppID, "check"); err == nil && sameRunState(prev, run) {
 			s.store.TouchCheck(r.Context(), inst.ID, body.AppID, run.FinishedAt)
 			if err := s.refreshInstanceState(r.Context(), inst); err != nil {
-				writeErr(w, http.StatusInternalServerError, err.Error())
+				s.internalError(w, r, err)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "deduped": true})
@@ -1255,11 +1262,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.store.TouchCheck(r.Context(), inst.ID, body.AppID, run.FinishedAt); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if _, err := s.store.CreateRun(r.Context(), run); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	switch {
@@ -1279,7 +1286,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Mode == "check" {
 		if err := s.refreshInstanceState(r.Context(), inst); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.internalError(w, r, err)
 			return
 		}
 	}

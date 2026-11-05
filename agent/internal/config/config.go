@@ -40,7 +40,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		Server:            "",
-		StateDir:          "/var/lib/ansiblehub/agent",
+		StateDir:          "/var/lib/helios/agent",
 		PollInterval:      5 * time.Minute,
 		MaxConcurrentApps: 4,
 		AnsibleBin:        "ansible-playbook",
@@ -48,8 +48,9 @@ func Default() Config {
 	}
 }
 
-// Load reads a yaml config file and merges ANSIBLEHUB_* / ANH_* env overrides.
-// Env vars (e.g. ANH_SERVER, ANH_TOKEN, ANH_POLL_INTERVAL=2m, ANH_AUTOHEAL=1).
+// Load reads a yaml config file and merges HELIOS_* env overrides. The legacy
+// ANSIBLEHUB_* / ANH_* / AHUB_* names are accepted as fallbacks.
+// Env vars (e.g. HELIOS_SERVER, HELIOS_TOKEN, HELIOS_POLL_INTERVAL=2m, HELIOS_AUTOHEAL=1).
 func Load(path string) (Config, error) {
 	cfg := Default()
 	if path != "" {
@@ -63,10 +64,12 @@ func Load(path string) (Config, error) {
 	}
 
 	env := func(name string) string {
-		if v := os.Getenv("ANSIBLEHUB_" + name); v != "" {
-			return v
+		for _, prefix := range []string{"HELIOS_", "ANSIBLEHUB_", "ANH_", "AHUB_"} {
+			if v := os.Getenv(prefix + name); v != "" {
+				return v
+			}
 		}
-		return os.Getenv("ANH_" + name)
+		return ""
 	}
 
 	applyEnv := func(name string) error {
@@ -86,25 +89,25 @@ func Load(path string) (Config, error) {
 		case "POLL_INTERVAL":
 			d, err := time.ParseDuration(v)
 			if err != nil {
-				return fmt.Errorf("invalid ANH_POLL_INTERVAL %q: %w", v, err)
+				return fmt.Errorf("invalid HELIOS_POLL_INTERVAL %q: %w", v, err)
 			}
 			cfg.PollInterval = d
 		case "MAX_CONCURRENT_APPS":
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {
-				return fmt.Errorf("invalid ANH_MAX_CONCURRENT_APPS %q: must be >= 1", v)
+				return fmt.Errorf("invalid HELIOS_MAX_CONCURRENT_APPS %q: must be >= 1", v)
 			}
 			cfg.MaxConcurrentApps = n
 		case "AUTOHEAL":
 			b, err := strconv.ParseBool(v)
 			if err != nil {
-				return fmt.Errorf("invalid ANH_AUTOHEAL %q: %w", v, err)
+				return fmt.Errorf("invalid HELIOS_AUTOHEAL %q: %w", v, err)
 			}
 			cfg.AutoHeal = b
 		case "INSECURE":
 			b, err := strconv.ParseBool(v)
 			if err != nil {
-				return fmt.Errorf("invalid ANH_INSECURE %q: %w", v, err)
+				return fmt.Errorf("invalid HELIOS_INSECURE %q: %w", v, err)
 			}
 			cfg.InsecureSkipVerify = b
 		case "ANSIBLE_BIN":

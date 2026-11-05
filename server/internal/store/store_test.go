@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 func TestSqliteStoreCRUD(t *testing.T) {
@@ -28,7 +28,7 @@ func TestRepositoryUpsert(t *testing.T) {
 	defer st.Close()
 	exerciseUpsert(t, st)
 
-	if dsn := os.Getenv("ANSIBLEHUB_TEST_PG"); dsn != "" {
+	if dsn := os.Getenv("HELIOS_TEST_PG"); dsn != "" {
 		pg, err := Open(dsn)
 		if err != nil {
 			t.Fatalf("open postgres: %v", err)
@@ -76,11 +76,11 @@ func exerciseUpsert(t *testing.T, st Store) {
 }
 
 // TestPostgresStoreCRUD runs the same battery against a live Postgres when
-// ANSIBLEHUB_TEST_PG is set (e.g. postgres://u:p@localhost:5432/ansiblehub_test).
+// HELIOS_TEST_PG is set (e.g. postgres://u:p@localhost:5432/helios_test).
 func TestPostgresStoreCRUD(t *testing.T) {
-	dsn := os.Getenv("ANSIBLEHUB_TEST_PG")
+	dsn := os.Getenv("HELIOS_TEST_PG")
 	if dsn == "" {
-		t.Skip("ANSIBLEHUB_TEST_PG not set")
+		t.Skip("HELIOS_TEST_PG not set")
 	}
 	st, err := Open(dsn)
 	if err != nil {

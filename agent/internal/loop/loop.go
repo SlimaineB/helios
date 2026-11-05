@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/slim/ansiblehub/agent/internal/ansible"
-	"github.com/slim/ansiblehub/agent/internal/client"
-	"github.com/slim/ansiblehub/agent/internal/config"
-	"github.com/slim/ansiblehub/agent/internal/gitops"
-	"github.com/slim/ansiblehub/agent/internal/metadata"
+	"github.com/slim/helios/agent/internal/ansible"
+	"github.com/slim/helios/agent/internal/client"
+	"github.com/slim/helios/agent/internal/config"
+	"github.com/slim/helios/agent/internal/gitops"
+	"github.com/slim/helios/agent/internal/metadata"
 )
 
 type Agent struct {

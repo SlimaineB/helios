@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 func nowCtx(ctx context.Context) time.Time { return time.Now().UTC() }

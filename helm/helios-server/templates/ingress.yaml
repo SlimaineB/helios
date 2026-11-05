@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "ansiblehub-server.fullname" . }}
+  name: {{ include "helios-server.fullname" . }}
   labels:
-    {{- include "ansiblehub-server.labels" . | nindent 4 }}
+    {{- include "helios-server.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -27,7 +27,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "ansiblehub-server.fullname" . }}
+                name: {{ include "helios-server.fullname" . }}
                 port:
                   number: {{ .Values.service.port }}
 {{- end }}

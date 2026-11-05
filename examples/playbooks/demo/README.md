@@ -1,8 +1,8 @@
-# AnsibleHub — demo playbook
+# Helios — demo playbook
 
 Demo playbook used by the docker-compose harness. It provisions a small
 "webapp" (role-based, **Jinja2 templates**, line-in-file edits, a system user,
-per-feature listener configs) under `/tmp/ansiblehub-demo/` so drift is
+per-feature listener configs) under `/tmp/helios-demo/` so drift is
 trivially demonstrable:
 
 ```
@@ -59,11 +59,11 @@ change is picked up on the next check pass.
 ```sh
 docker compose exec agent-2 sh
 # 1. flip the drift marker
-echo "someone changed me" > /tmp/ansiblehub-demo/state.txt
+echo "someone changed me" > /tmp/helios-demo/state.txt
 # 2. break a file RENDERED FROM A TEMPLATE (jinja)
-sed -i 's/app.name=ansiblehub-demo/app.name=HACKED/' /tmp/ansiblehub-demo/webapp.conf
+sed -i 's/app.name=helios-demo/app.name=HACKED/' /tmp/helios-demo/webapp.conf
 # 3. (optional) delete a listener conf so the template diff appears
-rm /tmp/ansiblehub-demo/conf/metrics.conf
+rm /tmp/helios-demo/conf/metrics.conf
 ```
 
 Wait one poll interval (the check pass also does a `git fetch`, so budget

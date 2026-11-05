@@ -1,4 +1,4 @@
-# AnsibleHub
+# Helios
 
 > **Start here:** [2-minute demo](docs/QUICKSTART.md) · [Install](docs/INSTALL.md) ·
 > [Test](docs/TESTING.md) · [Capacity](docs/CAPACITY.md)
@@ -10,7 +10,7 @@ performs `ansible-pull` + drift detection and reports to a **central API + UI**.
 ```
 ┌─────────────── EC2 / host ───────────────┐      ┌─────────── central hub ───────────┐
 │                                           │      │                                       │
-│  ansiblehub-agent (Go)                    │      │  ansiblehub-server (Go + SQLite/Postgres)
+│  helios-agent (Go)                    │      │  helios-server (Go + SQLite/Postgres)
 │   ├─ poll → POST /agent/checkin  ────────┼─────▶│  ├─ instances / tokens / auth        │
 │   ├─ git clone/fetch repo[rev]            │      │  ├─ applications, assignments      │
 │   ├─ ansible-playbook --check  (drift)    │      │  ├─ runs history + drift state      │
@@ -41,15 +41,16 @@ Requirements: Docker 24+ with Compose v2, `git`, `make`, `curl` and `jq`. Ports
 **8080**, **8000**, **5556** and **5432** must be free.
 
 ```sh
-git clone <your-fork-or-mirror> ansiblehub
-cd ansiblehub
-docker compose up -d --build
-make smoke
+git clone <your-fork-or-mirror> helios
+cd helios
+./hack/demo.sh
 ```
 
-The first build takes a few minutes. `make smoke` waits for the API, checks
-login and the demo app, triggers a check on each agent and fails with a useful
-message if anything is missing. Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md).
+The first build takes a few minutes. The demo waits for the API and the
+bootstrap job, verifies that both agents are reporting for the demo app, runs
+the smoke test, then prints the URL and credentials. Use `--clean` for a fresh
+database/agent state or `--no-build` to reuse the images. Full walkthrough:
+[docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 Brings up:
 
@@ -63,7 +64,7 @@ Brings up:
 | `dex`    | local SSO (OIDC) stand-in for Okta                          |
 
 Open **http://localhost:8080** — sign in as local admin (`admin` /
-`ANH_OPERATOR_PASSWORD`, default `changeme`) or via the **SSO** button
+`HELIOS_OPERATOR_PASSWORD`, default `changeme`) or via the **SSO** button
 (admin@example.com / `admin123` = full admin, reader@example.com / `reader123`
 = read-only). Both agents should be *Synced* within a minute.
 
@@ -72,15 +73,15 @@ Open **http://localhost:8080** — sign in as local admin (`admin` /
 > and production credentials, use [docs/INSTALL.md](docs/INSTALL.md).
 >
 > Dex's local password connector does not emit a `groups` claim, so the lab
-> binds RBAC on the OIDC `email` claim (`ANSIBLEHUB_OIDC_GROUP_CLAIM=email`);
+> binds RBAC on the OIDC `email` claim (`HELIOS_OIDC_GROUP_CLAIM=email`);
 > with a real provider keep `groups` and bind the actual group names (see
 > `hack/dex/rbac.yaml`).
 
 ### Watch drift live
 
 ```sh
-docker exec ansible_pull-agent-2-1 sh
-echo "manual change breaks the state" > /tmp/ansiblehub-demo/state.txt
+docker compose exec agent-2 sh
+echo "manual change breaks the state" > /tmp/helios-demo/state.txt
 ```
 
 The next check (≤ 5s) marks agent-2 **Drift** in the UI. Click **Sync** to
@@ -115,7 +116,7 @@ forever, and applying never converges.
 **Heal guard** (`server`): an autoheal is applied at most once per `2 × poll`
 per app (agent cooldown). If the mandatory post-apply check still reports
 drift for `healing.maxDriftStreak` consecutive cycles (default **3**, env
-`ANH_HEAL_MAX_STREAK`), the assignment is flagged **stuck**: the server stops
+`HELIOS_HEAL_MAX_STREAK`), the assignment is flagged **stuck**: the server stops
 asking the agent to apply (drift checks continue), the UI shows a `stuck`
 badge + a **Rearm** button, and the counter resets automatically the moment a
 check returns `ok`. Drift/heal runs that repeat an identical state are
@@ -186,15 +187,15 @@ attempt). This is the ArgoCD maintenance-window analogue, evaluated server-side.
 
 ### Notifications, metrics, audit
 
-- **Webhook**: set `ANH_WEBHOOK_URL` (optionally `ANH_WEBHOOK_SECRET` for an
-  HMAC-SHA256 `X-AnsibleHub-Signature: sha256=…` header and
-  `ANH_WEBHOOK_TIMEOUT`). Events: `run_failed`, `assignment_stuck`, `apply_ok`,
+- **Webhook**: set `HELIOS_WEBHOOK_URL` (optionally `HELIOS_WEBHOOK_SECRET` for an
+  HMAC-SHA256 `X-Helios-Signature: sha256=…` header and
+  `HELIOS_WEBHOOK_TIMEOUT`). Events: `run_failed`, `assignment_stuck`, `apply_ok`,
   `command_failed`, `sync_blocked`. Delivery is async/best-effort.
 - **Metrics**: `GET /metrics` exposes Prometheus text with
-  `ansiblehub_runs_total{instance,app,mode,status}`,
-  `ansiblehub_commands_total{status}`,
-  `ansiblehub_agent_checkins_total{instance}`,
-  `ansiblehub_sync_frozen_total{app}` and `ansiblehub_build_info`. No client
+  `helios_runs_total{instance,app,mode,status}`,
+  `helios_commands_total{status}`,
+  `helios_agent_checkins_total{instance}`,
+  `helios_sync_frozen_total{app}` and `helios_build_info`. No client
   library dependency.
 - **Audit**: every mutating operator API call (POST/PUT/PATCH/DELETE) is stored
   in `audit_log` with user, method, path, HTTP status and remote IP, and exposed
@@ -232,9 +233,9 @@ sync windows and the audit log are global-admin surfaces.
   a `postgres://` URL uses **Postgres** (`pgx`; the same `store.Store`
   implementation is shared, with `?`→`$n` rebinding and `RETURNING id`
   inserts). Time columns are stored as RFC3339 TEXT on both backends.
-  Environment override: `ANSIBLEHUB_DB`. History is kept per
+  Environment override: `HELIOS_DB`. History is kept per
   `(instance, app, mode)`.
-- **`agent/`** — Go. Config via YAML or `ANH_*` env vars; resolves the AWS
+- **`agent/`** — Go. Config via YAML or `HELIOS_*` env vars; resolves the AWS
   instance-id via IMDSv2 (falls back to a local fingerprint on non-EC2),
   keeps per-app local repo mirrors under `state_dir`, runs
   `ansible-playbook --check/apply` with `ANSIBLE_STDOUT_CALLBACK=json`
@@ -255,7 +256,7 @@ bearer token (only a SHA-256 hash is stored server-side).
 GET    /api/v1/health
 GET    /api/v1/auth/realm                 # auth surface for the UI: {oidc, basic_admin}
 GET    /api/v1/auth/login                 # → OIDC provider (PKCE), sets state cookie
-GET    /api/v1/auth/callback              # OIDC callback → session cookie (ansiblehub_sess)
+GET    /api/v1/auth/callback              # OIDC callback → session cookie (helios_sess)
 GET    /api/v1/auth/logout
 GET    /api/v1/auth/me                    # identity + effective permissions (RBAC)
 GET    /api/v1/instances                          # dashboard list (with per-app latest runs)
@@ -361,17 +362,17 @@ ArgoCD-style RBAC policy.
 
 **Identity** — two ways, both enabled at once if configured:
 
-- local admin via HTTP Basic (`ANSIBLEHUB_OPERATOR_USER`/`_PASSWORD`). The
+- local admin via HTTP Basic (`HELIOS_OPERATOR_USER`/`_PASSWORD`). The
   server refuses to start with the default `admin/admin` unless
-  `ANH_ALLOW_WEAK_DEFAULT=1` is set (lab only).
-- OpenID Connect via `ANSIBLEHUB_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`,
-  `_GROUP_CLAIM` (default `groups`), `_SCOPES`, plus `-base-url`/`ANSIBLEHUB_BASE_URL`
+  `HELIOS_ALLOW_WEAK_DEFAULT=1` is set (lab only).
+- OpenID Connect via `HELIOS_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`,
+  `_GROUP_CLAIM` (default `groups`), `_SCOPES`, plus `-base-url`/`HELIOS_BASE_URL`
   for the callback redirect and a `-session-ttl` cookie lifetime (default 12h).
   Flow: `/api/v1/auth/login` → Authorization Code + PKCE → session cookie
-  (`ansiblehub_sess`) → `/api/v1/auth/me` returns the identity and the
+  (`helios_sess`) → `/api/v1/auth/me` returns the identity and the
   effective `permissions` list the UI uses to enable/disable controls.
 
-**Authorization** — `-rbac` / `ANSIBLEHUB_RBAC_FILE` points to a YAML file of
+**Authorization** — `-rbac` / `HELIOS_RBAC_FILE` points to a YAML file of
 `p` (policy) and `g` (group→role binding) rules:
 
 ```yaml
@@ -401,11 +402,11 @@ global (`*`) object scope.
 |------|----------|-----|
 | [Docker Compose](deploy/compose/) | a single Linux VM | in `deploy/compose/`: `cp .env.example .env`, then `docker compose up -d --build` |
 | [systemd binary](deploy/install-server.sh) | a VM without Docker | `make build-local`, then run the installer |
-| [Helm](helm/ansiblehub-server/) | Kubernetes / k3s | `helm install ...` |
+| [Helm](helm/helios-server/) | Kubernetes / k3s | `helm install ...` |
 
 The compose path stores SQLite in a volume by default and supports PostgreSQL
-with an overlay. The systemd installer writes `/etc/ansiblehub/server.env` and
-runs the server as the `ansiblehub` user. Helm supports an external Postgres,
+with an overlay. The systemd installer writes `/etc/helios/server.env` and
+runs the server as the `helios` user. Helm supports an external Postgres,
 Ingress/TLS and an existing operator secret.
 
 Full instructions, TLS/reverse-proxy notes, backup/upgrade and the post-install
@@ -415,11 +416,11 @@ checklist: [docs/INSTALL.md](docs/INSTALL.md).
 
 1. Build the agent for linux/amd64 and publish it (S3 or a simple HTTP URL):
    ```sh
-   cd agent && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ansiblehub-agent ./cmd/agent
+   cd agent && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o helios-agent ./cmd/agent
    ```
 2. In the hub UI: **Register instance** → keep the emitted token.
 3. Launch an EC2 instance with **user data** from `deploy/ec2-user-data.yaml`
-   (fill `ANH_SERVER`, `ANH_TOKEN`, `ANH_AGENT_URL`) — cloud-init installs git +
+   (fill `HELIOS_SERVER`, `HELIOS_TOKEN`, `HELIOS_AGENT_URL`) — cloud-init installs git +
    ansible + the agent and starts it via systemd.
 4. Create the application (repo URL, revision — branch/tag/semver range — and
    playbook path), assign the instance.
@@ -435,11 +436,11 @@ From an extracted release tarball (the installer finds the matching binary next
 to it):
 
 ```sh
-mkdir -p /tmp/ansiblehub-agent
-curl -fL -o /tmp/ansiblehub-agent.tar.gz \
-  <release-url>/ansiblehub-agent-<ver>.tar.gz
-tar -C /tmp/ansiblehub-agent -xzf /tmp/ansiblehub-agent.tar.gz
-sudo /tmp/ansiblehub-agent/install-agent.sh \
+mkdir -p /tmp/helios-agent
+curl -fL -o /tmp/helios-agent.tar.gz \
+  <release-url>/helios-agent-<ver>.tar.gz
+tar -C /tmp/helios-agent -xzf /tmp/helios-agent.tar.gz
+sudo /tmp/helios-agent/install-agent.sh \
   --server https://hub.example.com --token '<instance-token>'
 ```
 
@@ -448,12 +449,12 @@ Or point at a binary directly:
 ```sh
 sudo ./deploy/install-agent.sh --server https://hub.example.com \
   --token '<instance-token>' \
-  --binary-url https://downloads.example.com/ansiblehub-agent-linux-amd64
+  --binary-url https://downloads.example.com/helios-agent-linux-amd64
 ```
 
 Useful flags: `--autoheal 0|1`, `--max-concurrent N`, `--poll-interval 5m`,
-`--state-dir`, `--instance-id`. Verify with `systemctl status ansiblehub-agent`
-and `journalctl -u ansiblehub-agent -f`. Full guide:
+`--state-dir`, `--instance-id`. Verify with `systemctl status helios-agent`
+and `journalctl -u helios-agent -f`. Full guide:
 [docs/INSTALL.md](docs/INSTALL.md#install-an-agent).
 
 The agent itself is a single static Go binary (`make build-agent`) — Docker is
@@ -463,17 +464,17 @@ only one of its packaging options.
 
 `server`: `-addr`, `-db` (sqlite file **or** `postgres://` URL), `-ui`,
 `-base-url`, `-session-ttl`, `-rbac`, `-tls-cert`/`-tls-key`;
-OIDC via `ANSIBLEHUB_OIDC_*` env (see "Operator authentication & RBAC"
+OIDC via `HELIOS_OIDC_*` env (see "Operator authentication & RBAC"
 above). With `-base-url https://…` cookies are marked Secure. Webhooks:
-`ANH_WEBHOOK_URL`, `ANH_WEBHOOK_SECRET`, `ANH_WEBHOOK_TIMEOUT`.
+`HELIOS_WEBHOOK_URL`, `HELIOS_WEBHOOK_SECRET`, `HELIOS_WEBHOOK_TIMEOUT`.
 
-`agent` (`/etc/ansiblehub/agent.yaml` or `ANH_*` env vars):
+`agent` (`/etc/helios/agent.yaml` or `HELIOS_*` env vars):
 
 ```yaml
 server: http://hub:8080
 token: <bootstrap token>
 instance_id: ""            # empty → auto (EC2 metadata / local fingerprint)
-state_dir: /var/lib/ansiblehub
+state_dir: /var/lib/helios
 poll_interval: 5m         # default heartbeat + check cadence
 max_concurrent_apps: 4    # parallel app reconciliations per pass
 autoheal: true             # apply automatically when drift is detected
@@ -483,7 +484,7 @@ ansible_bin: ansible-playbook
 
 Per-application cadence is set on the application (`sync_interval`, seconds;
 `0` inherits `poll_interval`). `max_concurrent_apps` (env
-`ANH_MAX_CONCURRENT_APPS`, default `4`) bounds parallel reconciliations per
+`HELIOS_MAX_CONCURRENT_APPS`, default `4`) bounds parallel reconciliations per
 pass. Raise it on hosts with spare CPU; lower it on small instances, since each
 Ansible run is a separate process.
 
@@ -491,15 +492,37 @@ Ansible run is a separate process.
 
 - [Quickstart](docs/QUICKSTART.md) — run the lab stack and see drift.
 - [Install](docs/INSTALL.md) — hub (compose/systemd/Helm) and agents.
+- [Authentication & RBAC](docs/AUTH.md) — local admin, OIDC and policies.
+- [Releases](docs/RELEASES.md) — GHCR images, binaries and tarballs.
 - [Testing](docs/TESTING.md) — unit, smoke, loop-safety, UI and capacity tests.
 - [Capacity](docs/CAPACITY.md) — measured limits and `max_concurrent_apps` tuning.
-- [k3s reference](deploy/k3s/README.md) — full cluster walkthrough.
+- [k3s reference](docs/K3S.md) — full cluster walkthrough.
 - [Demo playbook](examples/playbooks/demo/README.md) — revisions, vars, drift.
+
+### Published documentation (MkDocs)
+
+The docs are a [MkDocs Material](https://squidfunk.github.io/mkdocs-material/)
+site:
+
+```sh
+pip install -r requirements-docs.txt
+make docs-serve        # local preview on http://127.0.0.1:8000
+make docs              # strict build into site/
+```
+
+`.github/workflows/docs.yml` builds and deploys the site to GitHub Pages on
+pushes to `main`. Enable **Settings → Pages → Source: GitHub Actions** in the
+GitHub repository once. If your GitHub Pages URL differs, set `SITE_URL`
+(e.g. `SITE_URL=https://user.github.io/helios/ make docs`); CI gets it from
+`actions/configure-pages`.
+
+A `v*` tag also publishes multi-arch images to GHCR and binaries/tarballs to a
+GitHub Release via `.github/workflows/release.yml`; see [Releases](docs/RELEASES.md).
 
 ## Roadmap
 
 - [x] Postgres backend (same `store.Store` implementation, `?`→`$n` dialect)
-- [x] HTTP Basic auth for the operator UI/API (`ANSIBLEHUB_OPERATOR_USER/PASSWORD`)
+- [x] HTTP Basic auth for the operator UI/API (`HELIOS_OPERATOR_USER/PASSWORD`)
 - [x] OIDC single sign-on (Authorization Code + PKCE, group claim → RBAC)
 - [x] ArgoCD-style RBAC (`p`/`g` policies, builtin `role:admin`/`role:readonly`)
 - [x] Git auth for private repos (per-connection creds via the Repositories registry)

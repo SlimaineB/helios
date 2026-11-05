@@ -1,5 +1,5 @@
 ---
-# AnsibleHub demo application — richer variant.
+# Helios demo application — richer variant.
 #
 # A more realistic ansible-pull workload: a "webapp" role driven by vars,
 # with directories, a system user, a Jinja2 config template, a properties
@@ -7,17 +7,17 @@
 # second play that verifies the deployment. All tasks are safe to run inside
 # the docker-compose "agent" containers (no systemd, no privileged mounts).
 #
-# Drift demo: on an agent, overwrite /tmp/ansiblehub-demo/state.txt (or edit
-# a value inside /tmp/ansiblehub-demo/conf/app.properties), wait for the next
+# Drift demo: on an agent, overwrite /tmp/helios-demo/state.txt (or edit
+# a value inside /tmp/helios-demo/conf/app.properties), wait for the next
 # --check pass, then watch the UI flip to Drift and autoheal converge back.
-- name: Provision AnsibleHub demo app
+- name: Provision Helios demo app
   hosts: localhost
   gather_facts: true
   become: false
   roles:
     - role: webapp
       vars:
-        app_name: ansiblehub-demo
+        app_name: helios-demo
         app_env: staging
         release: v1.2.0
         ports: [8042, 8043]
@@ -33,7 +33,7 @@
     - name: Ensure the exposed state file holds the desired content
       ansible.builtin.copy:
         content: "desired-state-v1\n"
-        dest: /tmp/ansiblehub-demo/state.txt
+        dest: /tmp/helios-demo/state.txt
         mode: "0644"
 
 - name: Verify the deployed application
@@ -45,12 +45,12 @@
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
-        - /tmp/ansiblehub-demo/webapp.conf
-        - /tmp/ansiblehub-demo/conf/app.properties
-        - /tmp/ansiblehub-demo/conf/healthz.conf
-        - /tmp/ansiblehub-demo/conf/metrics.conf
+        - /tmp/helios-demo/webapp.conf
+        - /tmp/helios-demo/conf/app.properties
+        - /tmp/helios-demo/conf/healthz.conf
+        - /tmp/helios-demo/conf/metrics.conf
       register: probes
 
     - name: Report the environment being managed
       ansible.builtin.debug:
-        msg: "managed by AnsibleHub — {{ ansible_hostname }} {{ ansible_distribution }}; component files present: {{ probes.results | map(attribute='stat.exists') | list }}"
+        msg: "managed by Helios — {{ ansible_hostname }} {{ ansible_distribution }}; component files present: {{ probes.results | map(attribute='stat.exists') | list }}"

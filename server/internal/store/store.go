@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 var (

@@ -8,14 +8,14 @@ This is the production-oriented hub compose file. For the lab/demo stack
 
 ```sh
 cp .env.example .env
-# set ANH_OPERATOR_PASSWORD and ANH_BASE_URL
+# set HELIOS_OPERATOR_PASSWORD and HELIOS_BASE_URL
 $EDITOR .env
 docker compose up -d --build
 curl -fsS http://localhost:8080/api/v1/health
 ```
 
-Open `http://localhost:8080` and sign in with `ANH_OPERATOR_USER` /
-`ANH_OPERATOR_PASSWORD`.
+Open `http://localhost:8080` and sign in with `HELIOS_OPERATOR_USER` /
+`HELIOS_OPERATOR_PASSWORD`.
 
 ## PostgreSQL
 
@@ -23,21 +23,21 @@ Open `http://localhost:8080` and sign in with `ANH_OPERATOR_USER` /
 docker compose -f compose.yaml -f compose.postgres.yaml up -d --build
 ```
 
-Set `ANH_POSTGRES_PASSWORD` in `.env` first. The Postgres volume is
-`ansiblehub-postgres`.
+Set `HELIOS_POSTGRES_PASSWORD` in `.env` first. The Postgres volume is
+`helios-postgres`.
 
 ## TLS / reverse proxy
 
-Terminate TLS in Caddy/Nginx/Traefik and set `ANH_BASE_URL=https://hub.example.com`.
-Restart with `docker compose up -d`. To bind only to localhost behind the proxy,
-set `ANH_BIND_ADDR=127.0.0.1`.
+Terminate TLS in Caddy/Nginx/Traefik and set `HELIOS_BASE_URL=https://hub.example.com`.
+Restart with `docker compose up -d`. The server binds to `127.0.0.1` by default;
+set `HELIOS_BIND_ADDR=0.0.0.0` only when exposing it directly.
 
 ## Upgrade and backup
 
 ```sh
 docker compose stop server
-docker run --rm -v ansiblehub-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/ansiblehub-data-$(date +%F).tgz -C /data .
+docker run --rm -v helios-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/helios-data-$(date +%F).tgz -C /data .
 docker compose start server
 
 git pull

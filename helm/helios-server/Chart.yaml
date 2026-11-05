@@ -1,0 +1,10 @@
+apiVersion: v2
+name: helios-server
+description: Helios central server — detects and reconciles Ansible config drift.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ansible
+  - drift
+  - gitops

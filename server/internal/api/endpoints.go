@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/slim/ansiblehub/server/internal/store"
+	"github.com/slim/helios/server/internal/store"
 )
 
 // handleRunLog streams the full console log of a run.
@@ -23,7 +23,7 @@ func (s *Server) handleRunLog(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "run not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if !s.requireInstanceScope(w, r, run.InstanceID, "runs.get") {
@@ -82,7 +82,7 @@ func (s *Server) handleSetAutoHeal(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusNotFound, "assignment not found")
 				return
 			}
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.internalError(w, r, err)
 			return
 		}
 		ok200(w)
@@ -97,7 +97,7 @@ func (s *Server) handleSetAutoHeal(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "assignment not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	// (Re)arming autoheal clears a stuck flag: the operator is telling us the

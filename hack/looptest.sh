@@ -3,15 +3,23 @@
 # (does NOT loop "not sync"), and that a non-idempotent `command` app is
 # stopped by the server-side heal guard (flagged "stuck", no more applies).
 #
-# Requires: the ansible_pull compose harness up (repo-server on :8000, API
+# Requires: the Helios compose harness up (repo-server on :8000, API
 # on :8080, agents agent-1/agent-2 configured by bootstrap), jq, curl.
 #
-# Env: ANH_SERVER (default http://localhost:8080),
-#      ANH_OPERATOR_USER/PASSWORD (default admin/changeme).
+# Env: HELIOS_SERVER (default http://localhost:8080),
+#      HELIOS_OPERATOR_USER/PASSWORD (default admin/changeme).
 set -e
 
-BASE="${ANH_SERVER:-http://localhost:8080}"
-AUTH="-u ${ANH_OPERATOR_USER:-admin}:${ANH_OPERATOR_PASSWORD:-changeme}"
+env_compat() {
+  for prefix in HELIOS_ ANSIBLEHUB_ ANH_ AHUB_; do
+    eval "value=\${$prefix$1:-}"
+    if [ -n "$value" ]; then printf '%s' "$value"; return; fi
+  done
+  printf '%s' "$2"
+}
+
+BASE=$(env_compat SERVER http://localhost:8080)
+AUTH="-u $(env_compat OPERATOR_USER admin):$(env_compat OPERATOR_PASSWORD changeme)"
 REPO_BASE="${DEMO_REPO_URL:-http://localhost:8000}"
 
 ARCHIVE_APP="archive-test"   # get_url + unarchive, idempotent -> must converge
@@ -20,7 +28,7 @@ GHOST_AGENTS="agent-1 agent-2"
 
 POLL=5             # agent poll interval (matches bootstrap: 5s)
 COOLDOWN=$((POLL * 2))
-MAX_STREAK="${ANH_HEAL_MAX_STREAK:-3}"
+MAX_STREAK=$(env_compat HEAL_MAX_STREAK 3)
 WAIT_MAX=90        # seconds before giving up an assertion
 
 say() { printf '\n── %s\n' "$*"; }

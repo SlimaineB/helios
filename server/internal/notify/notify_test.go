@@ -16,7 +16,7 @@ func TestSendSignsPayload(t *testing.T) {
 	var sig string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, _ = io.ReadAll(r.Body)
-		sig = r.Header.Get("X-AnsibleHub-Signature")
+		sig = r.Header.Get("X-Helios-Signature")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()

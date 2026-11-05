@@ -5,14 +5,24 @@
 # 3. registers N instances, assigns the app, writes /conf/agent-N.yaml
 set -e
 
-BASE="${ANH_SERVER:-http://server:8080}"
+env_compat() {
+  for prefix in HELIOS_ ANSIBLEHUB_ ANH_ AHUB_; do
+    eval "value=\${$prefix$1:-}"
+    if [ -n "$value" ]; then printf '%s' "$value"; return; fi
+  done
+  printf '%s' "$2"
+}
+
+BASE=$(env_compat SERVER http://server:8080)
 NUM_AGENTS="${NUM_AGENTS:-2}"
 APP_NAME="demo"
 REPO_URL="${DEMO_REPO_URL:-http://repo:8000/demo.git}"
 # Optional Basic auth for the operator API (used by the UI-less bootstrap).
+OP_USER=$(env_compat OPERATOR_USER "")
+OP_PASS=$(env_compat OPERATOR_PASSWORD "")
 CURL_AUTH=""
-if [ -n "${ANH_OPERATOR_USER:-}" ]; then
-  CURL_AUTH="-u ${ANH_OPERATOR_USER}:${ANH_OPERATOR_PASSWORD}"
+if [ -n "$OP_USER" ]; then
+  CURL_AUTH="-u ${OP_USER}:${OP_PASS}"
 fi
 
 echo "waiting for API at $BASE ..."
@@ -85,7 +95,7 @@ for n in $(seq 1 "$NUM_AGENTS"); do
 server: $BASE
 token: $token
 instance_id: $inst_id
-state_dir: /var/lib/ansiblehub
+state_dir: /var/lib/helios
 poll_interval: 5s
 max_concurrent_apps: 4
 autoheal: true

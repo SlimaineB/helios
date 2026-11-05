@@ -11,7 +11,7 @@ COPY examples/playbooks/archive /tmp/archive-src
 COPY examples/playbooks/cmd /tmp/cmd-src
 RUN set -e \
     && G() { git -C /tmp/demo-src "$@"; } \
-    && C() { G -c user.email=boot@ansiblehub -c user.name=boot commit -qam "$1"; } \
+    && C() { G -c user.email=boot@helios -c user.name=boot commit -qam "$1"; } \
     && B() { sed -i "s/^        release: .*/        release: $1/" /tmp/demo-src/site.yml; } \
     && G init -b main -q \
     && G add -A \
@@ -27,8 +27,8 @@ RUN set -e \
     && cp /tmp/archive-src/asset/hello.tar.gz /srv/static/hello.tar.gz \
     && rm -rf /tmp/archive-src/asset \
     && A() { d="$1"; n="$2"; git -C "$d" init -b main -q \
-        && git -C "$d" -c user.email=boot@ansiblehub -c user.name=boot add -A \
-        && git -C "$d" -c user.email=boot@ansiblehub -c user.name=boot commit -qm init \
+        && git -C "$d" -c user.email=boot@helios -c user.name=boot add -A \
+        && git -C "$d" -c user.email=boot@helios -c user.name=boot commit -qm init \
         && git clone -q --bare "$d" "/srv/$n.git" \
         && git --git-dir="/srv/$n.git" update-server-info \
         && touch "/srv/$n.git/git-daemon-export-ok" \

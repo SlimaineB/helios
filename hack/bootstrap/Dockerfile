@@ -1,5 +1,5 @@
 # Registers instances + demo application with the API and writes per-agent
-# config files into the shared /conf volume (mounted as /etc/ansiblehub).
+# config files into the shared /conf volume (mounted as /etc/helios).
 FROM alpine:3.20
 RUN apk add --no-cache curl jq
 COPY hack/bootstrap/bootstrap.sh /usr/local/bin/bootstrap.sh

@@ -5,24 +5,24 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ansiblehub
-      POSTGRES_PASSWORD: ${ANH_POSTGRES_PASSWORD:?set ANH_POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ansiblehub
+      POSTGRES_USER: helios
+      POSTGRES_PASSWORD: ${HELIOS_POSTGRES_PASSWORD:-${ANH_POSTGRES_PASSWORD:-${ANSIBLEHUB_POSTGRES_PASSWORD:-}}}
+      POSTGRES_DB: helios
     volumes:
-      - ansiblehub-postgres:/var/lib/postgresql/data
+      - helios-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ansiblehub -d ansiblehub"]
+      test: ["CMD-SHELL", "pg_isready -U helios -d helios"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   server:
     environment:
-      ANSIBLEHUB_DB: postgres://ansiblehub:${ANH_POSTGRES_PASSWORD}@db:5432/ansiblehub?sslmode=disable
+      HELIOS_DB: postgres://helios:${HELIOS_POSTGRES_PASSWORD:-${ANH_POSTGRES_PASSWORD:-${ANSIBLEHUB_POSTGRES_PASSWORD:-}}}@db:5432/helios?sslmode=disable
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
-  ansiblehub-postgres:
-    name: ansiblehub-postgres
+  helios-postgres:
+    name: helios-postgres

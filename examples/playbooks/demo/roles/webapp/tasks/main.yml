@@ -1,13 +1,13 @@
 ---
-# webapp role — manages the demo webapp deployment under /tmp/ansiblehub-demo.
+# webapp role — manages the demo webapp deployment under /tmp/helios-demo.
 - name: Ensure the base directory tree exists
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: "0755"
   loop:
-    - /tmp/ansiblehub-demo
-    - /tmp/ansiblehub-demo/conf
+    - /tmp/helios-demo
+    - /tmp/helios-demo/conf
 
 - name: Ensure the service user exists
   ansible.builtin.user:
@@ -20,21 +20,21 @@
 - name: Ship the main webapp config from a template
   ansible.builtin.template:
     src: webapp.conf.j2
-    dest: /tmp/ansiblehub-demo/webapp.conf
+    dest: /tmp/helios-demo/webapp.conf
     mode: "0644"
 
 - name: Ensure the properties file carries the app identity
   ansible.builtin.lineinfile:
-    path: /tmp/ansiblehub-demo/conf/app.properties
+    path: /tmp/helios-demo/conf/app.properties
     regexp: '^app.name='
-    line: 'app.name=ansiblehub-demo'
+    line: 'app.name=helios-demo'
     create: true
     mode: "0644"
     state: present
 
 - name: Ensure the properties file carries the environment
   ansible.builtin.lineinfile:
-    path: /tmp/ansiblehub-demo/conf/app.properties
+    path: /tmp/helios-demo/conf/app.properties
     regexp: '^app.environment='
     line: 'app.environment=staging'
     create: true
@@ -42,7 +42,7 @@
 
 - name: Enable the healthz flag in the properties file
   ansible.builtin.lineinfile:
-    path: /tmp/ansiblehub-demo/conf/app.properties
+    path: /tmp/helios-demo/conf/app.properties
     regexp: '^healthz='
     line: 'healthz=true'
     create: true
@@ -50,7 +50,7 @@
 
 - name: Enable the metrics flag in the properties file
   ansible.builtin.lineinfile:
-    path: /tmp/ansiblehub-demo/conf/app.properties
+    path: /tmp/helios-demo/conf/app.properties
     regexp: '^metrics='
     line: 'metrics=true'
     create: true
@@ -59,7 +59,7 @@
 - name: Render one listener config per enabled feature
   ansible.builtin.template:
     src: feature.conf.j2
-    dest: "/tmp/ansiblehub-demo/conf/{{ item.key }}.conf"
+    dest: "/tmp/helios-demo/conf/{{ item.key }}.conf"
     mode: "0644"
   loop: "{{ features | dict2items }}"
   when: item.value.enabled
@@ -68,9 +68,9 @@
   ansible.builtin.copy:
     content: |
       [Service]
-      ExecStart=/usr/local/bin/ansiblehub-demo \
-        --config /tmp/ansiblehub-demo/webapp.conf \
-        --props /tmp/ansiblehub-demo/conf/app.properties
+      ExecStart=/usr/local/bin/helios-demo \
+        --config /tmp/helios-demo/webapp.conf \
+        --props /tmp/helios-demo/conf/app.properties
       Restart=on-failure
-    dest: /tmp/ansiblehub-demo/ansiblehub-demo.service
+    dest: /tmp/helios-demo/helios-demo.service
     mode: "0644"

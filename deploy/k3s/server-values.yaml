@@ -1,10 +1,10 @@
-# helm values for the ansiblehub-server chart (helm/ansiblehub-server).
+# helm values for the helios-server chart (helm/helios-server).
 # Secrets are intentionally absent: pass the operator password on the CLI, or
 # pre-create a Secret with key `operator-password` and set operatorAuth.existingSecret.
 replicaCount: 1
 
 image:
-  repository: 192.168.1.21:30500/ansiblehub/server
+  repository: 192.168.1.21:30500/helios/server
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -14,9 +14,11 @@ service:
   targetPort: 8080
 
 # Backend: Postgres deployed with postgres.yaml (in-cluster ClusterIP). The
-# server overrides its -db flag when ANSIBLEHUB_DB is set.
+# server overrides its -db flag when HELIOS_DB is set. Keep the password
+# out of git; pass the DSN at install time:
+#   --set database.dsn="postgres://helios:$DB_PASSWORD@helios-db:5432/helios?sslmode=disable"
 database:
-  dsn: postgres://ansiblehub:ansiblehub@ansiblehub-db:5432/ansiblehub?sslmode=disable
+  dsn: ""
 
 # Stop applying after this many consecutive failed convergence cycles.
 healing:

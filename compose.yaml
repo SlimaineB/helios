@@ -1,18 +1,21 @@
 # Dev/testbed harness. Everything runs on the host network so the SSO (Dex)
 # issuer, the API and the repo are all reachable as "localhost" from both the
-# containers and the browser. Not meant for production networking.
+# containers and the browser. Not meant for production networking. The fixed
+# credentials below are lab fixtures, not secrets.
+name: helios
+
 services:
   db:
     image: postgres:16-alpine
     network_mode: host
     environment:
-      POSTGRES_USER: ansiblehub
-      POSTGRES_PASSWORD: ansiblehub
-      POSTGRES_DB: ansiblehub
+      POSTGRES_USER: helios
+      POSTGRES_PASSWORD: helios
+      POSTGRES_DB: helios
     volumes:
       - dbdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ansiblehub -d ansiblehub"]
+      test: ["CMD-SHELL", "pg_isready -U helios -d helios"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -24,18 +27,18 @@ services:
       dockerfile: Dockerfile
     network_mode: host
     environment:
-      ANSIBLEHUB_DB: postgres://ansiblehub:ansiblehub@localhost:5432/ansiblehub?sslmode=disable
-      ANSIBLEHUB_OPERATOR_USER: ${ANH_OPERATOR_USER:-admin}
-      ANSIBLEHUB_OPERATOR_PASSWORD: ${ANH_OPERATOR_PASSWORD:-changeme}
-      ANSIBLEHUB_BASE_URL: http://localhost:8080
-      ANSIBLEHUB_RBAC_FILE: /etc/ansiblehub/rbac.yaml
-      ANSIBLEHUB_OIDC_ISSUER: http://localhost:5556
-      ANSIBLEHUB_OIDC_CLIENT_ID: ansiblehub
-      ANSIBLEHUB_OIDC_CLIENT_SECRET: dex-client-secret
-      ANSIBLEHUB_OIDC_GROUP_CLAIM: email
-      ANSIBLEHUB_OIDC_SCOPES: openid, profile, email, groups
+      HELIOS_DB: postgres://helios:helios@localhost:5432/helios?sslmode=disable
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-${ANH_OPERATOR_USER:-${ANSIBLEHUB_OPERATOR_USER:-admin}}}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-${ANH_OPERATOR_PASSWORD:-${ANSIBLEHUB_OPERATOR_PASSWORD:-changeme}}}
+      HELIOS_BASE_URL: http://localhost:8080
+      HELIOS_RBAC_FILE: /etc/helios/rbac.yaml
+      HELIOS_OIDC_ISSUER: http://localhost:5556
+      HELIOS_OIDC_CLIENT_ID: helios
+      HELIOS_OIDC_CLIENT_SECRET: dex-client-secret
+      HELIOS_OIDC_GROUP_CLAIM: email
+      HELIOS_OIDC_SCOPES: openid, profile, email, groups
     volumes:
-      - ./hack/dex/rbac.yaml:/etc/ansiblehub/rbac.yaml:ro
+      - ./hack/dex/rbac.yaml:/etc/helios/rbac.yaml:ro
     depends_on:
       db:
         condition: service_healthy
@@ -46,7 +49,7 @@ services:
     network_mode: host
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     environment:
-      ANH_DEX_CLIENT_SECRET: dex-client-secret
+      HELIOS_DEX_CLIENT_SECRET: dex-client-secret
     volumes:
       - ./hack/dex/config.yaml:/etc/dex/config.yaml:ro
     restart: unless-stopped
@@ -64,10 +67,10 @@ services:
       dockerfile: hack/bootstrap/Dockerfile
     network_mode: host
     environment:
-      ANH_SERVER: http://localhost:8080
+      HELIOS_SERVER: http://localhost:8080
       NUM_AGENTS: ${NUM_AGENTS:-2}
-      ANH_OPERATOR_USER: ${ANH_OPERATOR_USER:-admin}
-      ANH_OPERATOR_PASSWORD: ${ANH_OPERATOR_PASSWORD:-changeme}
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-${ANH_OPERATOR_USER:-${ANSIBLEHUB_OPERATOR_USER:-admin}}}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-${ANH_OPERATOR_PASSWORD:-${ANSIBLEHUB_OPERATOR_PASSWORD:-changeme}}}
       DEMO_REPO_URL: ${DEMO_REPO_URL:-http://localhost:8000/demo.git}
     volumes:
       - agentconf:/conf
@@ -82,9 +85,9 @@ services:
       dockerfile: agent/Dockerfile
     network_mode: host
     environment:
-      CONFIG_FILE: /etc/ansiblehub/agent-1.yaml
+      CONFIG_FILE: /etc/helios/agent-1.yaml
     volumes:
-      - agentconf:/etc/ansiblehub
+      - agentconf:/etc/helios
     depends_on:
       - bootstrap
     restart: unless-stopped
@@ -95,9 +98,9 @@ services:
       dockerfile: agent/Dockerfile
     network_mode: host
     environment:
-      CONFIG_FILE: /etc/ansiblehub/agent-2.yaml
+      CONFIG_FILE: /etc/helios/agent-2.yaml
     volumes:
-      - agentconf:/etc/ansiblehub
+      - agentconf:/etc/helios
     depends_on:
       - bootstrap
     restart: unless-stopped

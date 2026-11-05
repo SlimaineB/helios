@@ -1,11 +1,11 @@
 [Unit]
-Description=AnsibleHub agent (ansible-pull drift controller)
+Description=Helios agent (ansible-pull drift controller)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ansiblehub-agent -config /etc/ansiblehub/agent.yaml
+ExecStart=/usr/local/bin/helios-agent -config /etc/helios/agent.yaml
 Environment=HOME=/root
 Restart=always
 RestartSec=10

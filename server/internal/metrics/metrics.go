@@ -1,5 +1,5 @@
 // Package metrics exposes a tiny Prometheus-text metrics registry. It avoids a
-// client library dependency: AnsibleHub only needs a handful of counters.
+// client library dependency: Helios only needs a handful of counters.
 package metrics
 
 import (
@@ -30,29 +30,29 @@ func inc(name, labels string) {
 
 // Checkin counts successful agent checkins.
 func Checkin(instance string) {
-	inc("ansiblehub_agent_checkins_total", `instance="`+esc(instance)+`"`)
+	inc("helios_agent_checkins_total", `instance="`+esc(instance)+`"`)
 }
 
 // Run counts reported runs.
 func Run(instance string, appID int64, mode, status string) {
-	inc("ansiblehub_runs_total", fmt.Sprintf(`instance="%s",app="%d",mode="%s",status="%s"`,
+	inc("helios_runs_total", fmt.Sprintf(`instance="%s",app="%d",mode="%s",status="%s"`,
 		esc(instance), appID, esc(mode), esc(status)))
 }
 
 // Command counts command results.
 func Command(status string) {
-	inc("ansiblehub_commands_total", `status="`+esc(status)+`"`)
+	inc("helios_commands_total", `status="`+esc(status)+`"`)
 }
 
 // Frozen counts syncs blocked by maintenance windows.
 func Frozen(appID int64) {
-	inc("ansiblehub_sync_frozen_total", `app="`+strconv.FormatInt(appID, 10)+`"`)
+	inc("helios_sync_frozen_total", `app="`+strconv.FormatInt(appID, 10)+`"`)
 }
 
 // SetInfo publishes a build info gauge.
 func SetInfo(version string) {
 	mu.Lock()
-	info["ansiblehub_build_info"] = version
+	info["helios_build_info"] = version
 	mu.Unlock()
 }
 

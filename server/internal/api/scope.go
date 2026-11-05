@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/slim/ansiblehub/server/internal/model"
-	"github.com/slim/ansiblehub/server/internal/projects"
-	"github.com/slim/ansiblehub/server/internal/store"
+	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/projects"
+	"github.com/slim/helios/server/internal/store"
 )
 
 func (s *Server) principal(r *http.Request) *principal {
@@ -58,41 +58,41 @@ func (s *Server) visibleProjects(r *http.Request, resource, action string) (bool
 
 // validateAppProject ensures a project exists and that its repository
 // allowlist accepts repoURL. Empty project = global (no restriction).
-func (s *Server) validateAppProject(ctx context.Context, name, repoURL string) string {
+func (s *Server) validateAppProject(ctx context.Context, name, repoURL string) (string, error) {
 	if name == projects.Global {
-		return ""
+		return "", nil
 	}
 	if !projects.ValidName(name) {
-		return "invalid project name"
+		return "invalid project name", nil
 	}
 	p, err := s.store.GetProjectByName(ctx, name)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "unknown project: " + name
+			return "unknown project: " + name, nil
 		}
-		return err.Error()
+		return "", err
 	}
 	if !projects.MatchRepo(p.RepoPatterns, repoURL) {
-		return "repository is not allowed by project " + name
+		return "repository is not allowed by project " + name, nil
 	}
-	return ""
+	return "", nil
 }
 
 // validateProjectOnly ensures a project exists (for instances).
-func (s *Server) validateProjectOnly(ctx context.Context, name string) string {
+func (s *Server) validateProjectOnly(ctx context.Context, name string) (string, error) {
 	if name == projects.Global {
-		return ""
+		return "", nil
 	}
 	if !projects.ValidName(name) {
-		return "invalid project name"
+		return "invalid project name", nil
 	}
 	if _, err := s.store.GetProjectByName(ctx, name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "unknown project: " + name
+			return "unknown project: " + name, nil
 		}
-		return err.Error()
+		return "", err
 	}
-	return ""
+	return "", nil
 }
 
 // ---- projects (operator) ----
@@ -103,7 +103,7 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.store.ListProjects(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -129,7 +129,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "project already exists")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
@@ -164,7 +164,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "project name already exists")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, in)
@@ -180,7 +180,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteProject(r.Context(), id); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	ok200(w)

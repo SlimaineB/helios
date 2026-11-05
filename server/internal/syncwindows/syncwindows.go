@@ -9,7 +9,7 @@ import (
 	"time"
 	_ "time/tzdata" // embed the IANA database so containers can resolve zones
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 var dayIndex = map[string]int{

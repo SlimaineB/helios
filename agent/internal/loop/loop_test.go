@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slim/ansiblehub/agent/internal/client"
-	"github.com/slim/ansiblehub/agent/internal/config"
+	"github.com/slim/helios/agent/internal/client"
+	"github.com/slim/helios/agent/internal/config"
 )
 
 func testAgent(base string) *Agent {

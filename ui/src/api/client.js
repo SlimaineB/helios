@@ -1,10 +1,18 @@
 let basicCreds = null
+const credsKey = 'helios_basic_creds'
+const legacyCredsKey = 'anh_basic_creds'
 
 function loadCreds() {
   if (typeof window === 'undefined') return null
   try {
-    const stored = localStorage.getItem('anh_basic_creds')
+    const stored = sessionStorage.getItem(credsKey)
     if (stored) return stored
+    const legacy = localStorage.getItem(legacyCredsKey)
+    if (legacy) {
+      sessionStorage.setItem(credsKey, legacy)
+      localStorage.removeItem(legacyCredsKey)
+      return legacy
+    }
   } catch {
     /* ignore */
   }
@@ -14,8 +22,9 @@ function loadCreds() {
 function saveCreds(creds) {
   if (typeof window === 'undefined') return
   try {
-    if (creds) localStorage.setItem('anh_basic_creds', creds)
-    else localStorage.removeItem('anh_basic_creds')
+    if (creds) sessionStorage.setItem(credsKey, creds)
+    else sessionStorage.removeItem(credsKey)
+    localStorage.removeItem(legacyCredsKey)
   } catch {
     /* ignore */
   }

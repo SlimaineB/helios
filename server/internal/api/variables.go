@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 // secretSentinel is what the operator API returns for a secret, and what a
@@ -27,7 +27,7 @@ func (s *Server) handleListAppVariables(w http.ResponseWriter, r *http.Request) 
 	}
 	vars, err := s.store.AppVariables(r.Context(), appID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, varsPayload{Items: redactVars(vars)})
@@ -49,16 +49,16 @@ func (s *Server) handleUpdateAppVariables(w http.ResponseWriter, r *http.Request
 	}
 	current, err := s.store.AppVariables(r.Context(), appID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if err := s.store.SaveAppVariables(r.Context(), appID, resolveVariables(in, current)); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	saved, err := s.store.AppVariables(r.Context(), appID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, varsPayload{Items: redactVars(saved)})
@@ -80,7 +80,7 @@ func (s *Server) handleListAssignedVariables(w http.ResponseWriter, r *http.Requ
 	}
 	vars, err := s.store.AssignmentVariables(r.Context(), instID, appID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, varsPayload{Items: redactVars(vars)})
@@ -107,16 +107,16 @@ func (s *Server) handleUpdateAssignedVariables(w http.ResponseWriter, r *http.Re
 	}
 	current, err := s.store.AssignmentVariables(r.Context(), instID, appID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	if err := s.store.SaveAssignmentVariables(r.Context(), instID, appID, resolveVariables(in, current)); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	saved, err := s.store.AssignmentVariables(r.Context(), instID, appID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, varsPayload{Items: redactVars(saved)})

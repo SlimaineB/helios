@@ -34,6 +34,11 @@ func NewSessionStore(ttl time.Duration) *SessionStore {
 	return &SessionStore{sessions: map[string]Session{}, ttl: ttl}
 }
 
+// TTL returns the absolute lifetime applied to new sessions.
+func (s *SessionStore) TTL() time.Duration {
+	return s.ttl
+}
+
 // Create issues a new session token for the principal.
 func (s *SessionStore) Create(sub, email, name string, groups, roles []string) (string, error) {
 	b := make([]byte, 32)
@@ -65,8 +70,6 @@ func (s *SessionStore) Get(token string) (Session, bool) {
 		delete(s.sessions, token)
 		return Session{}, false
 	}
-	sess.Expiry = now.Add(s.ttl) // sliding expiration
-	s.sessions[token] = sess
 	return sess, true
 }
 

@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/slim/ansiblehub/server/internal/auth"
-	"github.com/slim/ansiblehub/server/internal/metrics"
-	"github.com/slim/ansiblehub/server/internal/model"
-	"github.com/slim/ansiblehub/server/internal/store"
+	"github.com/slim/helios/server/internal/auth"
+	"github.com/slim/helios/server/internal/metrics"
+	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/store"
 )
 
 type ctxKey int
@@ -97,7 +97,7 @@ func (s *Server) agentAuth(next http.HandlerFunc) http.HandlerFunc {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
-			writeErr(w, http.StatusInternalServerError, err.Error())
+			s.internalError(w, r, err)
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxInstance, inst)
@@ -131,7 +131,7 @@ func (s *Server) handleCommandResult(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "command not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
 	// A completed apply should refresh the check state afterwards.

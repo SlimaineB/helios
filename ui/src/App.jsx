@@ -165,7 +165,7 @@ function LoginScreen({ realm, onDone }) {
         <div className="brand login-brand">
           <span className="brand-mark">⌁</span>
           <span className="brand-text">
-            <span className="brand-name">AnsibleHub</span>
+            <span className="brand-name">Helios</span>
             <span className="brand-tag">operator sign-in</span>
           </span>
         </div>

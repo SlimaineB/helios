@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 func at(t *testing.T, s string) time.Time {

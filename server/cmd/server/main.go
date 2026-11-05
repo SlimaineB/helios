@@ -8,39 +8,41 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/api"
-	"github.com/slim/ansiblehub/server/internal/auth"
-	"github.com/slim/ansiblehub/server/internal/metrics"
-	"github.com/slim/ansiblehub/server/internal/notify"
-	"github.com/slim/ansiblehub/server/internal/oidc"
-	"github.com/slim/ansiblehub/server/internal/rbac"
-	"github.com/slim/ansiblehub/server/internal/store"
+	"github.com/slim/helios/server/internal/api"
+	"github.com/slim/helios/server/internal/auth"
+	"github.com/slim/helios/server/internal/envutil"
+	"github.com/slim/helios/server/internal/metrics"
+	"github.com/slim/helios/server/internal/notify"
+	"github.com/slim/helios/server/internal/oidc"
+	"github.com/slim/helios/server/internal/rbac"
+	"github.com/slim/helios/server/internal/store"
 )
 
 func main() {
 	var (
 		addr     = flag.String("addr", ":8080", "listen address")
-		dbPath   = flag.String("db", "./ansiblehub.db", "database: sqlite file path or postgres:// URL")
+		dbPath   = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
 		uiDir    = flag.String("ui", "", "path to built UI static files (optional)")
-		baseURL  = flag.String("base-url", envOrDefault("ANSIBLEHUB_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
-		tlsCert  = flag.String("tls-cert", os.Getenv("ANSIBLEHUB_TLS_CERT"), "TLS certificate file (enables HTTPS)")
-		tlsKey   = flag.String("tls-key", os.Getenv("ANSIBLEHUB_TLS_KEY"), "TLS private key file")
-		rbacFile = flag.String("rbac", os.Getenv("ANSIBLEHUB_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
+		baseURL  = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
+		tlsCert  = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
+		tlsKey   = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
+		rbacFile = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
 		sessTTL  = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
 	)
 	flag.Parse()
 
-	if dsn := os.Getenv("ANSIBLEHUB_DB"); dsn != "" {
+	if dsn := envutil.Get("HELIOS_DB"); dsn != "" {
 		*dbPath = dsn
 	}
 
 	log := slog.Default()
-	log.Info("ansiblehub server starting", "addr", *addr, "db", store.Kind(*dbPath))
+	log.Info("helios server starting", "addr", *addr, "db", store.Kind(*dbPath))
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
@@ -67,36 +69,45 @@ func main() {
 
 	// Local admin (break-glass / bootstrap). Refuse trivially-weak defaults
 	// unless explicitly acknowledged.
-	opUser := os.Getenv("ANSIBLEHUB_OPERATOR_USER")
-	opPass := os.Getenv("ANSIBLEHUB_OPERATOR_PASSWORD")
-	if opUser == "admin" && opPass == "admin" && os.Getenv("ANH_ALLOW_WEAK_DEFAULT") != "1" {
-		log.Error("refusing to start with default operator credentials admin/admin; set ANSIBLEHUB_OPERATOR_USER/PASSWORD (or ANH_ALLOW_WEAK_DEFAULT=1 for the lab)")
+	opUser := envutil.Get("HELIOS_OPERATOR_USER")
+	opPass := envutil.Get("HELIOS_OPERATOR_PASSWORD")
+	if opUser != "" && opPass == "" {
+		log.Error("refusing to start with an empty operator password; set HELIOS_OPERATOR_PASSWORD")
+		os.Exit(1)
+	}
+	if opUser == "admin" && opPass == "admin" && envutil.Get("HELIOS_ALLOW_WEAK_DEFAULT") != "1" {
+		log.Error("refusing to start with default operator credentials admin/admin; set HELIOS_OPERATOR_USER/PASSWORD (or HELIOS_ALLOW_WEAK_DEFAULT=1 for the lab)")
 		os.Exit(1)
 	}
 
-	oa := &api.OpAuth{RBAC: rb, BaseURL: *baseURL, Sessions: auth.NewSessionStore(*sessTTL)}
+	oa := &api.OpAuth{RBAC: rb, BaseURL: *baseURL, Sessions: auth.NewSessionStore(*sessTTL), BasicUser: opUser}
 	if opUser != "" {
 		oa.Basic = func(header string) bool { return auth.CheckBasic(header, opUser, opPass) }
 		log.Info("operator basic admin enabled", "user", opUser)
 	}
-	if iss := os.Getenv("ANSIBLEHUB_OIDC_ISSUER"); iss != "" && os.Getenv("ANSIBLEHUB_OIDC_CLIENT_ID") != "" && os.Getenv("ANSIBLEHUB_OIDC_CLIENT_SECRET") != "" {
+	if iss := envutil.Get("HELIOS_OIDC_ISSUER"); iss != "" && envutil.Get("HELIOS_OIDC_CLIENT_ID") != "" && envutil.Get("HELIOS_OIDC_CLIENT_SECRET") != "" {
+		groupClaim := envutil.Or("HELIOS_OIDC_GROUP_CLAIM", "groups")
 		prov, err := oidc.New(context.Background(), oidc.Config{
 			Issuer:       iss,
-			ClientID:     os.Getenv("ANSIBLEHUB_OIDC_CLIENT_ID"),
-			ClientSecret: os.Getenv("ANSIBLEHUB_OIDC_CLIENT_SECRET"),
+			ClientID:     envutil.Get("HELIOS_OIDC_CLIENT_ID"),
+			ClientSecret: envutil.Get("HELIOS_OIDC_CLIENT_SECRET"),
 			RedirectURL:  *baseURL + "/api/v1/auth/callback",
-			GroupClaim:   envOrDefault("ANSIBLEHUB_OIDC_GROUP_CLAIM", "groups"),
-			Scopes:       splitList(os.Getenv("ANSIBLEHUB_OIDC_SCOPES")),
+			GroupClaim:   groupClaim,
+			Scopes:       splitList(envutil.Get("HELIOS_OIDC_SCOPES")),
 		})
 		if err != nil {
 			log.Error("failed to init OIDC", "error", err)
 			os.Exit(1)
 		}
 		oa.OIDC = prov
-		log.Info("OIDC enabled", "issuer", iss, "group_claim", os.Getenv("ANSIBLEHUB_OIDC_GROUP_CLAIM"))
+		log.Info("OIDC enabled", "issuer", iss, "group_claim", groupClaim)
 	}
 	if oa.Basic == nil && oa.OIDC == nil {
-		log.Warn("no operator authentication configured — UI/API is OPEN (dev mode)")
+		if envutil.Get("HELIOS_ALLOW_UNAUTHENTICATED") != "1" {
+			log.Error("refusing to start without operator authentication; configure HELIOS_OPERATOR_USER/PASSWORD or OIDC (set HELIOS_ALLOW_UNAUTHENTICATED=1 only for local development)")
+			os.Exit(1)
+		}
+		log.Warn("no operator authentication configured — UI/API is OPEN")
 	}
 
 	srv := api.New(st, log, oa, secure)
@@ -105,7 +116,7 @@ func main() {
 	handler := srv.Handler()
 
 	if *uiDir != "" {
-		handler = uiMiddleware(handler, *uiDir)
+		handler = uiMiddleware(handler, *uiDir, secure)
 	}
 
 	httpServer := &http.Server{
@@ -149,13 +160,6 @@ func main() {
 	}
 }
 
-func envOrDefault(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
 func splitList(s string) []string {
 	if s == "" {
 		return nil
@@ -170,27 +174,38 @@ func splitList(s string) []string {
 	return out
 }
 
-func uiMiddleware(next http.Handler, uiDir string) http.Handler {
+func uiMiddleware(next http.Handler, uiDir string, secure bool) http.Handler {
 	fileServer := http.FileServer(http.Dir(uiDir))
+	index := filepath.Join(uiDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api") || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
 
-		// Real asset that exists on disk (js/css/…) → serve it normally.
-		target := filepath.Join(uiDir, filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/")))
-		if info, err := os.Stat(target); err == nil && !info.IsDir() {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		// A missing asset (stale hashed bundle, etc.) is a genuine 404.
-		if strings.Contains(filepath.Base(r.URL.Path), ".") {
+		api.SetSecurityHeaders(w, r, secure)
+		clean := path.Clean("/" + r.URL.Path)
+		if clean != r.URL.Path && (r.URL.Path != clean+"/" || strings.Contains(path.Base(clean), ".")) {
 			http.NotFound(w, r)
 			return
 		}
-		// SPA fallback: any other path (client route) renders the app.
-		http.ServeFile(w, r, filepath.Join(uiDir, "index.html"))
+
+		rel := strings.TrimPrefix(clean, "/")
+		target := filepath.Join(uiDir, filepath.FromSlash(rel))
+		if info, err := os.Stat(target); err == nil && !info.IsDir() {
+			if strings.HasPrefix(clean, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		if strings.Contains(path.Base(clean), ".") {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, index)
 	})
 }

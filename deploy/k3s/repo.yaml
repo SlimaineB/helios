@@ -5,23 +5,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ansiblehub-repo
-  namespace: ansiblehub
+  name: helios-repo
+  namespace: helios
   labels:
-    app: ansiblehub-repo
+    app: helios-repo
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ansiblehub-repo
+      app: helios-repo
   template:
     metadata:
       labels:
-        app: ansiblehub-repo
+        app: helios-repo
     spec:
       containers:
         - name: repo
-          image: 192.168.1.21:30500/ansiblehub/repo:latest
+          image: 192.168.1.21:30500/helios/repo:latest
           ports:
             - containerPort: 8000
           readinessProbe:
@@ -43,11 +43,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ansiblehub-repo
-  namespace: ansiblehub
+  name: helios-repo
+  namespace: helios
 spec:
   selector:
-    app: ansiblehub-repo
+    app: helios-repo
   ports:
     - port: 8000
       targetPort: 8000

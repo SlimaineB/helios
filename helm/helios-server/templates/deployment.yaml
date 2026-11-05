@@ -1,19 +1,26 @@
+{{- if and (not .Values.operatorAuth.user) (not .Values.operatorAuth.allowUnauthenticated) }}
+{{- fail "operatorAuth.user is required; set operatorAuth.allowUnauthenticated=true only for an isolated lab" }}
+{{- end }}
+{{- $baseURL := .Values.baseUrl }}
+{{- if and (not $baseURL) .Values.ingress.enabled }}
+{{- $baseURL = printf "%s://%s" (ternary "https" "http" .Values.ingress.tls.enabled) .Values.ingress.host }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ansiblehub-server.fullname" . }}
+  name: {{ include "helios-server.fullname" . }}
   labels:
-    {{- include "ansiblehub-server.labels" . | nindent 4 }}
+    {{- include "helios-server.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "ansiblehub-server.name" . }}
+      app.kubernetes.io/name: {{ include "helios-server.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "ansiblehub-server.name" . }}
+        app.kubernetes.io/name: {{ include "helios-server.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
       {{- with .Values.podAnnotations }}
       annotations:
@@ -34,41 +41,47 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 35
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        fsGroup: 10001
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: server
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           args:
             - -addr
             - :8080
             - -db
-            - /data/ansiblehub.db
+            - /data/helios.db
             - -ui
             - /app/ui
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL }}
           env:
+            {{- if $baseURL }}
+            - name: HELIOS_BASE_URL
+              value: {{ $baseURL | quote }}
+            {{- end }}
             {{- if .Values.database.dsn }}
-            - name: ANSIBLEHUB_DB
+            - name: HELIOS_DB
               value: {{ .Values.database.dsn | quote }}
             {{- end }}
             {{- if .Values.healing.maxDriftStreak }}
-            - name: ANH_HEAL_MAX_STREAK
+            - name: HELIOS_HEAL_MAX_STREAK
               value: {{ .Values.healing.maxDriftStreak | quote }}
             {{- end }}
             {{- if .Values.operatorAuth.user }}
-            - name: ANSIBLEHUB_OPERATOR_USER
+            - name: HELIOS_OPERATOR_USER
               value: {{ .Values.operatorAuth.user | quote }}
-            - name: ANSIBLEHUB_OPERATOR_PASSWORD
+            - name: HELIOS_OPERATOR_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.operatorAuth.existingSecret | default (printf "%s-operator" (include "ansiblehub-server.fullname" .)) }}
+                  name: {{ include "helios-server.operatorSecret" . }}
                   key: operator-password
             {{- end }}
           {{- end }}
@@ -79,10 +92,18 @@ spec:
             httpGet:
               path: /api/v1/health
               port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /api/v1/health
               port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           volumeMounts:
             - name: data
               mountPath: /data
@@ -91,4 +112,4 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "ansiblehub-server.fullname" . }}-data
+            claimName: {{ include "helios-server.fullname" . }}-data

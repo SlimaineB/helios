@@ -5,13 +5,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ansiblehub
+  name: helios
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: registry
-  namespace: ansiblehub
+  namespace: helios
   labels:
     app: registry
 spec:
@@ -40,7 +40,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: registry
-  namespace: ansiblehub
+  namespace: helios
 spec:
   type: NodePort
   selector:

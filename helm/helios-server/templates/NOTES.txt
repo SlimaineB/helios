@@ -1,0 +1,7 @@
+Helios server is available at {{ .Values.baseUrl | default (printf "the %s service" .Values.service.type) }}.
+
+{{- if and .Values.operatorAuth.user (not .Values.operatorAuth.existingSecret) (not .Values.operatorAuth.password) }}
+
+The operator password was generated automatically. Read it with:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "helios-server.operatorSecret" . }} -o jsonpath='{.data.operator-password}' | base64 -d
+{{- end }}

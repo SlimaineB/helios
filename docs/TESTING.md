@@ -1,4 +1,4 @@
-# Testing AnsibleHub
+# Testing Helios
 
 There are five levels: unit tests, a fast stack smoke test, loop-safety
 scenarios, manual UI checks and load/capacity tests. CI runs the unit tests,
@@ -29,7 +29,7 @@ cd agent && go test ./internal/loop -run TestRunPool -v
 Postgres coverage is opt-in:
 
 ```sh
-ANSIBLEHUB_TEST_PG='postgres://user:pass@localhost:5432/ansiblehub_test' \
+HELIOS_TEST_PG='postgres://user:pass@localhost:5432/helios_test' \
   make test
 ```
 
@@ -63,8 +63,8 @@ SMOKE PASS: 2 agents, demo=...
 Useful overrides:
 
 ```sh
-ANH_SERVER=http://localhost:8080 \
-ANH_OPERATOR_USER=admin ANH_OPERATOR_PASSWORD=changeme \
+HELIOS_SERVER=http://localhost:8080 \
+HELIOS_OPERATOR_USER=admin HELIOS_OPERATOR_PASSWORD=changeme \
 ./hack/smoke.sh
 ```
 
@@ -96,7 +96,7 @@ After `make smoke`, open <http://localhost:8080> and exercise:
 
 | Scenario | Action | Expected |
 |----------|--------|----------|
-| Drift | `docker compose exec agent-2 sh -c 'echo x > /tmp/ansiblehub-demo/state.txt'` | `agent-2` turns **Drift** within one poll |
+| Drift | `docker compose exec agent-2 sh -c 'echo x > /tmp/helios-demo/state.txt'` | `agent-2` turns **Drift** within one poll |
 | Autoheal | wait one poll | back to **Synced**; an apply run appears |
 | Diff | click **Diff** on the drift run | current vs desired file |
 | Check | click **Check** | inline spinner, new `last_check_at`, no page freeze |

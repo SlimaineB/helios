@@ -1,14 +1,14 @@
-.PHONY: build build-agent build-server ui build-local test test-race test-ui smoke loop-test compose-up compose-down compose-logs compose-clean clean
+.PHONY: build build-agent build-server ui build-local test test-race test-ui demo smoke loop-test docs docs-build docs-serve compose-up compose-down compose-logs compose-clean clean
 
 ## Local development (no docker)
 ui:
 	cd ui && npm install && npm run build
 
 build-agent:
-	cd agent && go build -o ansiblehub-agent ./cmd/agent
+	cd agent && go build -o helios-agent ./cmd/agent
 
 build-server:
-	cd server && go build -o ansiblehub-server ./cmd/server
+	cd server && go build -o helios-server ./cmd/server
 
 # Full local build of all binaries + UI (git/ansible must be installed on host).
 build-local: build-agent build-server ui
@@ -23,6 +23,19 @@ test-race:
 
 test-ui:
 	cd ui && npm ci && npm run build
+
+## Documentation site (requires: pip install -r requirements-docs.txt)
+docs: docs-build
+
+docs-build:
+	mkdocs build --strict
+
+docs-serve:
+	mkdocs serve
+
+## One-command lab demo (build + start + wait + smoke)
+demo:
+	./hack/demo.sh
 
 ## Running compose stack (start it first: make compose-up)
 smoke:
@@ -46,5 +59,5 @@ compose-clean:
 	@rm -rf hdata
 
 clean:
-	rm -f agent/ansiblehub-agent server/ansiblehub-server ansiblehub.db
+	rm -f agent/helios-agent server/helios-server helios.db
 	rm -rf ui/dist ui/node_modules

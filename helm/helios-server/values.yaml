@@ -1,10 +1,10 @@
-# Default values for ansiblehub-server.
+# Default values for helios-server.
 # This is a YAML-formatted file.
 
 replicaCount: 1
 
 image:
-  repository: ansiblehub/server
+  repository: helios/server
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -22,6 +22,10 @@ storage:
   className: null    # null -> cluster default storage class
   size: 10Gi
   accessMode: ReadWriteOnce
+
+# Public URL used for OIDC callbacks and secure cookies. When empty and ingress
+# is enabled, the chart derives it from ingress.host and ingress.tls.
+baseUrl: ""
 
 ingress:
   enabled: false
@@ -45,12 +49,28 @@ database:
 healing:
   maxDriftStreak: 3
 
-# HTTP Basic auth protecting the operator UI + API. Empty -> no auth (open).
-# Learn the password from a secret, e.g. existingSecret with key "operator-password".
+# HTTP Basic auth protecting the operator UI + API. When password is empty and
+# no existingSecret is set, the chart generates one and keeps it across upgrades.
 operatorAuth:
-  user: ""
+  user: admin
   password: ""
   # existingSecret: name of a Secret holding key `operator-password`.
+  # Allow an unauthenticated API/UI. Only for isolated lab environments.
+  allowUnauthenticated: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
 
 resources:
   {}

@@ -6,14 +6,18 @@ WORKDIR /build
 COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 COPY agent/ ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/ansiblehub-agent ./cmd/agent
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/helios-agent ./cmd/agent
 
 FROM python:3.11-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir --break-system-packages ansible-core
-COPY --from=build /out/ansiblehub-agent /usr/local/bin/ansiblehub-agent
+    && pip install --no-cache-dir --break-system-packages ansible-core \
+    && groupadd -g 10001 helios \
+    && useradd -u 10001 -g helios -M -s /usr/sbin/nologin helios \
+    && mkdir -p /var/lib/helios/agent \
+    && chown -R helios:helios /var/lib/helios
+COPY --from=build /out/helios-agent /usr/local/bin/helios-agent
 # ansible-core 2.19 removed the built-in `json` stdout callback; it lives in ansible.posix.
 # Install to a HOME-independent shared path: the runtime sets HOME=/tmp (line 23),
 # so the default ~/.ansible/collections target would be invisible to the pod.

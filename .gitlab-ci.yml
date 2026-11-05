@@ -1,13 +1,13 @@
-# AnsibleHub CI/CD: tests -> container images -> Helm charts.
+# Helios CI/CD: tests -> container images -> Helm charts.
 #
 # Produces, in GitLab's own hosting:
 #   - container images : $CI_REGISTRY_IMAGE/server and .../agent
 #   - helm repo        : helm repo add <name> $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/helm/stable
 #
 # Helm install example:
-#   helm install hub <name>/ansiblehub-server --set image.repository=$CI_REGISTRY_IMAGE/server
-#   helm install agt <name>/ansiblehub-agent --set image.repository=$CI_REGISTRY_IMAGE/agent \
-#     --set config.server=http://hub-<name>-ansiblehub-server --set config.token=<token>
+#   helm install hub <name>/helios-server --set image.repository=$CI_REGISTRY_IMAGE/server
+#   helm install agt <name>/helios-agent --set image.repository=$CI_REGISTRY_IMAGE/agent \
+#     --set config.server=http://hub-<name>-helios-server --set config.token=<token>
 #
 # Runner: any docker/podman executor works; no privileged/Docker socket needed.
 
@@ -47,7 +47,7 @@ test:ui:
     - npm run build
 
 .helm-cli:
-  image: alpine:3.20
+  image: alpine:3.22
   before_script:
     - apk add --no-cache curl tar ca-certificates
     - curl -fsSL https://get.helm.sh/helm-v3.18.0-linux-amd64.tar.gz -o /tmp/helm.tgz
@@ -57,9 +57,9 @@ test:helm:
   extends: .helm-cli
   stage: test
   script:
-    - helm lint helm/ansiblehub-server helm/ansiblehub-agent
-    - helm template s helm/ansiblehub-server >/dev/null
-    - helm template a helm/ansiblehub-agent >/dev/null
+    - helm lint helm/helios-server helm/helios-agent --set config.token=ci-test-token
+    - helm template s helm/helios-server >/dev/null
+    - helm template a helm/helios-agent --set config.token=ci-test-token >/dev/null
 
 test:shellcheck:
   stage: test
@@ -72,7 +72,7 @@ test:shellcheck:
 # Classic GitLab Docker-in-Docker + buildx. Requires a privileged executor
 # (GitLab.com shared runners are); this is the supported, actively-maintained
 # path. Two-stage cache: <image>:cache is the buildx cache ref.
-# The charts default to `image.repository: ansiblehub/<name>`; point them at
+# The charts default to `image.repository: helios/<name>`; point them at
 # the registry of your project (see header) with --set image.repository/tag.
 # Images: <sha> always, latest on the default branch, the tag name on tags.
 .build-template:
@@ -130,7 +130,7 @@ build:agent:
 # Registry. Installer usage:
 #   sudo ./install-agent.sh --server https://hub.example.com --token <t> \
 #     --binary-url \
-#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/ansiblehub-agent/$VER/ansiblehub-agent-linux-amd64"
+#     "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/helios-agent/$VER/helios-agent-linux-amd64"
 release:binary:
   stage: release
   image: golang:1.25-alpine
@@ -144,20 +144,20 @@ release:binary:
     - cd agent && go mod download
     - |
       for a in amd64 arm64; do
-        GOOS=linux GOARCH=$a CGO_ENABLED=0 go build -ldflags="-s -w" -o ../dist/agent/ansiblehub-agent-linux-$a ./cmd/agent
+        GOOS=linux GOARCH=$a CGO_ENABLED=0 go build -ldflags="-s -w" -o ../dist/agent/helios-agent-linux-$a ./cmd/agent
       done
     - cd ..
-    - cp deploy/ansiblehub-agent.service deploy/install-agent.sh dist/agent/
-    - tar -C dist/agent -czf dist/release/ansiblehub-agent-${VER}.tar.gz .
+    - cp deploy/helios-agent.service deploy/install-agent.sh dist/agent/
+    - tar -C dist/agent -czf dist/release/helios-agent-${VER}.tar.gz .
     # one upload per binary + the tarball
     - |
-      for f in dist/agent/ansiblehub-agent-linux-*; do
+      for f in dist/agent/helios-agent-linux-*; do
         curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" \
-          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/$(basename "$f")"
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/helios-agent/${VER}/$(basename "$f")"
       done
     - |
-      curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "dist/release/ansiblehub-agent-${VER}.tar.gz" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/${VER}/ansiblehub-agent-${VER}.tar.gz"
+      curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "dist/release/helios-agent-${VER}.tar.gz" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/helios-agent/${VER}/helios-agent-${VER}.tar.gz"
   artifacts:
     paths:
       - dist/release/*.tar.gz
@@ -176,9 +176,9 @@ release:helm:
   script:
     - set -e
     - VER=${CI_COMMIT_TAG#v}
-    - 'sed -i "s/^version:.*/version: $VER/; s/^appVersion:.*/appVersion: \"$VER\"/" helm/ansiblehub-server/Chart.yaml helm/ansiblehub-agent/Chart.yaml'
-    - helm lint helm/ansiblehub-server helm/ansiblehub-agent
-    - mkdir -p dist && helm package --destination dist helm/ansiblehub-server helm/ansiblehub-agent
+    - 'sed -i "s/^version:.*/version: $VER/; s/^appVersion:.*/appVersion: \"$VER\"/" helm/helios-server/Chart.yaml helm/helios-agent/Chart.yaml'
+    - helm lint helm/helios-server helm/helios-agent --set config.token=ci-test-token
+    - mkdir -p dist && helm package --destination dist helm/helios-server helm/helios-agent
     - |
       for f in dist/*.tgz; do
         curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" \

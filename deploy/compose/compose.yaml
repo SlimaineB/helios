@@ -6,24 +6,36 @@
 #
 # Optional Postgres:
 #   docker compose -f compose.yaml -f compose.postgres.yaml up -d --build
-name: ansiblehub
+name: helios
 
 services:
   server:
-    image: ${ANH_IMAGE:-ansiblehub-server:local}
+    image: ${HELIOS_IMAGE:-${ANH_IMAGE:-${ANSIBLEHUB_IMAGE:-helios-server:local}}}
     build:
       context: ../..
       dockerfile: Dockerfile
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
-      - "${ANH_BIND_ADDR:-0.0.0.0}:${ANH_PORT:-8080}:8080"
+      - "${HELIOS_BIND_ADDR:-${ANH_BIND_ADDR:-${ANSIBLEHUB_BIND_ADDR:-127.0.0.1}}}:${HELIOS_PORT:-${ANH_PORT:-${ANSIBLEHUB_PORT:-8080}}}:8080"
     environment:
-      ANSIBLEHUB_OPERATOR_USER: ${ANH_OPERATOR_USER:-admin}
-      ANSIBLEHUB_OPERATOR_PASSWORD: ${ANH_OPERATOR_PASSWORD:?set ANH_OPERATOR_PASSWORD in .env}
-      ANSIBLEHUB_BASE_URL: ${ANH_BASE_URL:-http://localhost:8080}
-      ANSIBLEHUB_DB: /data/ansiblehub.db
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-${ANH_OPERATOR_USER:-${ANSIBLEHUB_OPERATOR_USER:-admin}}}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-${ANH_OPERATOR_PASSWORD:-${ANSIBLEHUB_OPERATOR_PASSWORD:-}}}
+      HELIOS_BASE_URL: ${HELIOS_BASE_URL:-${ANH_BASE_URL:-${ANSIBLEHUB_BASE_URL:-http://localhost:8080}}}
+      HELIOS_DB: /data/helios.db
     volumes:
-      - ansiblehub-data:/data
+      - helios-data:/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/v1/health"]
       interval: 10s
@@ -33,5 +45,5 @@ services:
     stop_grace_period: 30s
 
 volumes:
-  ansiblehub-data:
-    name: ansiblehub-data
+  helios-data:
+    name: helios-data

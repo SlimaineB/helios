@@ -3,11 +3,12 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/model"
+	"github.com/slim/helios/server/internal/model"
 )
 
 type errorBody struct {
@@ -24,10 +25,21 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorBody{Error: msg})
 }
 
+func (s *Server) internalError(w http.ResponseWriter, r *http.Request, err error) {
+	s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeErr(w, http.StatusInternalServerError, "internal server error")
+}
+
 func readJSON(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("unexpected data after JSON value")
+	}
+	return nil
 }
 
 // readRawJSON buffers the (already size-limited) request body so a handler can
@@ -39,7 +51,13 @@ func readRawJSON(r *http.Request) ([]byte, error) {
 func decodeJSON(raw []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("unexpected data after JSON value")
+	}
+	return nil
 }
 
 func ok200(w http.ResponseWriter) { w.WriteHeader(http.StatusOK) }

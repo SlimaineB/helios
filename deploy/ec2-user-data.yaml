@@ -1,10 +1,10 @@
 #cloud-config
-# AnsibleHub agent bootstrap for EC2 (user-data).
+# Helios agent bootstrap for EC2 (user-data).
 #
 # Parameters (replace before use):
-#   ANH_SERVER      central API base URL, e.g. http://hub.example.com:8080
-#   ANH_TOKEN       per-instance bootstrap token (from "Register instance" in the UI)
-#   ANH_INSTANCE_ID the canonical instance id returned at registration (optional:
+#   HELIOS_SERVER      central API base URL, e.g. http://hub.example.com:8080
+#   HELIOS_TOKEN       per-instance bootstrap token (from "Register instance" in the UI)
+#   HELIOS_INSTANCE_ID the canonical instance id returned at registration (optional:
 #                   the agent auto-resolves the EC2 instance-id when omitted)
 #
 # Usage: paste into the EC2 "User data" field when launching the instance,
@@ -13,35 +13,35 @@
 # agent keeps retrying (config file is re-written on every boot).
 
 write_files:
-  - path: /etc/ansiblehub/agent.yaml
+  - path: /etc/helios/agent.yaml
     permissions: "0600"
     owner: root:root
     content: |
-      server: ${ANH_SERVER}
-      token: ${ANH_TOKEN}
-      state_dir: /var/lib/ansiblehub
+      server: ${HELIOS_SERVER}
+      token: ${HELIOS_TOKEN}
+      state_dir: /var/lib/helios
       poll_interval: 5m
       max_concurrent_apps: 4
       autoheal: true
 
-  - path: /etc/systemd/system/ansiblehub-agent.service
+  - path: /etc/systemd/system/helios-agent.service
     permissions: "0644"
     content: |
       [Unit]
-      Description=AnsibleHub agent (ansible-pull drift controller)
+      Description=Helios agent (ansible-pull drift controller)
       After=network-online.target
       Wants=network-online.target
 
       [Service]
       Type=simple
-      ExecStart=/usr/local/bin/ansiblehub-agent -config /etc/ansiblehub/agent.yaml
+      ExecStart=/usr/local/bin/helios-agent -config /etc/helios/agent.yaml
       Environment=HOME=/root
       Restart=always
       RestartSec=10
       # Runtime hardening
       ProtectSystem=strict
       ProtectHome=true
-      ReadWritePaths=/var/lib/ansiblehub /tmp
+      ReadWritePaths=/var/lib/helios /tmp
       PrivateTmp=true
       NoNewPrivileges=true
 
@@ -49,13 +49,13 @@ write_files:
       WantedBy=multi-user.target
 
 runcmd:
-  - mkdir -p /var/lib/ansiblehub
+  - mkdir -p /var/lib/helios
   - |
     command -v git >/dev/null || (apt-get update -y && apt-get install -y git)
   - command -v ansible-playbook >/dev/null || (apt-get update -y && apt-get install -y python3-pip && pip3 install --break-system-packages ansible-core && ansible-galaxy collection install ansible.posix)
   - |
-    [ -x /usr/local/bin/ansiblehub-agent ] || { curl -fsSL -o /usr/local/bin/ansiblehub-agent ${ANH_AGENT_URL} && chmod +x /usr/local/bin/ansiblehub-agent; }
+    [ -x /usr/local/bin/helios-agent ] || { curl -fsSL -o /usr/local/bin/helios-agent ${HELIOS_AGENT_URL} && chmod +x /usr/local/bin/helios-agent; }
   - systemctl daemon-reload
-  - systemctl enable --now ansiblehub-agent
+  - systemctl enable --now helios-agent
 
-final_message: "AnsibleHub agent installed on $HOSTNAME"
+final_message: "Helios agent installed on $HOSTNAME"

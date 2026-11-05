@@ -85,7 +85,7 @@ func OpenSync(ctx context.Context, dir, url, target string, c Creds) (before, af
 func (c Creds) env() (_ []string, cleanup func(), err error) {
 	cleanup = func() {}
 	if c.SSHKey != "" {
-		f, err := os.CreateTemp("", "ansiblehub-repo-*")
+		f, err := os.CreateTemp("", "helios-repo-*")
 		if err != nil {
 			return nil, cleanup, fmt.Errorf("temp ssh key: %w", err)
 		}
@@ -110,12 +110,12 @@ func (c Creds) env() (_ []string, cleanup func(), err error) {
 	if user == "" {
 		user, pass = c.Password, ""
 	}
-	f, err := os.CreateTemp("", "ansiblehub-askpass-*")
+	f, err := os.CreateTemp("", "helios-askpass-*")
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("temp askpass: %w", err)
 	}
 	cleanup = func() { os.Remove(f.Name()) }
-	script := "#!/bin/sh\ncase \"$1\" in\n  *[Uu]sername*) printf '%s\\n' \"$ANH_GIT_USERNAME\" ;;\n  *) printf '%s\\n' \"$ANH_GIT_PASSWORD\" ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$1\" in\n  *[Uu]sername*) printf '%s\\n' \"$HELIOS_GIT_USERNAME\" ;;\n  *) printf '%s\\n' \"$HELIOS_GIT_PASSWORD\" ;;\nesac\n"
 	if _, err := f.WriteString(script); err != nil {
 		f.Close()
 		return nil, cleanup, err
@@ -129,8 +129,8 @@ func (c Creds) env() (_ []string, cleanup func(), err error) {
 	return []string{
 		"GIT_ASKPASS=" + f.Name(),
 		"GIT_TERMINAL_PROMPT=0",
-		"ANH_GIT_USERNAME=" + user,
-		"ANH_GIT_PASSWORD=" + pass,
+		"HELIOS_GIT_USERNAME=" + user,
+		"HELIOS_GIT_PASSWORD=" + pass,
 	}, cleanup, nil
 }
 

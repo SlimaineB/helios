@@ -1,0 +1,25 @@
+[Unit]
+Description=Helios server (API + UI)
+Documentation=https://github.com/slim/helios
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=helios
+Group=helios
+EnvironmentFile=-/etc/helios/server.env
+ExecStart=/usr/local/bin/helios-server -addr @ADDR@ -db /var/lib/helios/helios.db -ui /usr/share/helios/ui
+StateDirectory=helios
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/helios
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/helios
+
+[Install]
+WantedBy=multi-user.target

@@ -165,7 +165,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "ansiblehub-agent")
+	req.Header.Set("User-Agent", "helios-agent")
 
 	resp, err := c.http.Do(req)
 	if err != nil {

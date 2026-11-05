@@ -1,7 +1,7 @@
 #!/bin/sh
 # Entrypoint: wait for the bootstrap service to drop our config file.
 set -e
-config="${CONFIG_FILE:-/etc/ansiblehub/agent.yaml}"
+config="${CONFIG_FILE:-/etc/helios/agent.yaml}"
 i=0
 while [ ! -f "$config" ]; do
   i=$((i + 1))
@@ -11,4 +11,4 @@ while [ ! -f "$config" ]; do
   fi
   sleep 2
 done
-exec /usr/local/bin/ansiblehub-agent -config "$config"
+exec /usr/local/bin/helios-agent -config "$config"

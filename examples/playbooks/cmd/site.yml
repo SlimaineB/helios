@@ -14,11 +14,11 @@
   tasks:
     - name: Ensure runtime directory
       ansible.builtin.file:
-        path: /opt/ansiblehub-demo
+        path: /opt/helios-demo
         state: directory
 
     - name: Write a self-refreshing stamp
       ansible.builtin.template:
         src: stamp.j2
-        dest: /opt/ansiblehub-demo/cmd-test.stamp
+        dest: /opt/helios-demo/cmd-test.stamp
         mode: "0600"

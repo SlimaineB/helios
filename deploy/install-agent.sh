@@ -1,20 +1,21 @@
 #!/bin/sh
-# AnsibleHub agent installer for any Linux box (no containers needed).
+# Helios agent installer for any Linux box (no containers needed).
 #
 #   sudo ./install-agent.sh \
 #     --server https://hub.example.com \
 #     --token <bootstrap-token> \
 #     [--instance-id abcd1234] \
-#     [--download-url https://…/ansiblehub-agent-<ver>.tar.gz] \
-#     [--binary-url https://…/ansiblehub-agent-linux-amd64] \
+#     [--download-url https://…/helios-agent-<ver>.tar.gz] \
+#     [--binary-url https://…/helios-agent-linux-amd64] \
 #     [--autoheal 0|1] \
 #     [--max-concurrent 4] \
 #     [--poll-interval 5m] \
-#     [--state-dir /var/lib/ansiblehub]
+#     [--state-dir /var/lib/helios]
 #
 # --download-url: release tarball from CI (extracts the right arch binary);
-# --binary-url: a single prebuilt binary. Either one works ($AHUB_DOWNLOAD_URL
-# / $AHUB_BINARY_URL override the flags). If the installer is run from an
+# --binary-url: a single prebuilt binary. Either one works ($HELIOS_DOWNLOAD_URL
+# / $HELIOS_BINARY_URL override the flags; the old ANSIBLEHUB_* / ANH_* /
+# AHUB_* names are accepted as fallbacks). If the installer is run from an
 # extracted release tarball, the matching binary next to it is used automatically.
 set -eu
 
@@ -23,12 +24,12 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 SERVER=""
 TOKEN=""
 INSTANCE_ID=""
-STATE_DIR=/var/lib/ansiblehub
+STATE_DIR=/var/lib/helios
 AUTOHEAL=1
 MAX_CONCURRENT_APPS=4
 POLL_INTERVAL=5m
-DOWNLOAD_URL="${AHUB_DOWNLOAD_URL:-}"
-BINARY_URL="${AHUB_BINARY_URL:-}"
+DOWNLOAD_URL="${HELIOS_DOWNLOAD_URL:-${ANSIBLEHUB_DOWNLOAD_URL:-${ANH_DOWNLOAD_URL:-${AHUB_DOWNLOAD_URL:-}}}}"
+BINARY_URL="${HELIOS_BINARY_URL:-${ANSIBLEHUB_BINARY_URL:-${ANH_BINARY_URL:-${AHUB_BINARY_URL:-}}}}"
 
 usage() {
     cat <<'EOF'
@@ -37,7 +38,7 @@ Usage: install-agent.sh --server URL --token TOKEN [options]
   --server URL             hub base URL, e.g. https://hub.example.com
   --token TOKEN            instance token (shown once at registration)
   --instance-id ID         canonical instance id (default: auto)
-  --state-dir DIR          agent state directory (default: /var/lib/ansiblehub)
+  --state-dir DIR          agent state directory (default: /var/lib/helios)
   --autoheal 0|1           apply on drift (default: 1)
   --max-concurrent N       parallel apps per pass (default: 4)
   --poll-interval DURATION heartbeat/check cadence (default: 5m)
@@ -97,14 +98,14 @@ install_ansible() {
 
 install_binary() {
     case "$(uname -m)" in
-        x86_64|amd64) bin=ansiblehub-agent-linux-amd64 ;;
-        aarch64|arm64) bin=ansiblehub-agent-linux-arm64 ;;
+        x86_64|amd64) bin=helios-agent-linux-amd64 ;;
+        aarch64|arm64) bin=helios-agent-linux-arm64 ;;
         *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
     esac
     if [ -n "$BINARY_URL" ]; then
         tmp="$(mktemp)"
         curl -fsSL "$BINARY_URL" -o "$tmp"
-        install -m755 "$tmp" /usr/local/bin/ansiblehub-agent
+        install -m755 "$tmp" /usr/local/bin/helios-agent
         rm -f "$tmp"
         return
     fi
@@ -114,28 +115,28 @@ install_binary() {
         tar -xzf "$tmp/pkg.tar.gz" -C "$tmp"
         found=$(find "$tmp" -type f -name "$bin" | head -n 1)
         [ -n "$found" ] || { echo "$bin not found in tarball" >&2; rm -rf "$tmp"; exit 1; }
-        install -m755 "$found" /usr/local/bin/ansiblehub-agent
+        install -m755 "$found" /usr/local/bin/helios-agent
         rm -rf "$tmp"
         return
     fi
     if [ -x "$SCRIPT_DIR/$bin" ]; then
-        install -m755 "$SCRIPT_DIR/$bin" /usr/local/bin/ansiblehub-agent
+        install -m755 "$SCRIPT_DIR/$bin" /usr/local/bin/helios-agent
         return
     fi
-    command -v ansiblehub-agent >/dev/null && return
-    echo "ansiblehub-agent not found; run from the release tarball or give --binary-url/--download-url" >&2
+    command -v helios-agent >/dev/null && return
+    echo "helios-agent not found; run from the release tarball or give --binary-url/--download-url" >&2
     exit 1
 }
 
 write_config() {
-    mkdir -p /etc/ansiblehub
+    mkdir -p /etc/helios
     # AUTOHEAL is accepted as 0|1 (and true|false); the config is YAML bool.
     if [ "$AUTOHEAL" = "1" ] || [ "$AUTOHEAL" = "true" ]; then
         AH_BOOL=true
     else
         AH_BOOL=false
     fi
-    cat > /etc/ansiblehub/agent.yaml <<EOF
+    cat > /etc/helios/agent.yaml <<EOF
 server: ${SERVER}
 token: ${TOKEN}
 instance_id: ${INSTANCE_ID}
@@ -144,19 +145,20 @@ poll_interval: ${POLL_INTERVAL}
 max_concurrent_apps: ${MAX_CONCURRENT_APPS}
 autoheal: ${AH_BOOL}
 EOF
-    chmod 600 /etc/ansiblehub/agent.yaml
+    chmod 600 /etc/helios/agent.yaml
 }
 
 install_unit() {
     mkdir -p "$STATE_DIR"
-    install -m644 "$SCRIPT_DIR/ansiblehub-agent.service" /etc/systemd/system/ansiblehub-agent.service
+    install -m644 "$SCRIPT_DIR/helios-agent.service" /etc/systemd/system/helios-agent.service
     systemctl daemon-reload
-    systemctl enable --now ansiblehub-agent
-    echo "Done. Check status: systemctl status ansiblehub-agent"
+    systemctl enable --now helios-agent
+    echo "Done. Check status: systemctl status helios-agent"
 }
 
 install_pkgs git curl ca-certificates tar
 install_ansible
 install_binary
+ln -sf /usr/local/bin/helios-agent /usr/local/bin/ansiblehub-agent
 write_config
 install_unit

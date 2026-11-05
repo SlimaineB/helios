@@ -8,14 +8,19 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/slim/ansiblehub/agent/internal/client"
-	"github.com/slim/ansiblehub/agent/internal/config"
-	"github.com/slim/ansiblehub/agent/internal/loop"
+	"github.com/slim/helios/agent/internal/client"
+	"github.com/slim/helios/agent/internal/config"
+	"github.com/slim/helios/agent/internal/loop"
+)
+
+const (
+	defaultConfigPath = "/etc/helios/agent.yaml"
+	legacyConfigPath  = "/etc/ansiblehub/agent.yaml"
 )
 
 func main() {
 	var (
-		configPath = flag.String("config", "/etc/ansiblehub/agent.yaml", "path to agent config (yaml)")
+		configPath = flag.String("config", defaultConfigPath, "path to agent config (yaml)")
 		debug      = flag.Bool("debug", false, "verbose logging")
 	)
 	flag.Parse()
@@ -26,7 +31,17 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	cfg, err := config.Load(*configPath)
+	path := *configPath
+	if path == defaultConfigPath {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if _, legacyErr := os.Stat(legacyConfigPath); legacyErr == nil {
+				path = legacyConfigPath
+				log.Warn("using legacy agent config; move it to the new path", "from", legacyConfigPath, "to", defaultConfigPath)
+			}
+		}
+	}
+
+	cfg, err := config.Load(path)
 	if err != nil {
 		log.Error("config load failed", "error", err)
 		os.Exit(1)

@@ -1,9 +1,9 @@
-# Deploys an EC2 instance running the AnsibleHub agent.
+# Deploys an EC2 instance running the Helios agent.
 #
 # The instance is registered in the hub on first boot via user-data, then
 # starts drift-checking whatever application is assigned to it.
 variable "name" {
-  default = "ansiblehub-agent"
+  default = "helios-agent"
 }
 variable "server_url" {
   description = "Central hub base URL, e.g. http://hub.internal:8080"
@@ -13,7 +13,7 @@ variable "token" {
   sensitive   = true
 }
 variable "agent_url" {
-  description = "URL where the built ansiblehub-agent binary can be downloaded"
+  description = "URL where the built helios-agent binary can be downloaded"
 }
 variable "instance_type" {
   default = "t3.micro"
@@ -51,7 +51,7 @@ resource "aws_instance" "agent" {
 }
 
 resource "aws_iam_role" "agent" {
-  name = "ansiblehub-agent-${var.name}"
+  name = "helios-agent-${var.name}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -63,7 +63,7 @@ resource "aws_iam_role" "agent" {
 }
 
 resource "aws_iam_instance_profile" "agent" {
-  name = "ansiblehub-agent-${var.name}"
+  name = "helios-agent-${var.name}"
   role = aws_iam_role.agent.name
 }
 

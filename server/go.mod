@@ -1,4 +1,4 @@
-module github.com/slim/ansiblehub/server
+module github.com/slim/helios/server
 
 go 1.25.0
 

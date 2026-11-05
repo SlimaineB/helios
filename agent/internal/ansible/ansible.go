@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/slim/ansiblehub/agent/internal/gitops"
+	"github.com/slim/helios/agent/internal/gitops"
 )
 
 // Result is a normalized outcome of an ansible-playbook run.

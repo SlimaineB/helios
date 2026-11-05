@@ -12,8 +12,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
+
+	"github.com/slim/helios/server/internal/envutil"
 )
 
 // Event is the JSON payload posted to the webhook.
@@ -39,22 +40,22 @@ type Notifier struct {
 	log    *slog.Logger
 }
 
-// FromEnv builds a notifier from ANH_WEBHOOK_URL / ANH_WEBHOOK_SECRET. It
+// FromEnv builds a notifier from HELIOS_WEBHOOK_URL / HELIOS_WEBHOOK_SECRET. It
 // returns nil when no URL is configured.
 func FromEnv(log *slog.Logger) *Notifier {
-	url := os.Getenv("ANH_WEBHOOK_URL")
+	url := envutil.Get("HELIOS_WEBHOOK_URL")
 	if url == "" {
 		return nil
 	}
 	timeout := 5 * time.Second
-	if v := os.Getenv("ANH_WEBHOOK_TIMEOUT"); v != "" {
+	if v := envutil.Get("HELIOS_WEBHOOK_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			timeout = d
 		}
 	}
 	return &Notifier{
 		url:    url,
-		secret: os.Getenv("ANH_WEBHOOK_SECRET"),
+		secret: envutil.Get("HELIOS_WEBHOOK_SECRET"),
 		client: &http.Client{Timeout: timeout},
 		log:    log,
 	}
@@ -94,11 +95,11 @@ func (n *Notifier) SendSync(ctx context.Context, ev Event) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "AnsibleHub/1")
+	req.Header.Set("User-Agent", "Helios/1")
 	if n.secret != "" {
 		mac := hmac.New(sha256.New, []byte(n.secret))
 		_, _ = mac.Write(body)
-		req.Header.Set("X-AnsibleHub-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		req.Header.Set("X-Helios-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 	resp, err := n.client.Do(req)
 	if err != nil {

@@ -1,6 +1,6 @@
-# Install AnsibleHub
+# Install Helios
 
-AnsibleHub has two parts:
+Helios has two parts:
 
 1. **Hub** — Go server + React UI + database. Runs on one host or in Kubernetes.
 2. **Agents** — one Go binary per managed host. It clones the assigned playbooks,
@@ -30,11 +30,11 @@ The production compose files live in `deploy/compose/`. They run only the hub;
 agents are installed separately on each managed host.
 
 ```sh
-git clone <your-fork-or-mirror> ansiblehub
-cd ansiblehub/deploy/compose
+git clone <your-fork-or-mirror> helios
+cd helios/deploy/compose
 
 cp .env.example .env
-# edit .env: set a long random ANH_OPERATOR_PASSWORD (and ANH_BASE_URL if behind TLS)
+# edit .env: set a long random HELIOS_OPERATOR_PASSWORD (and HELIOS_BASE_URL if behind TLS)
 $EDITOR .env
 
 docker compose up -d --build
@@ -48,22 +48,22 @@ Open `http://localhost:8080` and sign in with the operator user/password from
 ### Use PostgreSQL instead of SQLite
 
 ```sh
-cd ansiblehub/deploy/compose
+cd helios/deploy/compose
 cp .env.example .env
-$EDITOR .env          # set ANH_OPERATOR_PASSWORD and ANH_POSTGRES_PASSWORD
+$EDITOR .env          # set HELIOS_OPERATOR_PASSWORD and HELIOS_POSTGRES_PASSWORD
 
 docker compose -f compose.yaml -f compose.postgres.yaml up -d --build
 ```
 
-The Postgres volume is named `ansiblehub-postgres`. SQLite data lives in the
-`ansiblehub-data` volume.
+The Postgres volume is named `helios-postgres`. SQLite data lives in the
+`helios-data` volume.
 
 ### Put it behind TLS
 
 Terminate TLS in Caddy, Nginx, Traefik or your cloud load balancer, then set:
 
 ```dotenv
-ANH_BASE_URL=https://hub.example.com
+HELIOS_BASE_URL=https://hub.example.com
 ```
 
 Restart the server (`docker compose up -d`). The base URL is used for OIDC
@@ -85,13 +85,13 @@ location / {
 ```sh
 # SQLite: stop, copy the volume, restart
 docker compose stop server
-docker run --rm -v ansiblehub-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/ansiblehub-data-$(date +%F).tgz -C /data .
+docker run --rm -v helios-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/helios-data-$(date +%F).tgz -C /data .
 docker compose start server
 
 # Postgres
 docker compose -f compose.yaml -f compose.postgres.yaml exec -T db \
-  pg_dump -U ansiblehub ansiblehub | gzip > ansiblehub-$(date +%F).sql.gz
+  pg_dump -U helios helios | gzip > helios-$(date +%F).sql.gz
 
 # Upgrade (data volumes are kept)
 git pull
@@ -105,17 +105,30 @@ runs its SQLite/Postgres migrations automatically at startup.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ANH_PORT` | `8080` | Published host port |
-| `ANH_BASE_URL` | `http://localhost:8080` | Public URL (OIDC, secure cookies) |
-| `ANH_OPERATOR_USER` | `admin` | Local break-glass user |
-| `ANH_OPERATOR_PASSWORD` | **required** | Local password; choose a strong one |
-| `ANH_IMAGE` | `ansiblehub-server:local` | Image name/tag |
-| `ANH_POSTGRES_PASSWORD` | required with the overlay | Postgres password |
+| `HELIOS_PORT` | `8080` | Published host port |
+| `HELIOS_BASE_URL` | `http://localhost:8080` | Public URL (OIDC, secure cookies) |
+| `HELIOS_OPERATOR_USER` | `admin` | Local break-glass user |
+| `HELIOS_OPERATOR_PASSWORD` | **required** | Local password; choose a strong one |
+| `HELIOS_IMAGE` | `helios-server:local` | Image name/tag |
+| `HELIOS_POSTGRES_PASSWORD` | required with the overlay | Postgres password |
 
 OIDC and RBAC are configured with environment variables or a mounted file. See
-[Operator authentication & RBAC](../README.md#operator-authentication--rbac).
+[Operator authentication & RBAC](AUTH.md).
 The compose file is intentionally small; add `env_file:` or extra volumes for
 your own OIDC/RBAC files.
+
+### Upgrading from AnsibleHub
+
+The rename to Helios keeps the old environment names working: `ANSIBLEHUB_*`,
+`ANH_*` and `AHUB_*` are read as fallbacks when the corresponding `HELIOS_*`
+variable is absent. The installers also create the legacy binary names as
+symlinks (`ansiblehub-server`, `ansiblehub-agent`), so an existing systemd unit
+that still points at the old path keeps working.
+
+New installs use `/etc/helios`, `/var/lib/helios` and the new binary/unit
+names. To migrate an existing host, install the new package, move the data to
+the new paths (or keep the old paths in the unit/config), then switch the unit
+and environment file at your own pace.
 
 ---
 
@@ -126,19 +139,25 @@ Build locally (Go 1.25 + Node 20), then install the binary and the built UI:
 ```sh
 make build-local
 sudo ./deploy/install-server.sh \
-  --binary ./server/ansiblehub-server \
+  --binary ./server/helios-server \
   --ui ./ui/dist \
   --base-url https://hub.example.com \
   --operator-password 'a-long-random-password'
 ```
 
+Or download `helios-server-<version>-linux-amd64.tar.gz` (or `arm64`) from
+[GitHub Releases](https://github.com/<owner>/helios/releases), extract it,
+and run the bundled installer with `--binary ./helios-server --ui ./ui`.
+The release tarball contains the binary, UI, installer and systemd unit; see
+[Releases and GitHub packages](RELEASES.md).
+
 The installer:
 
-- creates the system user `ansiblehub`;
-- installs `/usr/local/bin/ansiblehub-server` and `/usr/share/ansiblehub/ui`;
-- writes `/etc/ansiblehub/server.env` (mode `0600`);
-- installs and starts `ansiblehub-server.service`;
-- stores data in `/var/lib/ansiblehub/ansiblehub.db` (SQLite) by default.
+- creates the system user `helios`;
+- installs `/usr/local/bin/helios-server` and `/usr/share/helios/ui`;
+- writes `/etc/helios/server.env` (mode `0600`);
+- installs and starts `helios-server.service`;
+- stores data in `/var/lib/helios/helios.db` (SQLite) by default.
 
 Useful flags:
 
@@ -146,9 +165,9 @@ Useful flags:
 --addr :8080                     listen address
 --db postgres://user:pass@db/... use PostgreSQL instead of SQLite
 --operator-user admin            local user
---operator-password <secret>     required (or ANH_OPERATOR_PASSWORD)
+--operator-password <secret>     required (or HELIOS_OPERATOR_PASSWORD)
 --base-url https://hub.example.com
---rbac /path/policies.yaml       copy an RBAC file to /etc/ansiblehub/rbac.yaml
+--rbac /path/policies.yaml       copy an RBAC file to /etc/helios/rbac.yaml
 --tls-cert /path/fullchain.pem   serve HTTPS directly
 --tls-key /path/privkey.pem
 ```
@@ -156,32 +175,32 @@ Useful flags:
 Check it:
 
 ```sh
-systemctl status ansiblehub-server
-journalctl -u ansiblehub-server -f
+systemctl status helios-server
+journalctl -u helios-server -f
 curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
 With `--tls-cert`, use `curl -fsSk https://127.0.0.1:8080/api/v1/health`.
-TLS files must be readable by the `ansiblehub` service user; `ProtectHome=true`
+TLS files must be readable by the `helios` service user; `ProtectHome=true`
 means certificates under `/root` or `/home` are not visible to the service.
 For Let's Encrypt, prefer terminating TLS in Nginx/Caddy and keep the server on
-`http://127.0.0.1:8080`, or make the live directory traversable by `ansiblehub`.
+`http://127.0.0.1:8080`, or make the live directory traversable by `helios`.
 
 To upgrade, rebuild/copy the binary and UI, then rerun the installer and
-`systemctl restart ansiblehub-server`. The database is kept.
+`systemctl restart helios-server`. The database is kept.
 
 ---
 
 ## Option C — Kubernetes (Helm)
 
-The charts are in `helm/ansiblehub-server` and `helm/ansiblehub-agent`.
+The charts are in `helm/helios-server` and `helm/helios-agent`.
 
 ```sh
-kubectl create namespace ansiblehub
+kubectl create namespace helios
 
-helm install ansiblehub-server helm/ansiblehub-server \
-  -n ansiblehub \
-  --set image.repository=<registry>/ansiblehub/server \
+helm install helios-server helm/helios-server \
+  -n helios \
+  --set image.repository=<registry>/helios/server \
   --set image.tag=<version> \
   --set operatorAuth.user=admin \
   --set operatorAuth.password='a-long-random-password' \
@@ -192,17 +211,20 @@ Notes:
 
 - The default storage uses SQLite on a PVC. Set `database.dsn` to a
   `postgres://` URL for production; the chart does not ship Postgres.
-- Use `operatorAuth.existingSecret` instead of a password in values.
-- Enable `ingress` and set `extraArgs`/`ANSIBLEHUB_BASE_URL` for TLS and OIDC.
+- Use `operatorAuth.existingSecret` instead of a password in values. If no
+  password is supplied, the chart generates one and keeps it across upgrades;
+  read it from the `<release>-helios-server-operator` Secret.
+- Enable `ingress`; `baseUrl` is derived from the ingress host/TLS settings
+  unless set explicitly. Use it for TLS and OIDC.
 - Start with `-f deploy/k3s/server-values.yaml` for the reference k3s setup.
 
 Agents can run as a Deployment (one logical host) or a DaemonSet (every node):
 
 ```sh
-helm install agent-k8s-1 helm/ansiblehub-agent -n ansiblehub \
-  --set image.repository=<registry>/ansiblehub/agent \
+helm install agent-k8s-1 helm/helios-agent -n helios \
+  --set image.repository=<registry>/helios/agent \
   --set image.tag=<version> \
-  --set config.server=http://ansiblehub-server:80 \
+  --set config.server=http://helios-server:80 \
   --set config.token=<instance-token> \
   --set config.instanceId=<instance-id> \
   --set config.autoheal=true
@@ -210,7 +232,7 @@ helm install agent-k8s-1 helm/ansiblehub-agent -n ansiblehub \
 
 The chart defaults to an unprivileged pod. Playbooks that manage users/packages
 need root (`securityContext.runAsUser=0`, `runAsNonRoot=false`) and an explicit
-state persistence choice. See [deploy/k3s/README.md](../deploy/k3s/README.md).
+state persistence choice. See the [k3s guide](K3S.md).
 
 ---
 
@@ -232,40 +254,40 @@ Use a release tarball from CI (it contains the installer, the systemd unit and
 both architectures):
 
 ```sh
-mkdir -p /tmp/ansiblehub-agent
-curl -fL -o /tmp/ansiblehub-agent.tar.gz \
-  "<release-url>/ansiblehub-agent-<version>.tar.gz"
+mkdir -p /tmp/helios-agent
+curl -fL -o /tmp/helios-agent.tar.gz \
+  "<release-url>/helios-agent-<version>.tar.gz"
 # GitLab Generic Package Registry URL shape:
-# ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ansiblehub-agent/<version>/ansiblehub-agent-<version>.tar.gz
-tar -C /tmp/ansiblehub-agent -xzf /tmp/ansiblehub-agent.tar.gz
+# ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/helios-agent/<version>/helios-agent-<version>.tar.gz
+tar -C /tmp/helios-agent -xzf /tmp/helios-agent.tar.gz
 
-sudo /tmp/ansiblehub-agent/install-agent.sh \
+sudo /tmp/helios-agent/install-agent.sh \
   --server https://hub.example.com \
   --token '<instance-token>'
 ```
 
 The installer detects apt/dnf/yum/zypper, installs `git` + `ansible-core` +
 `ansible.posix` when needed, installs the binary (it finds the matching
-`ansiblehub-agent-linux-*` next to the script), writes
-`/etc/ansiblehub/agent.yaml` (mode `0600`) and starts
-`ansiblehub-agent.service`.
+`helios-agent-linux-*` next to the script), writes
+`/etc/helios/agent.yaml` (mode `0600`) and starts
+`helios-agent.service`.
 
 If you already have a binary, point at it directly:
 
 ```sh
 sudo ./deploy/install-agent.sh --server https://hub.example.com \
   --token '<instance-token>' \
-  --binary-url https://downloads.example.com/ansiblehub-agent-linux-amd64
+  --binary-url https://downloads.example.com/helios-agent-linux-amd64
 ```
 
 Useful flags: `--instance-id`, `--autoheal 0|1`, `--max-concurrent N`,
-`--poll-interval 5m`, `--state-dir /var/lib/ansiblehub`.
+`--poll-interval 5m`, `--state-dir /var/lib/helios`.
 
 ### 3. Verify
 
 ```sh
-systemctl status ansiblehub-agent
-journalctl -u ansiblehub-agent -f
+systemctl status helios-agent
+journalctl -u helios-agent -f
 ```
 
 The instance appears in the UI within one poll (default `5m`; the lab uses 5s).
@@ -280,9 +302,9 @@ Assign applications from the instance detail page or `POST
 sudo ./install-agent.sh --server ... --token ... --download-url ...
 
 # uninstall
-sudo systemctl disable --now ansiblehub-agent
-sudo rm -f /etc/systemd/system/ansiblehub-agent.service \
-  /usr/local/bin/ansiblehub-agent /etc/ansiblehub/agent.yaml
+sudo systemctl disable --now helios-agent
+sudo rm -f /etc/systemd/system/helios-agent.service \
+  /usr/local/bin/helios-agent /etc/helios/agent.yaml
 sudo systemctl daemon-reload
 ```
 
@@ -298,12 +320,12 @@ mirror and one Ansible process per check.
 ## Post-install checklist
 
 - [ ] Change the default `admin` password (or disable basic auth and use OIDC).
-- [ ] Put the hub behind HTTPS and set `ANH_BASE_URL` / `ANSIBLEHUB_BASE_URL`.
+- [ ] Put the hub behind HTTPS and set `HELIOS_BASE_URL`.
 - [ ] Configure OIDC and RBAC; bind groups instead of sharing the local admin.
 - [ ] Back up the database volume before the first upgrade.
 - [ ] Restrict the hub port/API to your network.
 - [ ] Install agents on the managed hosts; assign apps and run a first check.
-- [ ] Configure `ANH_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
+- [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
 - [ ] Read the convergence pitfalls in the root README before writing playbooks.
 
 ## Security notes

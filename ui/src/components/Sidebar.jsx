@@ -56,7 +56,7 @@ export default function Sidebar({ can }) {
             <span className="brand-mark">⌁</span>
             {!collapsed && (
               <span className="brand-text">
-                <span className="brand-name">AnsibleHub</span>
+                <span className="brand-name">Helios</span>
                 <span className="brand-tag">pull-based drift control</span>
               </span>
             )}

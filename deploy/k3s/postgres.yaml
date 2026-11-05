@@ -1,10 +1,10 @@
-# ansiblehub Postgres backend. Replaces the SQLite file used by the plain
+# helios Postgres backend. Replaces the SQLite file used by the plain
 # (docker-compose / single-host) setups for a resettable, clustered state.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: ansiblehub-db-data
-  namespace: ansiblehub
+  name: helios-db-data
+  namespace: helios
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -14,19 +14,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ansiblehub-db
-  namespace: ansiblehub
+  name: helios-db
+  namespace: helios
   labels:
-    app: ansiblehub-db
+    app: helios-db
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ansiblehub-db
+      app: helios-db
   template:
     metadata:
       labels:
-        app: ansiblehub-db
+        app: helios-db
     spec:
       securityContext:
         fsGroup: 999
@@ -36,23 +36,26 @@ spec:
           image: postgres:16-alpine
           env:
             - name: POSTGRES_USER
-              value: ansiblehub
+              value: helios
             - name: POSTGRES_PASSWORD
-              value: ansiblehub
+              valueFrom:
+                secretKeyRef:
+                  name: helios-db
+                  key: password
             - name: POSTGRES_DB
-              value: ansiblehub
+              value: helios
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           ports:
             - containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "ansiblehub", "-d", "ansiblehub"]
+              command: ["pg_isready", "-U", "helios", "-d", "helios"]
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "ansiblehub", "-d", "ansiblehub"]
+              command: ["pg_isready", "-U", "helios", "-d", "helios"]
             initialDelaySeconds: 15
             periodSeconds: 10
           resources:
@@ -64,16 +67,16 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: ansiblehub-db-data
+            claimName: helios-db-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: ansiblehub-db
-  namespace: ansiblehub
+  name: helios-db
+  namespace: helios
 spec:
   selector:
-    app: ansiblehub-db
+    app: helios-db
   ports:
     - port: 5432
       targetPort: 5432

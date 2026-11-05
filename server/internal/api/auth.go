@@ -2,22 +2,21 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
-	"github.com/slim/ansiblehub/server/internal/auth"
-	"github.com/slim/ansiblehub/server/internal/model"
-	"github.com/slim/ansiblehub/server/internal/oidc"
-	"github.com/slim/ansiblehub/server/internal/rbac"
+	"github.com/slim/helios/server/internal/auth"
+	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/oidc"
+	"github.com/slim/helios/server/internal/rbac"
 )
 
 const (
-	cookieName          = "ansiblehub_sess"
-	stateCookie         = "ansiblehub_oauth_state"
+	cookieName          = "helios_sess"
+	stateCookie         = "helios_oauth_state"
 	ctxPrincipal ctxKey = iota + 100
 )
 
@@ -27,6 +26,8 @@ const (
 type OpAuth struct {
 	// Basic validates the Authorization header against the local admin user.
 	Basic func(header string) bool
+	// BasicUser is the display name for the local admin principal.
+	BasicUser string
 	// RBAC is the policy set evaluated on every operator action.
 	RBAC *rbac.RBAC
 	// Sessions is the browser session store for OIDC logins.
@@ -141,7 +142,11 @@ func (s *Server) resolvePrincipal(r *http.Request) (*principal, bool) {
 		}
 	}
 	if oa.Basic != nil && oa.Basic(r.Header.Get("Authorization")) {
-		return &principal{Name: "admin", Roles: []string{"role:admin"}}, true
+		name := oa.BasicUser
+		if name == "" {
+			name = "admin"
+		}
+		return &principal{Name: name, Roles: []string{"role:admin"}}, true
 	}
 	return nil, false
 }
@@ -161,14 +166,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "OIDC login is not configured")
 		return
 	}
-	state := base64.RawURLEncoding.EncodeToString(randBytes(16))
-	url, verifier, nonce, err := s.opAuth.OIDC.AuthURL(state)
+	state, err := auth.NewToken()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "oidc: "+err.Error())
+		s.internalError(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state + "." + verifier + "." + nonce,
-		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secureCookies})
+	url, verifier, nonce, err := s.opAuth.OIDC.AuthURL(state)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	http.SetCookie(w, s.cookie(stateCookie, state+"."+verifier+"."+nonce, 10*60))
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -191,18 +199,18 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	pr, err := s.opAuth.OIDC.Exchange(r.Context(), code, sts[1], sts[2])
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "oidc: "+err.Error())
+		s.log.Warn("oidc token exchange failed", "error", err)
+		writeErr(w, http.StatusBadRequest, "oidc login failed")
 		return
 	}
 	tok, err := s.opAuth.Sessions.Create(pr.Sub, pr.Email, pr.Name, pr.Groups, nil)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		s.internalError(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: tok,
-		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.secureCookies,
-		MaxAge: 12 * 60 * 60})
-	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	ttl := int(s.opAuth.Sessions.TTL() / time.Second)
+	http.SetCookie(w, s.cookie(cookieName, tok, ttl))
+	http.SetCookie(w, s.cookie(stateCookie, "", -1))
 	http.Redirect(w, r, s.opAuth.BaseURL+"/", http.StatusFound)
 }
 
@@ -212,7 +220,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil && s.opAuth != nil && s.opAuth.Sessions != nil {
 		s.opAuth.Sessions.Delete(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, s.cookie(cookieName, "", -1))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -236,8 +244,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func randBytes(n int) []byte {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return b
+func (s *Server) cookie(name, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.secureCookies,
+	}
 }

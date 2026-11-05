@@ -1,4 +1,4 @@
-# Quickstart: run AnsibleHub in 2 minutes
+# Quickstart: run Helios in 2 minutes
 
 This is the **lab / demo** path. It runs the whole stack with Docker Compose:
 server + UI, Postgres, a local git repo, two agents and a local OIDC provider.
@@ -20,31 +20,32 @@ containers.
 ## Start
 
 ```sh
-git clone <your-fork-or-mirror> ansiblehub
-cd ansiblehub
-docker compose up -d --build
+git clone <your-fork-or-mirror> helios
+cd helios
+./hack/demo.sh
 ```
 
-The first build takes a few minutes (React UI + Go server + Ansible agent).
-Then:
-
-```sh
-# wait for the API and the agents
-make smoke
-```
-
-`make smoke` checks the API, the demo app and both agents, then triggers a check
-and waits for the new timestamp. Expected output ends with:
+The script builds the React UI + Go server + Ansible agent images, starts the
+stack, waits for the API, the bootstrap job and both agents, then runs the smoke
+test. Expected output ends with:
 
 ```text
 SMOKE PASS: 2 agents, demo=...
 ```
 
+Useful options:
+
+- `./hack/demo.sh --clean` — remove the compose volumes first (fresh database);
+- `./hack/demo.sh --no-build` — reuse the images already on the host.
+
+If you prefer the individual steps, `make compose-up` followed by `make smoke`
+does the same thing.
+
 Open **http://localhost:8080**.
 
 | Login | Credentials |
 |-------|-------------|
-| Local admin | `admin` / `changeme` (`ANH_OPERATOR_PASSWORD`) |
+| Local admin | `admin` / `changeme` (`HELIOS_OPERATOR_PASSWORD`) |
 | SSO admin | `admin@example.com` / `admin123` |
 | SSO read-only | `reader@example.com` / `reader123` |
 
@@ -61,7 +62,7 @@ Break a file managed by the demo playbook:
 
 ```sh
 docker compose exec agent-2 sh -c \
-  'echo "manual change" > /tmp/ansiblehub-demo/state.txt'
+  'echo "manual change" > /tmp/helios-demo/state.txt'
 ```
 
 Within one poll (about 5 s), `agent-2` turns **Drift** in the UI. With
@@ -77,6 +78,7 @@ You can also use the UI buttons:
 ## Useful commands
 
 ```sh
+make demo                  # one-command build, start, wait and smoke test
 make compose-logs          # follow all container logs
 make test                  # Go unit tests (server + agent)
 make smoke                 # end-to-end health/drift check on the running stack
@@ -101,8 +103,8 @@ The next `docker compose up -d --build` starts from a clean database.
 | UI does not answer | `docker compose ps`; `docker compose logs server` |
 | Agents never appear | `docker compose logs bootstrap agent-1 agent-2` |
 | `make smoke` says demo missing | wait for `bootstrap` to finish, then rerun |
-| Drift never changes | check `docker compose exec agent-1 ls /tmp/ansiblehub-demo` |
+| Drift never changes | check `docker compose exec agent-1 ls /tmp/helios-demo` |
 | Port already in use | change the published port or stop the conflicting service |
 | Build fails on Node/Go | run `docker compose build --no-cache` and check disk space |
 
-More: [TESTING.md](TESTING.md) and the root [README](../README.md).
+More: [TESTING.md](TESTING.md) and the [documentation home](index.md).

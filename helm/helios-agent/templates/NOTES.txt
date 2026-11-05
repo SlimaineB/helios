@@ -1,0 +1,6 @@
+Helios agent release {{ .Release.Name }} is configured for {{ .Values.mode }} mode.
+{{- if eq .Values.statePersistence.type "emptyDir" }}
+
+State is ephemeral (emptyDir). Set statePersistence.type to pvc or hostPath for
+persistent repository mirrors.
+{{- end }}

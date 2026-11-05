@@ -1,4 +1,4 @@
-module github.com/slim/ansiblehub/agent
+module github.com/slim/helios/agent
 
 go 1.25.0
 

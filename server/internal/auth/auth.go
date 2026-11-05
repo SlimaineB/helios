@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"strings"
 )
 
@@ -26,9 +25,14 @@ func Hash(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// Valid compares a presented token to the stored hash in constant time-ish.
+// Valid compares a presented token to the stored hash in constant time.
 func Valid(token, storedHash string) bool {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(token))) == storedHash
+	want, err := hex.DecodeString(storedHash)
+	if err != nil || len(want) != sha256.Size {
+		return false
+	}
+	got := sha256.Sum256([]byte(token))
+	return subtle.ConstantTimeCompare(got[:], want) == 1
 }
 
 // CheckBasic reports whether the Authorization header carries valid HTTP Basic

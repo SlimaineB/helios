@@ -1,23 +1,23 @@
-{{- define "ansiblehub-agent.labels" -}}
-app.kubernetes.io/name: {{ include "ansiblehub-agent.name" . }}
+{{- define "helios-agent.labels" -}}
+app.kubernetes.io/name: {{ include "helios-agent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: agent
-app.kubernetes.io/part-of: ansiblehub
+app.kubernetes.io/part-of: helios
 {{- end }}
 
-{{- define "ansiblehub-agent.name" -}}
+{{- define "helios-agent.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "ansiblehub-agent.fullname" -}}
+{{- define "helios-agent.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name (include "ansiblehub-agent.name" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" .Release.Name (include "helios-agent.name" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
-{{- define "ansiblehub-agent.configFile" -}}
+{{- define "helios-agent.configFile" -}}
 server: {{ .Values.config.server | quote }}
 token: {{ .Values.config.token | quote }}
 instance_id: {{ .Values.config.instanceId | quote }}
@@ -29,15 +29,15 @@ insecure_skip_verify: {{ .Values.config.insecureSkipVerify }}
 ansible_bin: {{ .Values.config.ansibleBin | quote }}
 {{- end }}
 
-{{- define "ansiblehub-agent.configSecret" -}}
+{{- define "helios-agent.configSecret" -}}
 {{- if .Values.existingConfigSecret }}
 {{- .Values.existingConfigSecret }}
 {{- else }}
-{{- printf "%s-config" (include "ansiblehub-agent.fullname" .) }}
+{{- printf "%s-config" (include "helios-agent.fullname" .) }}
 {{- end }}
 {{- end }}
 
-{{- define "ansiblehub-agent.stateVolume" -}}
+{{- define "helios-agent.stateVolume" -}}
 {{- if eq .Values.statePersistence.type "hostPath" }}
 - name: state
   hostPath:

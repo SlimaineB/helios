@@ -14,9 +14,9 @@ func TestExposition(t *testing.T) {
 	Handler()(rec, httptest.NewRequest("GET", "/metrics", nil))
 	out := rec.Body.String()
 	for _, want := range []string{
-		`ansiblehub_runs_total{instance="ins-1",app="7",mode="apply",status="failed"}`,
-		`ansiblehub_commands_total{status="failed"}`,
-		`ansiblehub_sync_frozen_total{app="7"}`,
+		`helios_runs_total{instance="ins-1",app="7",mode="apply",status="failed"}`,
+		`helios_commands_total{status="failed"}`,
+		`helios_sync_frozen_total{app="7"}`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("metrics output missing %q:\n%s", want, out)

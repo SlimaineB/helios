@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slim/ansiblehub/server/internal/model"
-	"github.com/slim/ansiblehub/server/internal/store"
+	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/store"
 )
 
 func newTestServer(t *testing.T) (*Server, store.Store) {

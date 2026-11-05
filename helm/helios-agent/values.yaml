@@ -1,4 +1,4 @@
-# Default values for ansiblehub-agent.
+# Default values for helios-agent.
 # The agent runs the registered playbooks against the filesystem of the pod it
 # lives in: a Deployment manages a single agent, a DaemonSet reconciles every
 # matching node (nodeSelector).
@@ -12,7 +12,7 @@ tolerations: []
 affinity: {}
 
 image:
-  repository: ansiblehub/agent
+  repository: helios/agent
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -20,17 +20,17 @@ imagePullSecrets: []
 
 # Agent configuration. token is required — set it per release, e.g.:
 #   helm install agent-1 --set config.agentName=agent-1 \
-#     --set config.token=xxx helm/ansiblehub-agent
+#     --set config.token=xxx helm/helios-agent
 # or provide an existing Secret holding a key `agent.yaml` (full config file):
 #   --set existingConfigSecret=my-agent-config
 config:
   # agentName is a free label; the canonical server-side identity comes from
   # instanceId when set, otherwise from EC2 metadata / stable local id.
   agentName: agent
-  server: http://ansiblehub-server:80
+  server: http://helios-server:80
   token: ""
   instanceId: ""         # empty -> auto-register (metadata or local id)
-  stateDir: /var/lib/ansiblehub/agent
+  stateDir: /var/lib/helios/agent
   pollInterval: 30s
   maxConcurrentApps: 4
   autoheal: true
@@ -59,6 +59,7 @@ securityContext:
   runAsNonRoot: true
   runAsUser: 10001
   runAsGroup: 10001
+  fsGroup: 10001
 
 # If stateDir is ephemeral, use emptyDir. For persistent repo mirrors on a
 # DaemonSet (node-local dir), provide a HostPath path here.

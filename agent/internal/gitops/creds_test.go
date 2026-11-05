@@ -20,7 +20,7 @@ func TestHTTPCredsUseAskPass(t *testing.T) {
 		if strings.HasPrefix(kv, "GIT_ASKPASS=") {
 			askpass = strings.TrimPrefix(kv, "GIT_ASKPASS=")
 		}
-		if strings.Contains(kv, "s3cret") && !strings.HasPrefix(kv, "ANH_GIT_PASSWORD=") {
+		if strings.Contains(kv, "s3cret") && !strings.HasPrefix(kv, "HELIOS_GIT_PASSWORD=") {
 			t.Fatalf("password leaked outside the askpass env var: %q", kv)
 		}
 	}
