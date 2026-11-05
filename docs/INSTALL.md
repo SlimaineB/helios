@@ -134,6 +134,23 @@ and environment file at your own pace.
 
 ## Option B — systemd binary (no containers)
 
+### One command from GitHub Releases
+
+The release asset `install.sh` detects `amd64`/`arm64`, downloads the matching
+tarball, verifies its checksum and runs the bundled systemd installer:
+
+```sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url https://hub.example.com \
+      --operator-password 'a-long-random-password'
+```
+
+For a specific release, use `sudo env HELIOS_VERSION=v0.1.0 sh -s -- server ...`.
+The same script installs an agent with `agent --server ... --token ...`.
+
+### Build from source
+
 Build locally (Go 1.25 + Node 20), then install the binary and the built UI:
 
 ```sh
@@ -250,7 +267,18 @@ curl -su admin:$PW -X POST https://hub.example.com/api/v1/instances \
 
 ### 2. Run the installer (recommended)
 
-Use a release tarball from GitHub Releases (it contains the installer, the
+One command downloads the correct release and installs the systemd service:
+
+```sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server https://hub.example.com \
+      --token '<instance-token>'
+```
+
+For a specific release, use `sudo env HELIOS_VERSION=v0.1.0 sh -s -- agent ...`.
+
+Or use a release tarball from GitHub Releases (it contains the installer, the
 systemd unit and the binary for one architecture):
 
 ```sh
@@ -266,8 +294,7 @@ sudo /tmp/helios-agent/install-agent.sh \
 ```
 
 The installer detects apt/dnf/yum/zypper, installs `git` + `ansible-core` +
-`ansible.posix` when needed, installs the binary (it finds the matching
-`helios-agent-linux-*` next to the script), writes
+`ansible.posix` when needed, installs the bundled binary, writes
 `/etc/helios/agent.yaml` (mode `0600`) and starts
 `helios-agent.service`.
 

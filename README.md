@@ -400,9 +400,19 @@ global (`*`) object scope.
 
 | Path | Best for | How |
 |------|----------|-----|
+| [one-command installer](deploy/install.sh) | any systemd Linux host, no Docker | [one-command install](docs/INSTALL.md#option-b--systemd-binary-no-containers) |
 | [Docker Compose](deploy/compose/) | a single Linux VM | in `deploy/compose/`: `cp .env.example .env`, then `docker compose up -d --build` |
 | [systemd binary](deploy/install-server.sh) | a VM without Docker | `make build-local`, then run the installer |
 | [Helm](helm/helios-server/) | Kubernetes / k3s | `helm install ...` |
+
+Bare metal, one command:
+
+```sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url https://hub.example.com \
+      --operator-password 'a-long-random-password'
+```
 
 The compose path stores SQLite in a volume by default and supports PostgreSQL
 with an overlay. The systemd installer writes `/etc/helios/server.env` and
@@ -432,13 +442,20 @@ For non-EC2 hosts, `deploy/install-agent.sh` installs git + ansible-core + the
 agent and registers a systemd unit. It auto-detects apt/dnf/yum/zypper and
 works on any architecture shipped in the release tarball.
 
-From an extracted release tarball (the installer finds the matching binary next
-to it):
+One command, no checkout or Docker:
+
+```sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server https://hub.example.com --token '<instance-token>'
+```
+
+Or from an extracted release tarball:
 
 ```sh
 mkdir -p /tmp/helios-agent
 curl -fL -o /tmp/helios-agent.tar.gz \
-  <release-url>/helios-agent-<ver>.tar.gz
+  "https://github.com/SlimaineB/helios/releases/download/v<version>/helios-agent-<version>-linux-amd64.tar.gz"
 tar -C /tmp/helios-agent -xzf /tmp/helios-agent.tar.gz
 sudo /tmp/helios-agent/install-agent.sh \
   --server https://hub.example.com --token '<instance-token>'

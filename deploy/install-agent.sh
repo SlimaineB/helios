@@ -123,6 +123,10 @@ install_binary() {
         install -m755 "$SCRIPT_DIR/$bin" /usr/local/bin/helios-agent
         return
     fi
+    if [ -x "$SCRIPT_DIR/helios-agent" ]; then
+        install -m755 "$SCRIPT_DIR/helios-agent" /usr/local/bin/helios-agent
+        return
+    fi
     command -v helios-agent >/dev/null && return
     echo "helios-agent not found; run from the release tarball or give --binary-url/--download-url" >&2
     exit 1

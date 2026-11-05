@@ -10,6 +10,12 @@ COPY examples/playbooks/demo /tmp/demo-src
 COPY examples/playbooks/archive /tmp/archive-src
 COPY examples/playbooks/cmd /tmp/cmd-src
 RUN set -e \
+    && mkdir -p /tmp/archive-src/asset/bin \
+    && printf '%s\n' 'v1.0.0' > /tmp/archive-src/asset/VERSION \
+    && printf '%s\n' '#!/bin/sh' 'echo "hello from helios demo bundle"' \
+        > /tmp/archive-src/asset/bin/hello \
+    && chmod 0755 /tmp/archive-src/asset/bin/hello \
+    && tar -C /tmp/archive-src/asset -czf /tmp/archive-src/hello.tar.gz . \
     && G() { git -C /tmp/demo-src "$@"; } \
     && C() { G -c user.email=boot@helios -c user.name=boot commit -qam "$1"; } \
     && B() { sed -i "s/^        release: .*/        release: $1/" /tmp/demo-src/site.yml; } \
@@ -24,7 +30,7 @@ RUN set -e \
     && touch /srv/demo.git/git-daemon-export-ok \
     && rm -rf /tmp/demo-src \
     && mkdir -p /srv/static \
-    && cp /tmp/archive-src/asset/hello.tar.gz /srv/static/hello.tar.gz \
+    && cp /tmp/archive-src/hello.tar.gz /srv/static/hello.tar.gz \
     && rm -rf /tmp/archive-src/asset \
     && A() { d="$1"; n="$2"; git -C "$d" init -b main -q \
         && git -C "$d" -c user.email=boot@helios -c user.name=boot add -A \

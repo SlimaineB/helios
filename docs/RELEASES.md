@@ -6,9 +6,12 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which:
 2. builds multi-arch (`linux/amd64`, `linux/arm64`) container images and
    pushes them to GHCR;
 3. packages both Helm charts and pushes them as OCI artifacts to GHCR;
-4. builds the legacy server and agent binaries for both architectures;
-5. creates a GitHub Release with the legacy install packages, chart archives
-   and `checksums.txt`.
+4. builds the bare-metal server and agent binaries for both architectures;
+5. creates a GitHub Release with the bare-metal install packages, chart
+   archives and `checksums.txt`.
+
+The bare-metal release does not depend on the container image jobs, so a
+Docker-only failure cannot hide the systemd packages.
 
 Use a semver tag:
 
@@ -84,12 +87,14 @@ echo "$GITHUB_TOKEN" | helm registry login ghcr.io \
 The workflow uses the repository `GITHUB_TOKEN`; no extra registry secret is
 required. It needs `packages: write`, which the workflow declares explicitly.
 
-## Legacy install packages
+## Bare-metal packages (no Docker)
 
-The former generic binary/installer packages are attached to GitHub Releases
-instead of a separate generic package registry. Each GitHub Release contains:
+No container runtime is required for the server or agent. Each GitHub Release
+contains runnable Linux binaries, systemd installers and one-command bootstrap
+script:
 
 ```text
+install.sh                                   # one-command install for server/agent
 helios-server-linux-amd64
 helios-server-linux-arm64
 helios-agent-linux-amd64
@@ -103,7 +108,27 @@ helios-agent-<version>.tgz                   # Helm chart
 checksums.txt
 ```
 
-Install the hub from a release tarball:
+Install the hub in one command:
+
+```sh
+curl -fsSL https://github.com/<owner>/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url https://hub.example.com \
+      --operator-password 'a-long-random-password'
+```
+
+Install an agent in one command:
+
+```sh
+curl -fsSL https://github.com/<owner>/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server https://hub.example.com \
+      --token '<instance-token>'
+```
+
+Set `HELIOS_VERSION=v1.2.3` with `sudo env` to pin a release.
+
+Or install the hub from a release tarball:
 
 ```sh
 curl -LO https://github.com/<owner>/helios/releases/download/v1.2.3/helios-server-1.2.3-linux-amd64.tar.gz
