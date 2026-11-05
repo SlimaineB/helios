@@ -26,18 +26,19 @@ binaries.
 
 ## Option A — single-host Docker Compose (recommended for a first install)
 
-The production compose files live in `deploy/compose/`. They run only the hub;
-agents are installed separately on each managed host.
+This path uses the published container image. You do **not** need to clone the
+source or build anything.
 
 ```sh
-git clone <your-fork-or-mirror> helios
-cd helios/deploy/compose
+mkdir -p helios && cd helios
 
-cp .env.example .env
-# edit .env: set a long random HELIOS_OPERATOR_PASSWORD (and HELIOS_BASE_URL if behind TLS)
-$EDITOR .env
+curl -fsSLO https://raw.githubusercontent.com/SlimaineB/helios/main/deploy/compose/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/SlimaineB/helios/main/deploy/compose/.env.example
+mv .env.example .env
 
-docker compose up -d --build
+$EDITOR .env   # set HELIOS_OPERATOR_PASSWORD; HELIOS_IMAGE is already set
+
+docker compose up -d
 docker compose ps
 curl -fsS http://localhost:8080/api/v1/health
 ```
@@ -45,14 +46,16 @@ curl -fsS http://localhost:8080/api/v1/health
 Open `http://localhost:8080` and sign in with the operator user/password from
 `.env` (default user: `admin`).
 
+Do **not** add `--build` unless you are developing Helios itself. To pin a
+release, set `HELIOS_IMAGE=ghcr.io/slimaineb/helios-server:<version>` in `.env`.
+
 ### Use PostgreSQL instead of SQLite
 
 ```sh
-cd helios/deploy/compose
-cp .env.example .env
+curl -fsSLO https://raw.githubusercontent.com/SlimaineB/helios/main/deploy/compose/compose.postgres.yaml
 $EDITOR .env          # set HELIOS_OPERATOR_PASSWORD and HELIOS_POSTGRES_PASSWORD
 
-docker compose -f compose.yaml -f compose.postgres.yaml up -d --build
+docker compose -f compose.yaml -f compose.postgres.yaml up -d
 ```
 
 The Postgres volume is named `helios-postgres`. SQLite data lives in the
@@ -94,8 +97,8 @@ docker compose -f compose.yaml -f compose.postgres.yaml exec -T db \
   pg_dump -U helios helios | gzip > helios-$(date +%F).sql.gz
 
 # Upgrade (data volumes are kept)
-git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Keep the previous image tag or a database dump before upgrading. The server
@@ -109,7 +112,7 @@ runs its SQLite/Postgres migrations automatically at startup.
 | `HELIOS_BASE_URL` | `http://localhost:8080` | Public URL (OIDC, secure cookies) |
 | `HELIOS_OPERATOR_USER` | `admin` | Local break-glass user |
 | `HELIOS_OPERATOR_PASSWORD` | **required** | Local password; choose a strong one |
-| `HELIOS_IMAGE` | `helios-server:local` | Image name/tag |
+| `HELIOS_IMAGE` | `ghcr.io/slimaineb/helios-server:latest` | Release image (override to pin a version) |
 | `HELIOS_POSTGRES_PASSWORD` | required with the overlay | Postgres password |
 
 OIDC and RBAC are configured with environment variables or a mounted file. See
@@ -149,7 +152,7 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
 For a specific release, use `sudo env HELIOS_VERSION=v0.1.0 sh -s -- server ...`.
 The same script installs an agent with `agent --server ... --token ...`.
 
-### Build from source
+### Build from source (developers only)
 
 Build locally (Go 1.25 + Node 20), then install the binary and the built UI:
 

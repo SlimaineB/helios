@@ -1,110 +1,119 @@
-# Quickstart: run Helios in 2 minutes
+# Quickstart: install Helios
 
-This is the **lab / demo** path. It runs the whole stack with Docker Compose:
-server + UI, Postgres, a local git repo, two agents and a local OIDC provider.
-Everything runs on the host network and listens on localhost only.
+This guide installs Helios on Linux servers with systemd. You do **not** need
+Go, Node, Docker or build tools on the hub.
 
-For a real installation, see [INSTALL.md](INSTALL.md).
+## What you need
 
-## Prerequisites
+- **Hub host:** Linux amd64/arm64, systemd, root access, port `8080` reachable
+  from your browser.
+- **Managed host:** Linux amd64/arm64, systemd, root access, outbound HTTPS to
+  the hub and to your Git repository.
+- **Playbooks:** an existing Git repository containing an Ansible playbook.
 
-- Docker Engine 24+ with Compose v2 (`docker compose version`)
-- `git`, `make`, `curl`, `jq`
-- Ports **8080** (UI/API), **8000** (git), **5556** (Dex) and **5432** (Postgres)
-  free on the host
-- ~2 GB RAM and ~2 GB disk for the images and demo state
+## 1. Install the hub
 
-You do **not** need Go, Node or Ansible on the host: the compose build uses
-containers.
-
-## Start
+Run this on the hub host. Use a long random password and keep it safe.
 
 ```sh
-git clone <your-fork-or-mirror> helios
-cd helios
-./hack/demo.sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url http://YOUR_SERVER_IP:8080 \
+      --operator-password 'REPLACE_WITH_LONG_RANDOM_PASSWORD'
 ```
 
-The script builds the React UI + Go server + Ansible agent images, starts the
-stack, waits for the API, the bootstrap job and both agents, then runs the smoke
-test. Expected output ends with:
+The installer downloads the release, verifies its checksum, installs the binary
+and UI, creates the `helios` system user, and starts `helios-server.service`.
+The database is stored in `/var/lib/helios/helios.db`.
 
-```text
-SMOKE PASS: 2 agents, demo=...
-```
+Open **http://YOUR_SERVER_IP:8080** and sign in as `admin` with the password from
+the command above.
 
-Useful options:
-
-- `./hack/demo.sh --clean` — remove the compose volumes first (fresh database);
-- `./hack/demo.sh --no-build` — reuse the images already on the host.
-
-If you prefer the individual steps, `make compose-up` followed by `make smoke`
-does the same thing.
-
-Open **http://localhost:8080**.
-
-| Login | Credentials |
-|-------|-------------|
-| Local admin | `admin` / `changeme` (`HELIOS_OPERATOR_PASSWORD`) |
-| SSO admin | `admin@example.com` / `admin123` |
-| SSO read-only | `reader@example.com` / `reader123` |
-
-The demo app and `agent-1` / `agent-2` are created automatically by the
-`bootstrap` container. The first convergence takes up to a minute.
-
-> These credentials are for the lab only. Never expose this compose file to the
-> internet. See [INSTALL.md](INSTALL.md) for TLS, OIDC, RBAC and production
-> credentials.
-
-## See drift and healing
-
-Break a file managed by the demo playbook:
+Verify the installation:
 
 ```sh
-docker compose exec agent-2 sh -c \
-  'echo "manual change" > /tmp/helios-demo/state.txt'
+systemctl status helios-server
+curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
-Within one poll (about 5 s), `agent-2` turns **Drift** in the UI. With
-`autoheal: true` (the demo default), the agent re-applies and converges back to
-**Synced**. Click **Diff** or **Logs** on the row to inspect the change.
+If the browser cannot connect, open TCP `8080` in the firewall or cloud
+security group. If you use HTTPS, set `--base-url https://hub.example.com`
+instead.
 
-You can also use the UI buttons:
+## 2. Install an agent
 
-- **Check** asks the agent for a fresh `ansible-playbook --check`;
-- **Sync** applies the playbook now;
-- **Auto-sync** toggles autoheal for one assignment.
+On the hub UI, open **Instances → Register instance**, give it a name, and copy
+the token. The token is shown only once.
 
-## Useful commands
+Then run this **on the server you want Helios to manage**:
 
 ```sh
-make demo                  # one-command build, start, wait and smoke test
-make compose-logs          # follow all container logs
-make test                  # Go unit tests (server + agent)
-make smoke                 # end-to-end health/drift check on the running stack
-./hack/looptest.sh         # convergence + stuck-guard scenarios (~1 min)
-make compose-down          # stop, keep data
-make compose-clean         # stop and delete database/state volumes
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server http://YOUR_SERVER_IP:8080 \
+      --token 'PASTE_INSTANCE_TOKEN' \
+      --poll-interval 30s
 ```
 
-## Teardown and reset
+The installer installs `git`, `ansible-core` and `ansible.posix` if needed,
+writes `/etc/helios/agent.yaml`, and starts `helios-agent.service`. The instance
+appears in the UI within about 30 seconds.
 
 ```sh
-docker compose down -v
+systemctl status helios-agent
+journalctl -u helios-agent -f
 ```
 
-This deletes the Postgres volume, the agent config volume and the demo state.
-The next `docker compose up -d --build` starts from a clean database.
+## 3. Add an application
+
+In the UI, open **Applications → New application** and fill in:
+
+- the Git repository URL;
+- the branch, tag, or revision to track;
+- the playbook path, for example `site.yml`;
+- optional variables and `autoheal`.
+
+Assign the application to the instance. Click **Check** to run a dry run, or
+**Sync** to apply it now.
+
+## Upgrade
+
+The database is preserved. Re-run the installer with the same options.
+
+```sh
+# Hub
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url http://YOUR_SERVER_IP:8080 \
+      --operator-password '<SAME-PASSWORD>'
+
+# Agent
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server http://YOUR_SERVER_IP:8080 \
+      --token '<SAME-INSTANCE-TOKEN>'
+```
+
+To pin a release, add `HELIOS_VERSION=v0.1.0` after `sudo`, for example
+`sudo env HELIOS_VERSION=v0.1.0 sh -s -- server ...`.
 
 ## Troubleshooting
 
-| Symptom | Check |
+| Problem | Check |
 |---------|-------|
-| UI does not answer | `docker compose ps`; `docker compose logs server` |
-| Agents never appear | `docker compose logs bootstrap agent-1 agent-2` |
-| `make smoke` says demo missing | wait for `bootstrap` to finish, then rerun |
-| Drift never changes | check `docker compose exec agent-1 ls /tmp/helios-demo` |
-| Port already in use | change the published port or stop the conflicting service |
-| Build fails on Node/Go | run `docker compose build --no-cache` and check disk space |
+| Browser cannot reach the UI | firewall allows TCP 8080; `systemctl status helios-server` |
+| Login fails | user is `admin`; password is the one passed to the installer |
+| Agent never appears | `systemctl status helios-agent`; `journalctl -u helios-agent -f` |
+| Agent appears but app stays unsynced | Git repo/path is correct and reachable from the managed host |
+| `install.sh` fails | host is Linux amd64/arm64 with systemd; rerun with `sudo` |
+| Port 8080 already used | stop the other service or use `--addr :9090` and update `--base-url` |
 
-More: [TESTING.md](TESTING.md) and the [documentation home](index.md).
+## Other installation methods
+
+- [Docker Compose](INSTALL.md#option-a--single-host-docker-compose-recommended-for-a-first-install)
+- [Kubernetes / Helm](INSTALL.md#option-c--kubernetes-helm)
+- [Agent reference](INSTALL.md#install-an-agent)
+- [Releases and packages](RELEASES.md)
+
+For the development demo (Docker Compose, local Git server, SSO), see the
+[demo section in the README](https://github.com/SlimaineB/helios#2-minute-demo-developers).

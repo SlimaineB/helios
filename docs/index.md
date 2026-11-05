@@ -49,21 +49,27 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
            └───────────┘       └───────────┘
 ```
 
-## 2-minute demo
+## Install in 5 minutes
 
-The lab stack runs the hub, PostgreSQL, a local Git server, two agents and a
-Dex OIDC provider with Docker Compose.
+On a Linux server with systemd, install the hub with one command:
 
 ```sh
-git clone <your-fork-or-mirror> helios
-cd helios
-./hack/demo.sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url http://YOUR_SERVER_IP:8080 \
+      --operator-password 'REPLACE_WITH_LONG_RANDOM_PASSWORD'
 ```
 
-Open <http://localhost:8080> and sign in with `admin` / `changeme`.
+Open **http://YOUR_SERVER_IP:8080** and sign in as `admin`. No Go, Node, Docker or
+build tools are required.
 
-See the [quickstart](QUICKSTART.md) for the drift/heal walkthrough and the
-[installation guide](INSTALL.md) for a production setup.
+Then register an instance in the UI and install the agent on each managed host
+with the same `install.sh`. Full commands and troubleshooting:
+[Quickstart](QUICKSTART.md).
+
+For developers, the [README demo](https://github.com/SlimaineB/helios#2-minute-demo-developers)
+runs the hub, PostgreSQL, a local Git server, two agents and a Dex OIDC provider
+with Docker Compose.
 
 ## Documentation
 
@@ -76,4 +82,4 @@ See the [quickstart](QUICKSTART.md) for the drift/heal walkthrough and the
 - [Capacity](CAPACITY.md) — measured limits and `max_concurrent_apps` tuning.
 
 The full project reference (API surface, UI details, roadmap and examples) is
-in the [repository README](https://gitlab.com/slimaineb/helios/blob/main/README.md).
+in the [repository README](https://github.com/SlimaineB/helios/blob/main/README.md).

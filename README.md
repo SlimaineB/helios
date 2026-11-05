@@ -1,11 +1,76 @@
 # Helios
 
-> **Start here:** [2-minute demo](docs/QUICKSTART.md) · [Install](docs/INSTALL.md) ·
-> [Test](docs/TESTING.md) · [Capacity](docs/CAPACITY.md)
+Helios keeps your Linux servers configured from Git. You define the desired
+state in an Ansible playbook; Helios checks every managed server for drift and
+can re-apply the playbook automatically.
 
-An **ArgoCD-like GitOps control plane for EC2 instances** (or any host with
-`git` + `ansible-playbook`), built by a thin **Go agent** on each instance that
-performs `ansible-pull` + drift detection and reports to a **central API + UI**.
+**You do not need Go, Node, Docker or build tools to install Helios.** The
+installer downloads a release package and sets up a systemd service.
+
+## Install in 5 minutes
+
+**Requirements:** a Linux server (amd64 or arm64) with systemd, root access,
+and port `8080` reachable from your browser.
+
+### 1. Install the hub
+
+```sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url http://YOUR_SERVER_IP:8080 \
+      --operator-password 'REPLACE_WITH_LONG_RANDOM_PASSWORD'
+```
+
+Open **http://YOUR_SERVER_IP:8080** and sign in as `admin` with the password you
+chose. Data is stored in `/var/lib/helios/helios.db`.
+
+```sh
+systemctl status helios-server
+curl -fsS http://127.0.0.1:8080/api/v1/health
+```
+
+If the browser cannot connect, allow TCP `8080` in your firewall or cloud
+security group.
+
+### 2. Install an agent on each managed server
+
+In the UI, open **Instances → Register instance**, copy the token shown once,
+then run this **on the server you want Helios to manage**:
+
+```sh
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server http://YOUR_SERVER_IP:8080 \
+      --token 'PASTE_INSTANCE_TOKEN' \
+      --poll-interval 30s
+```
+
+The agent installs `git`, `ansible-core` and `ansible.posix`, starts
+`helios-agent.service`, and appears in the UI within about 30 seconds.
+
+### 3. Add an application
+
+In the UI, open **Applications → New application**. Enter the Git repository
+that contains your Ansible playbook, the branch or tag, and the playbook path
+(for example `site.yml`). Assign it to the instance, then click **Check** or
+wait for the first sync.
+
+### Something went wrong?
+
+| Problem | Check |
+|---------|-------|
+| Browser cannot reach the UI | firewall/security group allows TCP 8080; `systemctl status helios-server` |
+| Login fails | use the exact `--operator-password` from step 1 (user `admin`) |
+| Agent not listed | `systemctl status helios-agent`; `journalctl -u helios-agent -f` |
+| Agent listed but app not synced | check the repo URL/path and agent logs; the repo must be reachable from the managed server |
+
+Other install methods:
+[Docker](docs/INSTALL.md#option-a--single-host-docker-compose-recommended-for-a-first-install) ·
+[Kubernetes/Helm](docs/INSTALL.md#option-c--kubernetes-helm) ·
+[agent details](docs/INSTALL.md#install-an-agent).
+Developers can run the [demo](#2-minute-demo-developers) below.
+
+## How it works
 
 ```
 ┌─────────────── EC2 / host ───────────────┐      ┌─────────── central hub ───────────┐
@@ -35,7 +100,10 @@ performs `ansible-pull` + drift detection and reports to a **central API + UI**.
 - **Multi-app**: an instance can be bound to several applications, each with its
   own repo/branch/path/vars and drift state.
 
-## 2-minute demo (docker compose)
+## 2-minute demo (developers)
+
+This is a development lab, not the install path. It builds the project from
+source and runs the hub, two agents, a demo Git server and SSO locally.
 
 Requirements: Docker 24+ with Compose v2, `git`, `make`, `curl` and `jq`. Ports
 **8080**, **8000**, **5556** and **5432** must be free.
