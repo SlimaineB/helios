@@ -1,0 +1,49 @@
+name: Cleanup old GHCR versions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Delete old container package versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com"
+          auth="Authorization: Bearer ${GH_TOKEN}"
+          accept="Accept: application/vnd.github+json"
+
+          curl -fsS -H "$auth" -H "$accept" \
+            "${api}/repos/${REPO}/packages?package_type=container&per_page=100" \
+            -o packages.json
+          jq -r '.[].name' packages.json | while IFS= read -r pkg; do
+            echo "== package: ${pkg}"
+            enc=$(jq -rn --arg v "$pkg" '$v|@uri')
+            curl -fsS -H "$auth" -H "$accept" \
+              "${api}/repos/${REPO}/packages/container/${enc}/versions?per_page=100" \
+              -o versions.json
+            jq -c '.[] | {id:.id, tags:(.metadata.container.tags // [])}' versions.json |
+              while IFS= read -r version; do
+                id=$(jq -r '.id' <<<"$version")
+                tags=$(jq -r '.tags | join(",")' <<<"$version")
+                if printf '%s' "$tags" | grep -Eq '(^|,)(0\.1\.0|latest|main)(,|$)'; then
+                  echo "keep   ${id} [${tags}]"
+                  continue
+                fi
+                echo "delete ${id} [${tags}]"
+                code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+                  -H "$auth" -H "$accept" \
+                  "${api}/repos/${REPO}/packages/container/${enc}/versions/${id}")
+                echo "  -> HTTP ${code}"
+                [ "$code" = "204" ] || exit 1
+              done
+          done
