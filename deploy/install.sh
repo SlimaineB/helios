@@ -89,5 +89,5 @@ if [ "$COMPONENT" = server ]; then
         --binary "${TMP}/helios-server" --ui "${TMP}/ui" "$@"
 else
     [ -x "${TMP}/install-agent.sh" ] || die "install-agent.sh missing from archive"
-    "${TMP}/install-agent.sh" --binary "${TMP}/helios-agent" "$@"
+    "${TMP}/install-agent.sh" "$@"
 fi

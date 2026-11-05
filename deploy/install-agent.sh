@@ -93,7 +93,8 @@ install_ansible() {
     pip3 install --no-cache-dir --break-system-packages ansible-core 2>/dev/null ||
         pip3 install --no-cache-dir ansible-core
     # Shared path: independent of HOME, mirrors the container image.
-    ansible-galaxy collection install ansible.posix -p /usr/share/ansible/collections
+    LC_ALL=C.UTF-8 ansible-galaxy collection install ansible.posix \
+        -p /usr/share/ansible/collections
 }
 
 install_binary() {
