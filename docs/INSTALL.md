@@ -46,8 +46,8 @@ curl -fsS http://localhost:8080/api/v1/health
 Open `http://localhost:8080` and sign in with the operator user/password from
 `.env` (default user: `admin`).
 
-Do **not** add `--build` unless you are developing Helios itself. To pin a
-release, set `HELIOS_IMAGE=ghcr.io/slimaineb/helios-server:<version>` in `.env`.
+To pin a release, set
+`HELIOS_IMAGE=ghcr.io/slimaineb/helios-server:<version>` in `.env`.
 
 ### Use PostgreSQL instead of SQLite
 
@@ -152,24 +152,13 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
 For a specific release, use `sudo env HELIOS_VERSION=v0.1.0 sh -s -- server ...`.
 The same script installs an agent with `agent --server ... --token ...`.
 
-### Build from source (developers only)
-
-Build locally (Go 1.25 + Node 20), then install the binary and the built UI:
-
-```sh
-make build-local
-sudo ./deploy/install-server.sh \
-  --binary ./server/helios-server \
-  --ui ./ui/dist \
-  --base-url https://hub.example.com \
-  --operator-password 'a-long-random-password'
-```
-
-Or download `helios-server-<version>-linux-amd64.tar.gz` (or `arm64`) from
-[GitHub Releases](https://github.com/<owner>/helios/releases), extract it,
+Download `helios-server-<version>-linux-amd64.tar.gz` (or `arm64`) from
+[GitHub Releases](https://github.com/SlimaineB/helios/releases), extract it,
 and run the bundled installer with `--binary ./helios-server --ui ./ui`.
 The release tarball contains the binary, UI, installer and systemd unit; see
 [Releases and GitHub packages](RELEASES.md).
+
+Building from source is documented in [Development](DEVELOPMENT.md).
 
 The installer:
 
@@ -355,7 +344,7 @@ mirror and one Ansible process per check.
 - [ ] Restrict the hub port/API to your network.
 - [ ] Install agents on the managed hosts; assign apps and run a first check.
 - [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
-- [ ] Read the convergence pitfalls in the root README before writing playbooks.
+- [ ] Read the [convergence pitfalls](DEVELOPMENT.md#convergence-pitfalls) before writing playbooks.
 
 ## Security notes
 

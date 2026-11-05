@@ -36,15 +36,17 @@ theme:
 
 nav:
   - Home: index.md
-  - Quickstart: QUICKSTART.md
+  - Install quickstart: QUICKSTART.md
   - Installation:
       - Hub and agents: INSTALL.md
       - Kubernetes (k3s): K3S.md
   - Operations:
       - Authentication & RBAC: AUTH.md
       - Releases and packages: RELEASES.md
-      - Testing: TESTING.md
       - Capacity: CAPACITY.md
+  - Development:
+      - Build, demo and tests: DEVELOPMENT.md
+      - Testing: TESTING.md
 
 plugins:
   - search

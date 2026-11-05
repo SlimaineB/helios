@@ -68,7 +68,7 @@ Other install methods:
 [Docker](docs/INSTALL.md#option-a--single-host-docker-compose-recommended-for-a-first-install) ·
 [Kubernetes/Helm](docs/INSTALL.md#option-c--kubernetes-helm) ·
 [agent details](docs/INSTALL.md#install-an-agent).
-Developers can run the [demo](#2-minute-demo-developers) below.
+Developer setup, source builds and the demo: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## How it works
 
@@ -100,109 +100,7 @@ Developers can run the [demo](#2-minute-demo-developers) below.
 - **Multi-app**: an instance can be bound to several applications, each with its
   own repo/branch/path/vars and drift state.
 
-## 2-minute demo (developers)
-
-This is a development lab, not the install path. It builds the project from
-source and runs the hub, two agents, a demo Git server and SSO locally.
-
-Requirements: Docker 24+ with Compose v2, `git`, `make`, `curl` and `jq`. Ports
-**8080**, **8000**, **5556** and **5432** must be free.
-
-```sh
-git clone <your-fork-or-mirror> helios
-cd helios
-./hack/demo.sh
-```
-
-The first build takes a few minutes. The demo waits for the API and the
-bootstrap job, verifies that both agents are reporting for the demo app, runs
-the smoke test, then prints the URL and credentials. Use `--clean` for a fresh
-database/agent state or `--no-build` to reuse the images. Full walkthrough:
-[docs/QUICKSTART.md](docs/QUICKSTART.md).
-
-Brings up:
-
-| Service  | Role                                                        |
-|----------|-------------------------------------------------------------|
-| `server` | API + dashboard (React) → http://localhost:8080             |
-| `db`     | Postgres 16 (separate service)                               |
-| `repo`   | dumb-HTTP git server serving the demo playbook              |
-| `bootstrap` | one-shot: registers demo app + 2 agents, writes their tokens |
-| `agent-1/2` | Go agents doing drift checks every 5s                    |
-| `dex`    | local SSO (OIDC) stand-in for Okta                          |
-
-Open **http://localhost:8080** — sign in as local admin (`admin` /
-`HELIOS_OPERATOR_PASSWORD`, default `changeme`) or via the **SSO** button
-(admin@example.com / `admin123` = full admin, reader@example.com / `reader123`
-= read-only). Both agents should be *Synced* within a minute.
-
-> This compose file is a **lab**: host networking, demo credentials, local SSO
-> and a demo git server. It is not a production topology. For TLS, OIDC, RBAC
-> and production credentials, use [docs/INSTALL.md](docs/INSTALL.md).
->
-> Dex's local password connector does not emit a `groups` claim, so the lab
-> binds RBAC on the OIDC `email` claim (`HELIOS_OIDC_GROUP_CLAIM=email`);
-> with a real provider keep `groups` and bind the actual group names (see
-> `hack/dex/rbac.yaml`).
-
-### Watch drift live
-
-```sh
-docker compose exec agent-2 sh
-echo "manual change breaks the state" > /tmp/helios-demo/state.txt
-```
-
-The next check (≤ 5s) marks agent-2 **Drift** in the UI. Click **Sync** to
-re-apply, or re-enable `autoheal: true` on the app to let it self-heal.
-
-### Stop and reset
-
-```sh
-make compose-down     # stop, keep the database and agent state
-make compose-clean    # stop and delete the compose volumes (clean slate)
-```
-
-### Convergence & idempotency pitfalls
-
-Drift is defined as *at least one task that would change something in
-`--check` mode* (`ansible.go`). Two classic ways to build an app that can
-**never** converge:
-
-- a `command:`/`shell:` task **without** a `creates:`/`removes:` guard —
-  `command` always reports `changed` in check mode;
-- a `get_url`/`unarchive` pair against an artifact that **changes every run**
-  (nightly/rolling builds) or without an idempotency marker.
-
-A well-written playbook converges on the first autoheal: the `get_url` +
-`unarchive` example in `examples/playbooks/archive/` downloads once and gates
-extraction behind a `stat` marker, so the post-apply check reports `ok`.
-`examples/playbooks/cmd/` is the counter-example: `command`/`shell` tasks are
-`skipped` by Ansible in check mode, so it renders a template whose content
-embeds a fresh timestamp on *every* run — check mode reports "changed"
-forever, and applying never converges.
-
-**Heal guard** (`server`): an autoheal is applied at most once per `2 × poll`
-per app (agent cooldown). If the mandatory post-apply check still reports
-drift for `healing.maxDriftStreak` consecutive cycles (default **3**, env
-`HELIOS_HEAL_MAX_STREAK`), the assignment is flagged **stuck**: the server stops
-asking the agent to apply (drift checks continue), the UI shows a `stuck`
-badge + a **Rearm** button, and the counter resets automatically the moment a
-check returns `ok`. Drift/heal runs that repeat an identical state are
-deduplicated so a stuck app cannot grow the run history forever.
-
-Run the loop-safety harness against the compose setup:
-
-```sh
-docker compose up -d --build
-make smoke            # fast API + agent + demo check
-make loop-test        # archive-test converges; cmd-test becomes stuck
-# 1/2 archive-test: converges, single apply (no "not sync" loop)
-# 2/2 cmd-test:     flagged stuck, applies stop
-```
-
-See [docs/TESTING.md](docs/TESTING.md) for the test levels, manual UI
-scenarios, troubleshooting and the race detector. Capacity numbers and tuning
-are in [docs/CAPACITY.md](docs/CAPACITY.md).
+## Operations
 
 ### Per-app sync interval
 
@@ -469,9 +367,8 @@ global (`*`) object scope.
 | Path | Best for | How |
 |------|----------|-----|
 | [one-command installer](deploy/install.sh) | any systemd Linux host, no Docker | [one-command install](docs/INSTALL.md#option-b--systemd-binary-no-containers) |
-| [Docker Compose](deploy/compose/) | a single Linux VM | in `deploy/compose/`: `cp .env.example .env`, then `docker compose up -d --build` |
-| [systemd binary](deploy/install-server.sh) | a VM without Docker | `make build-local`, then run the installer |
-| [Helm](helm/helios-server/) | Kubernetes / k3s | `helm install ...` |
+| [Docker Compose](deploy/compose/) | a single Linux VM | [published image + compose file](docs/INSTALL.md#option-a--single-host-docker-compose-recommended-for-a-first-install) |
+| [Helm](helm/helios-server/) | Kubernetes / k3s | [Helm install](docs/INSTALL.md#option-c--kubernetes-helm) |
 
 Bare metal, one command:
 
@@ -490,60 +387,29 @@ Ingress/TLS and an existing operator secret.
 Full instructions, TLS/reverse-proxy notes, backup/upgrade and the post-install
 checklist: [docs/INSTALL.md](docs/INSTALL.md).
 
-## Deploy agents (EC2 and any Linux host)
+## Deploy agents (any Linux host)
 
-1. Build the agent for linux/amd64 and publish it (S3 or a simple HTTP URL):
+1. In the hub UI, open **Instances → Register instance** and copy the token
+   (shown once).
+2. On the managed host, run:
+
    ```sh
-   cd agent && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o helios-agent ./cmd/agent
+   curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+     | sudo sh -s -- agent \
+         --server https://hub.example.com \
+         --token '<instance-token>'
    ```
-2. In the hub UI: **Register instance** → keep the emitted token.
-3. Launch an EC2 instance with **user data** from `deploy/ec2-user-data.yaml`
-   (fill `HELIOS_SERVER`, `HELIOS_TOKEN`, `HELIOS_AGENT_URL`) — cloud-init installs git +
-   ansible + the agent and starts it via systemd.
-4. Create the application (repo URL, revision — branch/tag/semver range — and
-   playbook path), assign the instance.
-5. Optional: use `deploy/terraform/agent/` to manage instances as code.
 
-### Direct install (any Linux box, no containers)
+3. Create the application (repo URL, revision, playbook path) and assign it to
+   the instance.
+4. Optional: use `deploy/ec2-user-data.yaml` for EC2 cloud-init, or
+   `deploy/terraform/agent/` to manage instances as code.
 
-For non-EC2 hosts, `deploy/install-agent.sh` installs git + ansible-core + the
-agent and registers a systemd unit. It auto-detects apt/dnf/yum/zypper and
-works on any architecture shipped in the release tarball.
-
-One command, no checkout or Docker:
-
-```sh
-curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
-  | sudo sh -s -- agent \
-      --server https://hub.example.com --token '<instance-token>'
-```
-
-Or from an extracted release tarball:
-
-```sh
-mkdir -p /tmp/helios-agent
-curl -fL -o /tmp/helios-agent.tar.gz \
-  "https://github.com/SlimaineB/helios/releases/download/v<version>/helios-agent-<version>-linux-amd64.tar.gz"
-tar -C /tmp/helios-agent -xzf /tmp/helios-agent.tar.gz
-sudo /tmp/helios-agent/install-agent.sh \
-  --server https://hub.example.com --token '<instance-token>'
-```
-
-Or point at a binary directly:
-
-```sh
-sudo ./deploy/install-agent.sh --server https://hub.example.com \
-  --token '<instance-token>' \
-  --binary-url https://downloads.example.com/helios-agent-linux-amd64
-```
-
-Useful flags: `--autoheal 0|1`, `--max-concurrent N`, `--poll-interval 5m`,
-`--state-dir`, `--instance-id`. Verify with `systemctl status helios-agent`
-and `journalctl -u helios-agent -f`. Full guide:
+The installer auto-detects apt/dnf/yum/zypper, installs `git`, `ansible-core`
+and `ansible.posix`, writes `/etc/helios/agent.yaml`, and starts
+`helios-agent.service`. Verify with `systemctl status helios-agent` and
+`journalctl -u helios-agent -f`. Full guide:
 [docs/INSTALL.md](docs/INSTALL.md#install-an-agent).
-
-The agent itself is a single static Go binary (`make build-agent`) — Docker is
-only one of its packaging options.
 
 ## Configuration
 
@@ -575,33 +441,17 @@ Ansible run is a separate process.
 
 ## Documentation
 
-- [Quickstart](docs/QUICKSTART.md) — run the lab stack and see drift.
-- [Install](docs/INSTALL.md) — hub (compose/systemd/Helm) and agents.
+- [Quickstart](docs/QUICKSTART.md) — install the hub and first agent.
+- [Install](docs/INSTALL.md) — Docker, systemd and Kubernetes/Helm.
 - [Authentication & RBAC](docs/AUTH.md) — local admin, OIDC and policies.
 - [Releases](docs/RELEASES.md) — GHCR images, binaries and tarballs.
+- [Development](docs/DEVELOPMENT.md) — source build, demo, tests and docs build.
 - [Testing](docs/TESTING.md) — unit, smoke, loop-safety, UI and capacity tests.
 - [Capacity](docs/CAPACITY.md) — measured limits and `max_concurrent_apps` tuning.
 - [k3s reference](docs/K3S.md) — full cluster walkthrough.
 - [Demo playbook](examples/playbooks/demo/README.md) — revisions, vars, drift.
 
-### Published documentation (MkDocs)
-
-The docs are a [MkDocs Material](https://squidfunk.github.io/mkdocs-material/)
-site:
-
-```sh
-pip install -r requirements-docs.txt
-make docs-serve        # local preview on http://127.0.0.1:8000
-make docs              # strict build into site/
-```
-
-`.github/workflows/docs.yml` builds and deploys the site to GitHub Pages on
-pushes to `main`. Enable **Settings → Pages → Source: GitHub Actions** in the
-GitHub repository once. If your GitHub Pages URL differs, set `SITE_URL`
-(e.g. `SITE_URL=https://user.github.io/helios/ make docs`); CI gets it from
-`actions/configure-pages`.
-
-A `v*` tag also publishes multi-arch images to GHCR and binaries/tarballs to a
+A `v*` tag publishes multi-arch images to GHCR and binaries/tarballs to a
 GitHub Release via `.github/workflows/release.yml`; see [Releases](docs/RELEASES.md).
 
 ## Roadmap

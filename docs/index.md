@@ -67,13 +67,12 @@ Then register an instance in the UI and install the agent on each managed host
 with the same `install.sh`. Full commands and troubleshooting:
 [Quickstart](QUICKSTART.md).
 
-For developers, the [README demo](https://github.com/SlimaineB/helios#2-minute-demo-developers)
-runs the hub, PostgreSQL, a local Git server, two agents and a Dex OIDC provider
-with Docker Compose.
+Building from source, running the development demo and tests:
+[Development](DEVELOPMENT.md).
 
 ## Documentation
 
-- [Quickstart](QUICKSTART.md) — run the lab stack and watch drift heal.
+- [Quickstart](QUICKSTART.md) — install the hub and first agent.
 - [Install](INSTALL.md) — hub (Compose, systemd, Helm) and agents.
 - [k3s reference](K3S.md) — full cluster walkthrough.
 - [Authentication & RBAC](AUTH.md) — local admin, OIDC, ArgoCD-style policies.

@@ -115,5 +115,5 @@ To pin a release, add `HELIOS_VERSION=v0.1.0` after `sudo`, for example
 - [Agent reference](INSTALL.md#install-an-agent)
 - [Releases and packages](RELEASES.md)
 
-For the development demo (Docker Compose, local Git server, SSO), see the
-[demo section in the README](https://github.com/SlimaineB/helios#2-minute-demo-developers).
+Building from source, running the development demo and tests:
+[Development](DEVELOPMENT.md).
