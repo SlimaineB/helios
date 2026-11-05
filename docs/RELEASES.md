@@ -3,10 +3,12 @@
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which:
 
 1. runs the Go tests and a production UI build;
-2. builds multi-arch (`linux/amd64`, `linux/arm64`) container images;
-3. builds server and agent binaries for both architectures;
-4. creates a GitHub Release with the binaries, installer tarballs and
-   `checksums.txt`.
+2. builds multi-arch (`linux/amd64`, `linux/arm64`) container images and
+   pushes them to GHCR;
+3. packages both Helm charts and pushes them as OCI artifacts to GHCR;
+4. builds the legacy server and agent binaries for both architectures;
+5. creates a GitHub Release with the legacy install packages, chart archives
+   and `checksums.txt`.
 
 Use a semver tag:
 
@@ -35,13 +37,39 @@ Pull with:
 docker pull ghcr.io/<owner>/helios-server:1.2.3
 ```
 
-For Helm, point the charts at the registry:
+## Helm charts
+
+Both charts are published as OCI artifacts in GHCR:
+
+```text
+oci://ghcr.io/<owner>/charts/helios-server
+oci://ghcr.io/<owner>/charts/helios-agent
+```
+
+The chart version matches the release tag (`v1.2.3` → `1.2.3`). The packaged
+charts pin the image repository to `ghcr.io/<owner>/helios-server` or
+`ghcr.io/<owner>/helios-agent`, and the image tag to the release version.
 
 ```sh
-helm upgrade --install helios-server helm/helios-server \
-  --set image.repository=ghcr.io/<owner>/helios-server \
-  --set image.tag=1.2.3
+helm registry login ghcr.io --username <github-user>
+
+helm install helios-server \
+  oci://ghcr.io/<owner>/charts/helios-server \
+  --version 1.2.3 \
+  --namespace helios --create-namespace \
+  --set operatorAuth.password='a-long-random-password' \
+  --set service.type=LoadBalancer
+
+helm install agent-1 \
+  oci://ghcr.io/<owner>/charts/helios-agent \
+  --version 1.2.3 \
+  --namespace helios \
+  --set config.server=http://helios-server:80 \
+  --set config.token='<instance-token>'
 ```
+
+When installing from a checkout instead, use `helm/helios-server` or
+`helm/helios-agent` and override `image.repository` / `image.tag` explicitly.
 
 GitHub packages are private by default. Either make the package public in
 **GitHub → Packages → Package settings → Change visibility**, or log in before
@@ -49,14 +77,17 @@ pulling:
 
 ```sh
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
+echo "$GITHUB_TOKEN" | helm registry login ghcr.io \
+  --username <github-user> --password-stdin
 ```
 
 The workflow uses the repository `GITHUB_TOKEN`; no extra registry secret is
 required. It needs `packages: write`, which the workflow declares explicitly.
 
-## Binaries and tarballs
+## Legacy install packages
 
-Each GitHub Release contains:
+The former generic binary/installer packages are attached to GitHub Releases
+instead of a separate generic package registry. Each GitHub Release contains:
 
 ```text
 helios-server-linux-amd64
@@ -67,6 +98,8 @@ helios-server-<version>-linux-amd64.tar.gz   # binary + ui/ + install-server.sh
 helios-server-<version>-linux-arm64.tar.gz
 helios-agent-<version>-linux-amd64.tar.gz    # binary + install-agent.sh
 helios-agent-<version>-linux-arm64.tar.gz
+helios-server-<version>.tgz                  # Helm chart
+helios-agent-<version>.tgz                   # Helm chart
 checksums.txt
 ```
 

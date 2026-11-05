@@ -250,15 +250,14 @@ curl -su admin:$PW -X POST https://hub.example.com/api/v1/instances \
 
 ### 2. Run the installer (recommended)
 
-Use a release tarball from CI (it contains the installer, the systemd unit and
-both architectures):
+Use a release tarball from GitHub Releases (it contains the installer, the
+systemd unit and the binary for one architecture):
 
 ```sh
 mkdir -p /tmp/helios-agent
 curl -fL -o /tmp/helios-agent.tar.gz \
-  "<release-url>/helios-agent-<version>.tar.gz"
-# GitLab Generic Package Registry URL shape:
-# ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/helios-agent/<version>/helios-agent-<version>.tar.gz
+  "https://github.com/<owner>/helios/releases/download/v<version>/helios-agent-<version>-linux-amd64.tar.gz"
+# Use -linux-arm64.tar.gz on arm64 hosts.
 tar -C /tmp/helios-agent -xzf /tmp/helios-agent.tar.gz
 
 sudo /tmp/helios-agent/install-agent.sh \
