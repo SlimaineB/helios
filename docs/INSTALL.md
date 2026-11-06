@@ -47,7 +47,8 @@ curl -fsS http://localhost:8080/api/v1/health
 ```
 
 Open `http://localhost:8080` and sign in with the operator user/password from
-`.env` (default user: `admin`).
+`.env` (default user: `admin`). The image also serves agent tarballs for
+amd64/arm64 at `/downloads/`; the registration dialog shows the command.
 
 To pin a release, set
 `HELIOS_IMAGE=ghcr.io/slimaineb/helios-server:<version>` in `.env`.
@@ -182,6 +183,8 @@ Useful flags:
 --rbac /path/policies.yaml       copy an RBAC file to /etc/helios/rbac.yaml
 --tls-cert /path/fullchain.pem   serve HTTPS directly
 --tls-key /path/privkey.pem
+--agent-tarball FILE             publish an agent tarball from the hub (repeatable)
+--downloads-dir DIR              default /usr/share/helios/downloads
 ```
 
 Check it:
@@ -229,6 +232,8 @@ Notes:
 - Enable `ingress`; `baseUrl` is derived from the ingress host/TLS settings
   unless set explicitly. Use it for TLS and OIDC.
 - Start with `-f deploy/k3s/server-values.yaml` for the reference k3s setup.
+- The official server image includes the amd64/arm64 agent tarballs and serves
+  them at `/downloads/`.
 
 Agents can run as a Deployment (one logical host) or a DaemonSet (every node):
 
@@ -272,6 +277,28 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
 ```
 
 For a specific release, use `sudo env HELIOS_VERSION=v0.1.1 sh -s -- agent ...`.
+
+If the hub was installed with `install.sh` (or runs the official container
+image), it also serves the agent tarballs at `/downloads/`. The registration
+dialog shows the exact command. To do it manually on the managed host:
+
+```sh
+arch=$(uname -m)
+case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+curl -fsSLO "https://hub.example.com/downloads/helios-agent-linux-${arch}.tar.gz"
+tar -xzf "helios-agent-linux-${arch}.tar.gz"
+sudo ./install-agent.sh --server https://hub.example.com --token '<instance-token>'
+```
+
+This is useful when managed hosts cannot reach GitHub. A bare-metal server
+installed by hand can publish tarballs with `--agent-tarball`:
+
+```sh
+sudo ./install-server.sh --binary ./helios-server --ui ./ui \
+  --operator-password 'a-long-random-password' \
+  --agent-tarball ./helios-agent-<version>-linux-amd64.tar.gz \
+  --agent-tarball ./helios-agent-<version>-linux-arm64.tar.gz
+```
 
 Or use a release tarball from GitHub Releases (it contains the installer, the
 systemd unit and the binary for one architecture):

@@ -164,8 +164,14 @@ if [ "$COMPONENT" = server ]; then
     [ -f "${BUNDLE_DIR}/install/install-server.sh" ] ||
         die "install/install-server.sh missing from bundle"
     [ -f "$TMP/ui/index.html" ] || die "ui/ missing from server tarball"
+    AGENT_ARGS=""
+    for agent_tarball in "${BUNDLE_DIR}/release/helios-agent-"*"-linux-${ARCH}.tar.gz"; do
+        [ -f "$agent_tarball" ] || continue
+        AGENT_ARGS="$AGENT_ARGS --agent-tarball $agent_tarball"
+    done
+    # shellcheck disable=SC2086
     sh "${BUNDLE_DIR}/install/install-server.sh" \
-        --binary "$TMP/helios-server" --ui "$TMP/ui" "$@"
+        --binary "$TMP/helios-server" --ui "$TMP/ui" $AGENT_ARGS "$@"
 else
     [ -f "${BUNDLE_DIR}/install/install-agent.sh" ] ||
         die "install/install-agent.sh missing from bundle"

@@ -70,6 +70,7 @@ export const api = {
   realm: () => request('GET', '/api/v1/auth/realm'),
   logout: () => request('GET', '/api/v1/auth/logout'),
 
+  downloads: () => request('GET', '/api/v1/downloads'),
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),
   createInstance: (name, project) => request('POST', '/api/v1/instances', { name, project }),

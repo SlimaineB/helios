@@ -27,6 +27,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/health", s.handleHealth)
 	m.HandleFunc("GET /metrics", metrics.Handler())
 
+	// Agent tarballs are public so hosts can bootstrap without a hub login.
+	m.HandleFunc("GET /downloads/{name}", s.handleDownload)
+
 	// Operator authentication surface (public entry points).
 	m.HandleFunc("GET /api/v1/auth/realm", s.handleRealm)
 	m.HandleFunc("GET /api/v1/auth/login", s.handleLogin)
@@ -35,6 +38,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/auth/me", s.handleMe)
 
 	// Operator / UI — each route declares the RBAC operation it needs.
+	m.HandleFunc("GET /api/v1/downloads", s.op("instances.get", s.handleListDownloads))
 	m.HandleFunc("GET /api/v1/instances", s.op("instances.get", s.handleListInstances))
 	m.HandleFunc("POST /api/v1/instances", s.op("instances.create", s.handleCreateInstance))
 	m.HandleFunc("GET /api/v1/instances/{id}", s.op("instances.get", s.handleGetInstance))

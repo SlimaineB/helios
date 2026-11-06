@@ -26,14 +26,15 @@ import (
 
 func main() {
 	var (
-		addr     = flag.String("addr", ":8080", "listen address")
-		dbPath   = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
-		uiDir    = flag.String("ui", "", "path to built UI static files (optional)")
-		baseURL  = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
-		tlsCert  = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
-		tlsKey   = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
-		rbacFile = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
-		sessTTL  = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
+		addr      = flag.String("addr", ":8080", "listen address")
+		dbPath    = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
+		uiDir     = flag.String("ui", "", "path to built UI static files (optional)")
+		baseURL   = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
+		tlsCert   = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
+		tlsKey    = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
+		rbacFile  = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
+		downloads = flag.String("downloads", envutil.Get("HELIOS_DOWNLOADS_DIR"), "directory of agent tarballs served under /downloads (optional)")
+		sessTTL   = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
 	)
 	flag.Parse()
 
@@ -112,6 +113,7 @@ func main() {
 
 	srv := api.New(st, log, oa, secure)
 	srv.SetNotifier(notify.FromEnv(log))
+	srv.SetDownloadsDir(*downloads)
 	metrics.SetInfo("dev")
 	handler := srv.Handler()
 
@@ -178,7 +180,7 @@ func uiMiddleware(next http.Handler, uiDir string, secure bool) http.Handler {
 	fileServer := http.FileServer(http.Dir(uiDir))
 	index := filepath.Join(uiDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") || r.URL.Path == "/metrics" {
+		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/downloads/") || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}

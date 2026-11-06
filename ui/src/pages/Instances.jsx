@@ -297,6 +297,7 @@ export default function Instances() {
   const [projects, setProjects] = useState([])
   const [regResult, setRegResult] = useState(null)
   const [regError, setRegError] = useState('')
+  const [downloads, setDownloads] = useState([])
   const [busy, setBusy] = useState({})
   const [runModal, setRunModal] = useState(null)
   const [diffModal, setDiffModal] = useState(null)
@@ -374,6 +375,23 @@ export default function Instances() {
     setRegName('')
     setRegError('')
   }
+
+  useEffect(() => {
+    if (!showReg) return
+    api.downloads().then((d) => setDownloads(d.files || [])).catch(() => setDownloads([]))
+  }, [showReg])
+
+  const hubURL = location.origin || `${location.protocol}//${location.host}`
+  const hasHubDownload = downloads.some((f) => /^helios-agent-linux-(amd64|arm64)\.tar\.gz$/.test(f.name))
+  const installCommand = regResult && hasHubDownload
+    ? [
+        'arch=$(uname -m)',
+        'case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac',
+        `curl -fsSLO ${hubURL}/downloads/helios-agent-linux-\${arch}.tar.gz`,
+        'tar -xzf "helios-agent-linux-${arch}.tar.gz"',
+        `sudo ./install-agent.sh --server ${hubURL} --token '${regResult.token}'`,
+      ].join('\n')
+    : ''
 
   const act = async (instId, appId, action) => {
     if (action === 'apply' || action === 'check') {
@@ -564,6 +582,12 @@ export default function Instances() {
                 {'\n'}
                 instance_id: {regResult.instance.id}
               </pre>
+              {installCommand && (
+                <>
+                  <p><strong>Install from this hub</strong> <CopyButton value={installCommand} title="Copy install command" /></p>
+                  <pre className="token-pre">{installCommand}</pre>
+                </>
+              )}
               <div className="form-actions">
                 <button className="ghost" onClick={() => { setRegResult(null); setRegError(''); }}>Register another</button>
                 <button onClick={closeReg}>Done</button>

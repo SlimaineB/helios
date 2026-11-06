@@ -23,6 +23,8 @@ OP_PASS="${HELIOS_OPERATOR_PASSWORD:-${ANSIBLEHUB_OPERATOR_PASSWORD:-${ANH_OPERA
 RBAC=""
 TLS_CERT=""
 TLS_KEY=""
+DOWNLOAD_DIR="/usr/share/helios/downloads"
+AGENT_TARBALLS=""
 
 usage() {
     cat <<'EOF'
@@ -38,6 +40,8 @@ Usage: install-server.sh --binary PATH --ui DIR --operator-password SECRET [opti
   --rbac FILE              copy an RBAC policy file to /etc/helios/rbac.yaml
   --tls-cert FILE          serve HTTPS with this certificate
   --tls-key FILE           private key for --tls-cert
+  --agent-tarball FILE     publish an agent tarball from the hub (repeatable)
+  --downloads-dir DIR      hub download directory (default: /usr/share/helios/downloads)
 EOF
     exit 1
 }
@@ -54,6 +58,9 @@ while [ $# -gt 0 ]; do
         --rbac) RBAC=$2; shift 2 ;;
         --tls-cert) TLS_CERT=$2; shift 2 ;;
         --tls-key) TLS_KEY=$2; shift 2 ;;
+        --agent-tarball) AGENT_TARBALLS="$AGENT_TARBALLS
+$2"; shift 2 ;;
+        --downloads-dir) DOWNLOAD_DIR=$2; shift 2 ;;
         *) echo "unknown option: $1" >&2; usage ;;
     esac
 done
@@ -97,6 +104,25 @@ install -m 0755 "$BINARY" /usr/local/bin/helios-server
 ln -sf /usr/local/bin/helios-server /usr/local/bin/ansiblehub-server
 install -d -m 0755 /usr/share/helios/ui
 cp -a "$UI"/. /usr/share/helios/ui/
+install -d -m 0755 "$DOWNLOAD_DIR"
+if [ -n "$AGENT_TARBALLS" ]; then
+    rm -f "$DOWNLOAD_DIR"/helios-agent-linux-amd64.tar.gz \
+          "$DOWNLOAD_DIR"/helios-agent-linux-arm64.tar.gz
+    OLD_IFS=$IFS
+    IFS='
+'
+    for TARBALL in $AGENT_TARBALLS; do
+        [ -n "$TARBALL" ] || continue
+        [ -f "$TARBALL" ] || { echo "agent tarball not found: $TARBALL" >&2; exit 1; }
+        case "$(basename "$TARBALL")" in
+            *-linux-amd64.tar.gz) AGENT_ARCH=amd64 ;;
+            *-linux-arm64.tar.gz) AGENT_ARCH=arm64 ;;
+            *) echo "agent tarball must be named *-linux-amd64.tar.gz or *-linux-arm64.tar.gz: $TARBALL" >&2; exit 1 ;;
+        esac
+        install -m 0644 "$TARBALL" "$DOWNLOAD_DIR/helios-agent-linux-$AGENT_ARCH.tar.gz"
+    done
+    IFS=$OLD_IFS
+fi
 
 install -d -m 0750 -o helios -g helios /var/lib/helios
 install -d -m 0700 -o root -g root /etc/helios
@@ -124,6 +150,7 @@ umask 077
     if [ -n "$RBAC_ENV" ]; then printf 'HELIOS_RBAC_FILE=%s\n' "$RBAC_ENV"; fi
     if [ -n "$TLS_CERT_ENV" ]; then printf 'HELIOS_TLS_CERT=%s\n' "$TLS_CERT_ENV"; fi
     if [ -n "$TLS_KEY_ENV" ]; then printf 'HELIOS_TLS_KEY=%s\n' "$TLS_KEY_ENV"; fi
+    printf 'HELIOS_DOWNLOADS_DIR=%s\n' "$DOWNLOAD_DIR"
 } > /etc/helios/server.env
 chmod 0600 /etc/helios/server.env
 umask 022
@@ -138,6 +165,7 @@ systemctl enable --now helios-server
 echo "installed. status: systemctl status helios-server"
 echo "logs:    journalctl -u helios-server -f"
 echo "url:     $BASE_URL"
+echo "agent downloads: $BASE_URL/downloads/"
 if command -v curl >/dev/null 2>&1; then
     PORT=${ADDR##*:}
     for _ in $(seq 1 20); do

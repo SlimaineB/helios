@@ -45,6 +45,10 @@ instead.
 On the hub UI, open **Instances → Register instance**, give it a name, and copy
 the token. The token is shown only once.
 
+If the hub was installed with the standard installer or container image, the
+registration dialog also shows a command that downloads the agent directly from
+the hub instead of GitHub. Either command works.
+
 Then run this **on the server you want Helios to manage**:
 
 ```sh

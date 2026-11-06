@@ -85,6 +85,18 @@ The installer creates a local APT/DNF repository, installs the base packages,
 installs the server, and starts `helios-server.service`. No network access is
 used.
 
+If the bundle was built with `--component both`, the server also publishes the
+agent tarball under `/downloads/`. Other managed hosts can then fetch it from
+the hub instead of copying the airgap bundle to every host:
+
+```sh
+arch=$(uname -m)
+case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+curl -fsSLO "https://hub.example.com/downloads/helios-agent-linux-${arch}.tar.gz"
+tar -xzf "helios-agent-linux-${arch}.tar.gz"
+sudo ./install-agent.sh --server https://hub.example.com --token '<instance-token>'
+```
+
 ### Agent
 
 Register the instance in the hub UI first, then run on the managed host:

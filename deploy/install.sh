@@ -22,7 +22,8 @@ Usage: install.sh server [install-server options]
        install.sh agent  [install-agent options]
 
 Downloads the matching bare-metal release, verifies its checksum, then runs
-the bundled systemd installer.
+the bundled systemd installer. For `server`, it also downloads the amd64 and
+arm64 agent tarballs so the hub can serve them from /downloads/.
 
 Environment:
   HELIOS_VERSION  release tag to install (default: latest)
@@ -75,25 +76,47 @@ done
 [ -n "$TMP" ] || die "cannot create a temporary directory"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
+download_verified() {
+    asset=$1
+    curl --proto '=https' --tlsv1.2 -fsSL "${BASE_URL}/${asset}" \
+        -o "${TMP}/${asset}"
+    expected=$(awk -v file="$asset" '$2 == file { print $1; exit }' \
+        "${TMP}/checksums.txt")
+    [ -n "$expected" ] || die "no checksum for ${asset}"
+    actual=$(sha256sum "${TMP}/${asset}" | awk '{ print $1 }')
+    [ "$actual" = "$expected" ] || die "checksum mismatch for ${asset}"
+}
+
 printf 'Downloading Helios %s %s (%s)...\n' "$VERSION" "$COMPONENT" "$ARCH"
-curl --proto '=https' --tlsv1.2 -fsSL "${BASE_URL}/${TARBALL}" \
-    -o "${TMP}/${TARBALL}"
 curl --proto '=https' --tlsv1.2 -fsSL "${BASE_URL}/checksums.txt" \
     -o "${TMP}/checksums.txt"
+download_verified "$TARBALL"
 
-expected=$(awk -v file="$TARBALL" '$2 == file { print $1; exit }' \
-    "${TMP}/checksums.txt")
-[ -n "$expected" ] || die "no checksum for ${TARBALL}"
-actual=$(sha256sum "${TMP}/${TARBALL}" | awk '{ print $1 }')
-[ "$actual" = "$expected" ] || die "checksum mismatch for ${TARBALL}"
+AGENT_ARGS=""
+if [ "$COMPONENT" = server ]; then
+    for agent_arch in amd64 arm64; do
+        agent_tarball="helios-agent-${VERSION}-linux-${agent_arch}.tar.gz"
+        if download_verified "$agent_tarball"; then
+            AGENT_ARGS="$AGENT_ARGS --agent-tarball ${TMP}/${agent_tarball}"
+        else
+            printf 'Warning: %s unavailable; the hub will not serve %s agents\n' \
+                "$agent_tarball" "$agent_arch" >&2
+        fi
+    done
+fi
 
 tar -xzf "${TMP}/${TARBALL}" -C "$TMP"
 
 if [ "$COMPONENT" = server ]; then
     [ -f "${TMP}/install-server.sh" ] || die "install-server.sh missing from archive"
     [ -f "${TMP}/ui/index.html" ] || die "ui/ missing from archive"
+    # Older releases predate hub-hosted agent downloads; keep pinning them working.
+    if ! grep -q -- '--agent-tarball' "${TMP}/install-server.sh"; then
+        AGENT_ARGS=""
+    fi
+    # shellcheck disable=SC2086
     sh "${TMP}/install-server.sh" \
-        --binary "${TMP}/helios-server" --ui "${TMP}/ui" "$@"
+        --binary "${TMP}/helios-server" --ui "${TMP}/ui" $AGENT_ARGS "$@"
 else
     [ -f "${TMP}/install-agent.sh" ] || die "install-agent.sh missing from archive"
     sh "${TMP}/install-agent.sh" "$@"

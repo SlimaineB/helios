@@ -36,6 +36,7 @@ type Server struct {
 	// stops until the playbook converges again).
 	maxHealStreak int
 	notifier      *notify.Notifier
+	downloadsDir  string
 }
 
 // SetNotifier enables webhook notifications (nil disables them).
