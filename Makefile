@@ -1,4 +1,4 @@
-.PHONY: build build-agent build-server ui build-local test test-race test-ui demo smoke loop-test docs docs-build docs-serve compose-up compose-down compose-logs compose-clean clean
+.PHONY: build build-agent build-server ui build-local test test-race test-ui demo smoke loop-test docs docs-build docs-serve airgap compose-up compose-down compose-logs compose-clean clean
 
 ## Local development (no docker)
 ui:
@@ -43,6 +43,13 @@ smoke:
 
 loop-test:
 	./hack/looptest.sh
+
+## Offline bundle: make airgap DISTRO=rocky RELEASE=9 VERSION=v0.1.1
+DISTRO ?= debian
+RELEASE ?= 12
+airgap:
+	./hack/airgap-bundle.sh --distro "$(DISTRO)" --release "$(RELEASE)" \
+		$(if $(VERSION),--version "$(VERSION)") $(AIRGAP_ARGS)
 
 ## docker compose harness
 compose-up:

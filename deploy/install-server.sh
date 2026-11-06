@@ -59,7 +59,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$BINARY" ] || { echo "--binary is required" >&2; usage; }
-[ -x "$BINARY" ] || { echo "binary not executable: $BINARY" >&2; exit 1; }
+[ -f "$BINARY" ] || { echo "binary not found: $BINARY" >&2; exit 1; }
 [ -n "$UI" ] && [ -f "$UI/index.html" ] || {
     echo "--ui must point to a built UI directory containing index.html" >&2; exit 1
 }

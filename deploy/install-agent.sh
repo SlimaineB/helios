@@ -5,8 +5,11 @@
 #     --server https://hub.example.com \
 #     --token <bootstrap-token> \
 #     [--instance-id abcd1234] \
+#     [--binary ./helios-agent-linux-amd64] \
+#     [--ansible-bin /opt/helios/ansible/bin/ansible-playbook] \
 #     [--download-url https://…/helios-agent-<ver>.tar.gz] \
 #     [--binary-url https://…/helios-agent-linux-amd64] \
+#     [--skip-packages] \
 #     [--autoheal 0|1] \
 #     [--max-concurrent 4] \
 #     [--poll-interval 5m] \
@@ -28,6 +31,9 @@ STATE_DIR=/var/lib/helios
 AUTOHEAL=1
 MAX_CONCURRENT_APPS=4
 POLL_INTERVAL=5m
+BINARY=""
+ANSIBLE_BIN=""
+SKIP_PACKAGES=0
 DOWNLOAD_URL="${HELIOS_DOWNLOAD_URL:-${ANSIBLEHUB_DOWNLOAD_URL:-${ANH_DOWNLOAD_URL:-${AHUB_DOWNLOAD_URL:-}}}}"
 BINARY_URL="${HELIOS_BINARY_URL:-${ANSIBLEHUB_BINARY_URL:-${ANH_BINARY_URL:-${AHUB_BINARY_URL:-}}}}"
 
@@ -42,8 +48,11 @@ Usage: install-agent.sh --server URL --token TOKEN [options]
   --autoheal 0|1           apply on drift (default: 1)
   --max-concurrent N       parallel apps per pass (default: 4)
   --poll-interval DURATION heartbeat/check cadence (default: 5m)
+  --binary PATH            local helios-agent binary
+  --ansible-bin PATH       ansible-playbook to use (default: from PATH)
   --download-url URL       release tarball with the linux binary
   --binary-url URL         single prebuilt linux binary
+  --skip-packages          do not install OS packages or Ansible (offline bundles)
 EOF
     exit 1
 }
@@ -57,8 +66,11 @@ while [ $# -gt 0 ]; do
         --autoheal) AUTOHEAL=$2; shift 2 ;;
         --max-concurrent) MAX_CONCURRENT_APPS=$2; shift 2 ;;
         --poll-interval) POLL_INTERVAL=$2; shift 2 ;;
+        --binary) BINARY=$2; shift 2 ;;
+        --ansible-bin) ANSIBLE_BIN=$2; shift 2 ;;
         --download-url) DOWNLOAD_URL=$2; shift 2 ;;
         --binary-url) BINARY_URL=$2; shift 2 ;;
+        --skip-packages) SKIP_PACKAGES=1; shift ;;
         *) echo "unknown option: $1"; usage ;;
     esac
 done
@@ -67,6 +79,8 @@ done
 case "$MAX_CONCURRENT_APPS" in ''|*[!0-9]*) usage ;; esac
 [ "$MAX_CONCURRENT_APPS" -ge 1 ] || usage
 [ -n "$POLL_INTERVAL" ] || usage
+[ -z "$BINARY" ] || [ -f "$BINARY" ] || { echo "binary not found: $BINARY" >&2; exit 1; }
+[ -z "$ANSIBLE_BIN" ] || [ -x "$ANSIBLE_BIN" ] || { echo "ansible binary not executable: $ANSIBLE_BIN" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || { echo "run me as root (or via sudo)" >&2; exit 1; }
 
 pm=""
@@ -103,6 +117,10 @@ install_binary() {
         aarch64|arm64) bin=helios-agent-linux-arm64 ;;
         *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
     esac
+    if [ -n "$BINARY" ]; then
+        install -m755 "$BINARY" /usr/local/bin/helios-agent
+        return
+    fi
     if [ -n "$BINARY_URL" ]; then
         tmp="$(mktemp)"
         curl -fsSL "$BINARY_URL" -o "$tmp"
@@ -150,6 +168,9 @@ poll_interval: ${POLL_INTERVAL}
 max_concurrent_apps: ${MAX_CONCURRENT_APPS}
 autoheal: ${AH_BOOL}
 EOF
+    if [ -n "$ANSIBLE_BIN" ]; then
+        printf 'ansible_bin: %s\n' "$ANSIBLE_BIN" >> /etc/helios/agent.yaml
+    fi
     chmod 600 /etc/helios/agent.yaml
 }
 
@@ -161,8 +182,19 @@ install_unit() {
     echo "Done. Check status: systemctl status helios-agent"
 }
 
-install_pkgs git curl ca-certificates tar
-install_ansible
+if [ "$SKIP_PACKAGES" -eq 1 ]; then
+    command -v git >/dev/null || {
+        echo "git is required; install it before using --skip-packages" >&2
+        exit 1
+    }
+    if [ -z "$ANSIBLE_BIN" ] && ! command -v ansible-playbook >/dev/null; then
+        echo "ansible-playbook is required; use --ansible-bin with --skip-packages" >&2
+        exit 1
+    fi
+else
+    install_pkgs git curl ca-certificates tar
+    install_ansible
+fi
 install_binary
 ln -sf /usr/local/bin/helios-agent /usr/local/bin/ansiblehub-agent
 write_config

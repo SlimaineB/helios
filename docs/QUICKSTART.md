@@ -94,8 +94,8 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
       --token '<SAME-INSTANCE-TOKEN>'
 ```
 
-To pin a release, add `HELIOS_VERSION=v0.1.0` after `sudo`, for example
-`sudo env HELIOS_VERSION=v0.1.0 sh -s -- server ...`.
+To pin a release, add `HELIOS_VERSION=v0.1.1` after `sudo`, for example
+`sudo env HELIOS_VERSION=v0.1.1 sh -s -- server ...`.
 
 ## Troubleshooting
 
@@ -110,8 +110,8 @@ To pin a release, add `HELIOS_VERSION=v0.1.0` after `sudo`, for example
 
 ## Other installation methods
 
-- [Docker Compose](INSTALL.md#option-a--single-host-docker-compose-recommended-for-a-first-install)
-- [Kubernetes / Helm](INSTALL.md#option-c--kubernetes-helm)
+- [Docker Compose](INSTALL.md#option-a-single-host-docker-compose-recommended-for-a-first-install)
+- [Kubernetes / Helm](INSTALL.md#option-c-kubernetes-helm)
 - [Agent reference](INSTALL.md#install-an-agent)
 - [Releases and packages](RELEASES.md)
 

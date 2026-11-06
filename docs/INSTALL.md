@@ -22,6 +22,9 @@ HTTPS to the hub and read access to the git repositories.
 Docker is only needed for the container path. The server and agent are static Go
 binaries.
 
+For hosts without internet access, start with the
+[airgap / offline install](AIRGAP.md) guide instead.
+
 ---
 
 ## Option A — single-host Docker Compose (recommended for a first install)
@@ -149,7 +152,7 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
       --operator-password 'a-long-random-password'
 ```
 
-For a specific release, use `sudo env HELIOS_VERSION=v0.1.0 sh -s -- server ...`.
+For a specific release, use `sudo env HELIOS_VERSION=v0.1.1 sh -s -- server ...`.
 The same script installs an agent with `agent --server ... --token ...`.
 
 Download `helios-server-<version>-linux-amd64.tar.gz` (or `arm64`) from
@@ -268,7 +271,7 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
       --token '<instance-token>'
 ```
 
-For a specific release, use `sudo env HELIOS_VERSION=v0.1.0 sh -s -- agent ...`.
+For a specific release, use `sudo env HELIOS_VERSION=v0.1.1 sh -s -- agent ...`.
 
 Or use a release tarball from GitHub Releases (it contains the installer, the
 systemd unit and the binary for one architecture):

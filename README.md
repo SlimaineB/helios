@@ -443,6 +443,7 @@ Ansible run is a separate process.
 
 - [Quickstart](docs/QUICKSTART.md) — install the hub and first agent.
 - [Install](docs/INSTALL.md) — Docker, systemd and Kubernetes/Helm.
+- [Airgap install](docs/AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [Authentication & RBAC](docs/AUTH.md) — local admin, OIDC and policies.
 - [Releases](docs/RELEASES.md) — GHCR images, binaries and tarballs.
 - [Development](docs/DEVELOPMENT.md) — source build, demo, tests and docs build.

@@ -39,6 +39,7 @@ nav:
   - Install quickstart: QUICKSTART.md
   - Installation:
       - Hub and agents: INSTALL.md
+      - Airgap / offline: AIRGAP.md
       - Kubernetes (k3s): K3S.md
   - Operations:
       - Authentication & RBAC: AUTH.md

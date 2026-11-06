@@ -74,6 +74,7 @@ Building from source, running the development demo and tests:
 
 - [Quickstart](QUICKSTART.md) — install the hub and first agent.
 - [Install](INSTALL.md) — hub (Compose, systemd, Helm) and agents.
+- [Airgap install](AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [k3s reference](K3S.md) — full cluster walkthrough.
 - [Authentication & RBAC](AUTH.md) — local admin, OIDC, ArgoCD-style policies.
 - [Releases and packages](RELEASES.md) — GitHub images, binaries and tarballs.

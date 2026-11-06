@@ -9,7 +9,7 @@
 #     | sudo sh -s -- agent --server https://hub.example.com \
 #         --token '<instance-token>'
 #
-# Set HELIOS_VERSION=v0.1.0 to install a specific release.
+# Set HELIOS_VERSION=v0.1.1 to install a specific release.
 # Set HELIOS_REPO=owner/repo to use a fork.
 set -eu
 
@@ -27,6 +27,7 @@ the bundled systemd installer.
 Environment:
   HELIOS_VERSION  release tag to install (default: latest)
   HELIOS_REPO     GitHub repository (default: SlimaineB/helios)
+  HELIOS_TMPDIR   extraction directory (default: /var/tmp, fallback /tmp)
 EOF
 }
 
@@ -65,7 +66,13 @@ VERSION=${VERSION#v}
 
 BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
 TARBALL="helios-${COMPONENT}-${VERSION}-linux-${ARCH}.tar.gz"
-TMP=$(mktemp -d)
+TMP=""
+for base in "${HELIOS_TMPDIR:-}" /var/tmp /tmp; do
+    [ -n "$base" ] || continue
+    TMP=$(mktemp -d "${base}/helios-install.XXXXXX" 2>/dev/null) && break
+    TMP=""
+done
+[ -n "$TMP" ] || die "cannot create a temporary directory"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
 printf 'Downloading Helios %s %s (%s)...\n' "$VERSION" "$COMPONENT" "$ARCH"
@@ -83,11 +90,11 @@ actual=$(sha256sum "${TMP}/${TARBALL}" | awk '{ print $1 }')
 tar -xzf "${TMP}/${TARBALL}" -C "$TMP"
 
 if [ "$COMPONENT" = server ]; then
-    [ -x "${TMP}/install-server.sh" ] || die "install-server.sh missing from archive"
+    [ -f "${TMP}/install-server.sh" ] || die "install-server.sh missing from archive"
     [ -f "${TMP}/ui/index.html" ] || die "ui/ missing from archive"
-    "${TMP}/install-server.sh" \
+    sh "${TMP}/install-server.sh" \
         --binary "${TMP}/helios-server" --ui "${TMP}/ui" "$@"
 else
-    [ -x "${TMP}/install-agent.sh" ] || die "install-agent.sh missing from archive"
-    "${TMP}/install-agent.sh" "$@"
+    [ -f "${TMP}/install-agent.sh" ] || die "install-agent.sh missing from archive"
+    sh "${TMP}/install-agent.sh" "$@"
 fi

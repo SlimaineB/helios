@@ -42,7 +42,7 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 		runner:   &ansible.Runner{Bin: cfg.AnsibleBin},
 		log:      log,
 		hostname: host,
-		version:  "0.1.0",
+		version:  "0.1.1",
 		platform: runtimePlatform(),
 		states:   map[int64]*appState{},
 	}
