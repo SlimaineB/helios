@@ -1,4 +1,4 @@
-.PHONY: build build-agent build-server ui build-local test test-race test-ui demo smoke loop-test docs docs-build docs-serve airgap compose-up compose-down compose-logs compose-clean clean
+.PHONY: build build-agent build-server ui build-local test test-race test-ui demo smoke loop-test docs docs-build docs-serve release airgap compose-up compose-down compose-logs compose-clean clean
 
 ## Local development (no docker)
 ui:
@@ -43,6 +43,17 @@ smoke:
 
 loop-test:
 	./hack/looptest.sh
+
+## Release: make release TAG=v0.1.2 (tags current main and pushes it)
+release:
+	@test -n "$(TAG)" || { echo "usage: make release TAG=v0.1.2" >&2; exit 1; }
+	@printf '%s' "$(TAG)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "TAG must look like v0.1.2" >&2; exit 1; }
+	@test "$$(git branch --show-current)" = main || { echo "release from the main branch" >&2; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty; commit and push first" >&2; exit 1; }
+	@git rev-parse -q --verify "refs/tags/$(TAG)" >/dev/null && { echo "tag $(TAG) already exists" >&2; exit 1; } || true
+	git push origin main
+	git tag -a "$(TAG)" -m "Helios $(TAG)"
+	git push origin "$(TAG)"
 
 ## Offline bundle: make airgap DISTRO=rocky RELEASE=9 VERSION=v0.1.1
 DISTRO ?= debian
