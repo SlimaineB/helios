@@ -116,6 +116,20 @@ type Store interface {
 	CountApplicationsInProject(ctx context.Context, project string) (int, error)
 	CountInstancesInProject(ctx context.Context, project string) (int, error)
 
+	// Config repos (optional GitOps sources of truth)
+	ListConfigRepos(ctx context.Context) ([]model.ConfigRepo, error)
+	GetConfigRepo(ctx context.Context, id int64) (model.ConfigRepo, error)
+	CreateConfigRepo(ctx context.Context, in model.ConfigRepo) (model.ConfigRepo, error)
+	UpdateConfigRepo(ctx context.Context, in model.ConfigRepo) error
+	DeleteConfigRepo(ctx context.Context, id int64) error
+	UpdateConfigRepoStatus(ctx context.Context, id int64, synced time.Time, commit, errMsg string, summary map[string]int) error
+
+	// Ownership of objects reconciled from a ConfigRepo.
+	ListManagedResources(ctx context.Context, configRepoID int64) ([]model.ManagedResource, error)
+	SetManagedResource(ctx context.Context, configRepoID int64, kind, name string) error
+	DeleteManagedResource(ctx context.Context, configRepoID int64, kind, name string) error
+	DeleteManagedResourcesForRepo(ctx context.Context, configRepoID int64) error
+
 	// Sync windows (freeze/allow schedules)
 	ListSyncWindows(ctx context.Context) ([]model.SyncWindow, error)
 	GetSyncWindow(ctx context.Context, id int64) (model.SyncWindow, error)

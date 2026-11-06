@@ -19,6 +19,7 @@ import (
 	"github.com/slim/helios/server/internal/metrics"
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
+	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/store"
 	"github.com/slim/helios/server/internal/syncwindows"
 )
@@ -37,10 +38,14 @@ type Server struct {
 	maxHealStreak int
 	notifier      *notify.Notifier
 	downloadsDir  string
+	reconciler    *reconciler.Reconciler
 }
 
 // SetNotifier enables webhook notifications (nil disables them).
 func (s *Server) SetNotifier(n *notify.Notifier) { s.notifier = n }
+
+// SetReconciler enables the optional GitOps controller endpoints.
+func (s *Server) SetReconciler(r *reconciler.Reconciler) { s.reconciler = r }
 
 // notifyEvent enriches the event with the application name and dispatches it.
 func (s *Server) notifyEvent(ctx context.Context, ev notify.Event) {

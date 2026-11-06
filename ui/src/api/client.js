@@ -116,6 +116,12 @@ export const api = {
   createRepository: (repo) => request('POST', '/api/v1/repositories', repo),
   updateRepository: (repo) => request('PUT', `/api/v1/repositories/${repo.id}`, repo),
   deleteRepository: (id) => request('DELETE', `/api/v1/repositories/${id}`),
+
+  configRepos: () => request('GET', '/api/v1/config-repos'),
+  createConfigRepo: (repo) => request('POST', '/api/v1/config-repos', repo),
+  updateConfigRepo: (id, repo) => request('PUT', `/api/v1/config-repos/${id}`, repo),
+  deleteConfigRepo: (id) => request('DELETE', `/api/v1/config-repos/${id}`),
+  syncConfigRepo: (id) => request('POST', `/api/v1/config-repos/${id}/sync`),
 }
 
 export function stateLabel(state) {

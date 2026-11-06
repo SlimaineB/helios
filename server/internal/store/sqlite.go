@@ -141,6 +141,30 @@ CREATE TABLE IF NOT EXISTS sync_windows (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS config_repos (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL UNIQUE,
+  url           TEXT NOT NULL,
+  branch        TEXT NOT NULL DEFAULT 'main',
+  path          TEXT NOT NULL DEFAULT '',
+  poll_interval INTEGER NOT NULL DEFAULT 300,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  prune         INTEGER NOT NULL DEFAULT 0,
+  last_synced   TEXT NOT NULL DEFAULT '',
+  last_commit   TEXT NOT NULL DEFAULT '',
+  last_error    TEXT NOT NULL DEFAULT '',
+  last_summary  TEXT NOT NULL DEFAULT '{}',
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gitops_managed (
+  config_repo_id INTEGER NOT NULL,
+  kind           TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  created_at     TEXT NOT NULL,
+  PRIMARY KEY (config_repo_id, kind, name)
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   at        TEXT NOT NULL,
@@ -281,6 +305,30 @@ CREATE TABLE IF NOT EXISTS sync_windows (
   end_min    INTEGER NOT NULL DEFAULT 0,
   enabled    INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS config_repos (
+  id            BIGSERIAL PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  url           TEXT NOT NULL,
+  branch        TEXT NOT NULL DEFAULT 'main',
+  path          TEXT NOT NULL DEFAULT '',
+  poll_interval INTEGER NOT NULL DEFAULT 300,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  prune         INTEGER NOT NULL DEFAULT 0,
+  last_synced   TEXT NOT NULL DEFAULT '',
+  last_commit   TEXT NOT NULL DEFAULT '',
+  last_error    TEXT NOT NULL DEFAULT '',
+  last_summary  TEXT NOT NULL DEFAULT '{}',
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gitops_managed (
+  config_repo_id BIGINT NOT NULL,
+  kind           TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  created_at     TEXT NOT NULL,
+  PRIMARY KEY (config_repo_id, kind, name)
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -1594,6 +1642,162 @@ func (s *sqlstore) DeleteSyncWindow(ctx context.Context, id int64) error {
 	_, err := s.exec(ctx, `DELETE FROM sync_windows WHERE id=?`, id)
 	if err != nil {
 		return fmt.Errorf("delete sync window: %w", err)
+	}
+	return nil
+}
+
+// ---- Config repos (GitOps) ----
+
+const configRepoCols = `id, name, url, branch, path, poll_interval, enabled, prune, last_synced, last_commit, last_error, last_summary, created_at`
+
+func scanConfigRepo(row interface{ Scan(...any) error }) (model.ConfigRepo, error) {
+	var (
+		r                   model.ConfigRepo
+		enabled, prune      int
+		synced, summary, cr string
+	)
+	if err := row.Scan(&r.ID, &r.Name, &r.URL, &r.Branch, &r.Path, &r.PollInterval,
+		&enabled, &prune, &synced, &r.LastCommit, &r.LastError, &summary, &cr); err != nil {
+		return r, err
+	}
+	r.Enabled = enabled != 0
+	r.Prune = prune != 0
+	r.LastSynced = parseTime(synced)
+	r.LastSummary = decodeSummary(summary)
+	r.CreatedAt = parseTime(cr)
+	return r, nil
+}
+
+func (s *sqlstore) ListConfigRepos(ctx context.Context) ([]model.ConfigRepo, error) {
+	rows, err := s.query(ctx, `SELECT `+configRepoCols+` FROM config_repos ORDER BY name`)
+	if err != nil {
+		return nil, wrap(err, "list config repos")
+	}
+	defer rows.Close()
+	out := []model.ConfigRepo{}
+	for rows.Next() {
+		r, err := scanConfigRepo(rows)
+		if err != nil {
+			return nil, wrap(err, "scan config repo")
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) GetConfigRepo(ctx context.Context, id int64) (model.ConfigRepo, error) {
+	r, err := scanConfigRepo(s.queryRow(ctx, `SELECT `+configRepoCols+` FROM config_repos WHERE id=?`, id))
+	if err != nil {
+		return r, wrap(err, "get config repo")
+	}
+	return r, nil
+}
+
+func (s *sqlstore) CreateConfigRepo(ctx context.Context, in model.ConfigRepo) (model.ConfigRepo, error) {
+	in.CreatedAt = nowCtx(ctx)
+	if in.Branch == "" {
+		in.Branch = "main"
+	}
+	if in.PollInterval <= 0 {
+		in.PollInterval = 300
+	}
+	enabled, prune := boolInt(in.Enabled), boolInt(in.Prune)
+	id, err := s.insertID(ctx,
+		`INSERT INTO config_repos (name, url, branch, path, poll_interval, enabled, prune, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		in.Name, in.URL, in.Branch, in.Path, in.PollInterval, enabled, prune, tm(in.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrConflict
+		}
+		return in, fmt.Errorf("create config repo: %w", err)
+	}
+	in.ID = id
+	in.LastSummary = map[string]int{}
+	return in, nil
+}
+
+func (s *sqlstore) UpdateConfigRepo(ctx context.Context, in model.ConfigRepo) error {
+	if in.Branch == "" {
+		in.Branch = "main"
+	}
+	if in.PollInterval <= 0 {
+		in.PollInterval = 300
+	}
+	enabled, prune := boolInt(in.Enabled), boolInt(in.Prune)
+	_, err := s.exec(ctx,
+		`UPDATE config_repos SET name=?, url=?, branch=?, path=?, poll_interval=?, enabled=?, prune=? WHERE id=?`,
+		in.Name, in.URL, in.Branch, in.Path, in.PollInterval, enabled, prune, in.ID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
+		return fmt.Errorf("update config repo: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteConfigRepo(ctx context.Context, id int64) error {
+	if _, err := s.exec(ctx, `DELETE FROM gitops_managed WHERE config_repo_id=?`, id); err != nil {
+		return fmt.Errorf("delete config repo ownership: %w", err)
+	}
+	if _, err := s.exec(ctx, `DELETE FROM config_repos WHERE id=?`, id); err != nil {
+		return fmt.Errorf("delete config repo: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) UpdateConfigRepoStatus(ctx context.Context, id int64, synced time.Time, commit, errMsg string, summary map[string]int) error {
+	_, err := s.exec(ctx,
+		`UPDATE config_repos SET last_synced=?, last_commit=?, last_error=?, last_summary=? WHERE id=?`,
+		tm(synced), commit, errMsg, encodeSummary(summary), id)
+	if err != nil {
+		return fmt.Errorf("update config repo status: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) ListManagedResources(ctx context.Context, configRepoID int64) ([]model.ManagedResource, error) {
+	rows, err := s.query(ctx, `SELECT kind, name FROM gitops_managed WHERE config_repo_id=?`, configRepoID)
+	if err != nil {
+		return nil, wrap(err, "list managed resources")
+	}
+	defer rows.Close()
+	out := []model.ManagedResource{}
+	for rows.Next() {
+		var m model.ManagedResource
+		if err := rows.Scan(&m.Kind, &m.Name); err != nil {
+			return nil, wrap(err, "scan managed resource")
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) SetManagedResource(ctx context.Context, configRepoID int64, kind, name string) error {
+	_, err := s.exec(ctx,
+		`INSERT INTO gitops_managed (config_repo_id, kind, name, created_at) VALUES (?,?,?,?)
+		 ON CONFLICT (config_repo_id, kind, name) DO NOTHING`,
+		configRepoID, kind, name, tm(nowCtx(ctx)))
+	if err != nil {
+		return fmt.Errorf("set managed resource: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteManagedResource(ctx context.Context, configRepoID int64, kind, name string) error {
+	_, err := s.exec(ctx,
+		`DELETE FROM gitops_managed WHERE config_repo_id=? AND kind=? AND name=?`,
+		configRepoID, kind, name)
+	if err != nil {
+		return fmt.Errorf("delete managed resource: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteManagedResourcesForRepo(ctx context.Context, configRepoID int64) error {
+	_, err := s.exec(ctx, `DELETE FROM gitops_managed WHERE config_repo_id=?`, configRepoID)
+	if err != nil {
+		return fmt.Errorf("delete managed resources: %w", err)
 	}
 	return nil
 }

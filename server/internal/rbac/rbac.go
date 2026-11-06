@@ -37,6 +37,7 @@ const (
 	ResWindows      = "windows"
 	ResAudit        = "audit"
 	ResProjects     = "projects"
+	ResConfigRepos  = "configrepos"
 )
 
 const (
@@ -48,7 +49,7 @@ const (
 )
 
 // AllResources is used by the built-in roles.
-var AllResources = []string{ResApplications, ResInstances, ResRepositories, ResRuns, ResCommands, ResWindows, ResAudit, ResProjects}
+var AllResources = []string{ResApplications, ResInstances, ResRepositories, ResRuns, ResCommands, ResWindows, ResAudit, ResProjects, ResConfigRepos}
 
 // AllActions is used by the built-in admin role.
 var AllActions = []string{ActionGet, ActionCreate, ActionUpdate, ActionDelete, ActionSync}

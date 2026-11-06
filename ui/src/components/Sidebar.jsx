@@ -2,7 +2,7 @@ import { useState, createContext, useContext, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Server, Database, GitBranch, Layers, Clock,
-  ChevronLeft, ChevronRight, FileText, Network
+  ChevronLeft, ChevronRight, FileText, Network, RefreshCw
 } from 'lucide-react'
 
 const SidebarContext = createContext(null)
@@ -32,6 +32,7 @@ const NAV_ITEMS = [
   { path: '/projects', label: 'Projects', icon: Layers, perm: 'projects.get' },
   { path: '/sync-windows', label: 'Sync windows', icon: Clock, perm: 'windows.get' },
   { path: '/repositories', label: 'Repositories', icon: GitBranch, perm: 'repositories.get' },
+  { path: '/gitops', label: 'GitOps', icon: RefreshCw, perm: 'configrepos.get' },
   { path: '/audit', label: 'Audit log', icon: FileText, perm: 'audit.get' },
 ]
 

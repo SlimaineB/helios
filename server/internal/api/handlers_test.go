@@ -434,3 +434,58 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	}
 	t.Fatal("audit entry was not written")
 }
+
+func TestConfigRepoCRUD(t *testing.T) {
+	s, st := newTestServer(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config-repos",
+		strings.NewReader(`{"name":"cfg","url":"https://example.com/config.git"}`))
+	s.handleCreateConfigRepo(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create config repo: status %d body %s", rec.Code, rec.Body.String())
+	}
+	repo, err := st.GetConfigRepo(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repo.Enabled || repo.Branch != "main" || repo.PollInterval != 300 {
+		t.Fatalf("unexpected defaults: %+v", repo)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/config-repos/1", strings.NewReader(`{"poll_interval":60,"enabled":false}`))
+	req.SetPathValue("repoId", "1")
+	s.handleUpdateConfigRepo(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update config repo: status %d body %s", rec.Code, rec.Body.String())
+	}
+	got, err := st.GetConfigRepo(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "cfg" || got.URL != "https://example.com/config.git" {
+		t.Fatalf("update cleared fields: %+v", got)
+	}
+	if got.Enabled || got.PollInterval != 60 {
+		t.Fatalf("update not applied: %+v", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/config-repos", nil)
+	s.handleListConfigRepos(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list config repos: status %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/config-repos/1", nil)
+	req.SetPathValue("repoId", "1")
+	s.handleDeleteConfigRepo(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete config repo: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if _, err := st.GetConfigRepo(context.Background(), 1); err == nil {
+		t.Fatal("config repo still present after delete")
+	}
+}
