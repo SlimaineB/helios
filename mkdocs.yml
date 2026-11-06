@@ -43,6 +43,7 @@ nav:
       - Kubernetes (k3s): K3S.md
   - Operations:
       - Authentication & RBAC: AUTH.md
+      - Database schema: DATABASE.md
       - Releases and packages: RELEASES.md
       - Capacity: CAPACITY.md
   - Development:
