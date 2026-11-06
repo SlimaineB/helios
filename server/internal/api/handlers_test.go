@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -320,6 +321,95 @@ func TestRollbackPinsRevisionAndQueuesApply(t *testing.T) {
 	cmds, err := st.PendingCommands(ctx, "ins-1")
 	if err != nil || len(cmds) != 1 || cmds[0].Action != model.ActionApply {
 		t.Fatalf("pending commands = %+v err=%v", cmds, err)
+	}
+}
+
+func TestDeleteProjectBlockedWhenInUse(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	project, err := st.CreateProject(ctx, model.Project{Name: "finance"})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	app, err := st.CreateApplication(ctx, model.Application{
+		Name: "pay", RepoURL: "https://git.example.com/finance/pay.git",
+		Branch: "main", Path: "site.yml", Vars: "{}", Project: "finance",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if _, err := st.CreateInstance(ctx, model.Instance{
+		ID: "ins-fin", Name: "fin", TokenHash: "h-fin", Project: "finance",
+	}); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+
+	deleteProject := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+strconv.FormatInt(project.ID, 10), nil)
+		req.SetPathValue("projectId", strconv.FormatInt(project.ID, 10))
+		rec := httptest.NewRecorder()
+		s.handleDeleteProject(rec, req)
+		return rec
+	}
+
+	if rec := deleteProject(); rec.Code != http.StatusConflict {
+		t.Fatalf("delete project with app/instance: status %d body %s, want 409", rec.Code, rec.Body.String())
+	}
+	if _, err := st.GetProjectByID(ctx, project.ID); err != nil {
+		t.Fatalf("project was deleted while in use: %v", err)
+	}
+
+	if err := st.DeleteApplication(ctx, app.ID); err != nil {
+		t.Fatalf("delete app: %v", err)
+	}
+	if rec := deleteProject(); rec.Code != http.StatusConflict {
+		t.Fatalf("delete project with instance: status %d body %s, want 409", rec.Code, rec.Body.String())
+	}
+
+	if err := st.DeleteInstance(ctx, "ins-fin"); err != nil {
+		t.Fatalf("delete instance: %v", err)
+	}
+	if rec := deleteProject(); rec.Code != http.StatusOK {
+		t.Fatalf("delete unused project: status %d body %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteRepositoryBlockedWhenInUse(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	repo, err := st.CreateRepository(ctx, model.Repository{
+		Name: "demo", URL: "https://git.example.com/demo.git",
+	})
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	app, err := st.CreateApplication(ctx, model.Application{
+		Name: "demo", RepoURL: repo.URL, Branch: "main", Path: "site.yml", Vars: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+
+	deleteRepo := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/repositories/"+strconv.FormatInt(repo.ID, 10), nil)
+		req.SetPathValue("repoId", strconv.FormatInt(repo.ID, 10))
+		rec := httptest.NewRecorder()
+		s.handleDeleteRepository(rec, req)
+		return rec
+	}
+
+	if rec := deleteRepo(); rec.Code != http.StatusConflict {
+		t.Fatalf("delete repo in use: status %d body %s, want 409", rec.Code, rec.Body.String())
+	}
+	if _, err := st.GetRepository(ctx, repo.ID); err != nil {
+		t.Fatalf("repository was deleted while in use: %v", err)
+	}
+
+	if err := st.DeleteApplication(ctx, app.ID); err != nil {
+		t.Fatalf("delete app: %v", err)
+	}
+	if rec := deleteRepo(); rec.Code != http.StatusOK {
+		t.Fatalf("delete unused repo: status %d body %s, want 200", rec.Code, rec.Body.String())
 	}
 }
 

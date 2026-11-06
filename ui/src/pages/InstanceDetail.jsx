@@ -101,6 +101,24 @@ export default function InstanceDetail() {
     }
   }
 
+  const confirmUnassign = (app) => setConfirm({
+    title: 'Unassign application',
+    message: `Unassign "${app.application.name}" from "${inst.name}"? The application stays on other instances.`,
+    onConfirm: () => unassign(app),
+    variant: 'danger'
+  })
+  const unassign = async (app) => {
+    try {
+      await api.unassign(inst.id, app.application.id)
+      toast.success('Application unassigned')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setConfirm(null)
+    }
+  }
+
   const confirmRollback = (run) => setConfirm({
     title: 'Rollback to commit',
     message: `Pin assignment "${run.app_id}" to commit ${run.commit_after?.slice(0, 9)} and re-apply?`,
@@ -176,7 +194,8 @@ export default function InstanceDetail() {
             <span className="actions">
               <button className="small" disabled={!can('instances', 'update')} onClick={() => setVarsApp(a.application)}>Host vars</button>{' '}
               <button className="small warn" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'apply'} onClick={() => commands.run(inst.id, a.application.id, 'apply')}>{pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}Sync</button>{' '}
-              <button className="small" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check</button>
+              <button className="small" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check</button>{' '}
+              <button className="small danger" disabled={!can('instances', 'update')} onClick={() => confirmUnassign(a)} title="Remove this application from this instance only">Unassign</button>
             </span>
           </div>
 

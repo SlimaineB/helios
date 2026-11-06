@@ -2,6 +2,7 @@ import { useState, useEffect, createContext, useContext } from 'react'
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import Instances from './pages/Instances.jsx'
 import InstanceDetail from './pages/InstanceDetail.jsx'
+import Topology from './pages/Topology.jsx'
 import Applications from './pages/Applications.jsx'
 import Repositories from './pages/Repositories.jsx'
 import SyncWindows from './pages/SyncWindows.jsx'
@@ -118,6 +119,7 @@ export default function App() {
                 <Route path="/" element={<Applications />} />
                 <Route path="/instances" element={<Instances />} />
                 <Route path="/instances/:id" element={<InstanceDetail />} />
+                <Route path="/topology" element={<Topology />} />
                 <Route path="/applications" element={<Navigate to="/" replace />} />
                 <Route path="/projects" element={<Projects />} />
                 <Route path="/sync-windows" element={<SyncWindows />} />

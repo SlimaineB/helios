@@ -9,6 +9,7 @@ import CopyButton from '../components/CopyButton.jsx'
 import HealthBadge from '../components/HealthBadge.jsx'
 import ApplicationCard from '../components/ApplicationCard.jsx'
 import ApplicationHistory from '../components/ApplicationHistory.jsx'
+import ApplicationDetail from '../components/ApplicationDetail.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -52,10 +53,15 @@ export default function Applications() {
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
   const [historyApp, setHistoryApp] = useState(null)
+  const [detailApp, setDetailApp] = useState(null)
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [repoFilter, setRepoFilter] = useState(searchParams.get('repo') || '')
   const [view, setView] = useState(() => (localStorage.getItem('anh_apps_view') === 'table' ? 'table' : 'cards'))
+  const focusAppId = useMemo(() => {
+    const raw = Number(searchParams.get('app'))
+    return Number.isInteger(raw) && raw > 0 ? raw : null
+  }, [searchParams])
 
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
@@ -76,7 +82,7 @@ export default function Applications() {
       setLoading(false)
     }
   }, [])
-  const modalOpen = showForm || !!confirm || !!varsApp || !!historyApp
+  const modalOpen = showForm || !!confirm || !!varsApp || !!historyApp || !!detailApp
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -100,6 +106,15 @@ export default function Applications() {
   const changeView = (v) => {
     setView(v)
     localStorage.setItem('anh_apps_view', v)
+  }
+
+  const changeSearch = (value) => {
+    setSearch(value)
+    if (focusAppId) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('app')
+      setSearchParams(next, { replace: true })
+    }
   }
 
   const matchRepo = (url) => repos.find((r) => r.url === url)
@@ -197,6 +212,50 @@ export default function Applications() {
     }
   }
 
+  const openDetail = (app) => setDetailApp(app)
+  const editFromDetail = (app) => {
+    setDetailApp(null)
+    openEdit(app)
+  }
+  const varsFromDetail = (app) => {
+    setDetailApp(null)
+    setVarsApp(app)
+  }
+  const historyFromDetail = (app) => {
+    setDetailApp(null)
+    setHistoryApp(app)
+  }
+  const deleteFromDetail = (app) => {
+    setDetailApp(null)
+    confirmDelete(app)
+  }
+  const unassignFromDetail = (app, inst) => setConfirm({
+    title: 'Unassign application',
+    message: `Unassign "${app.name}" from "${inst.name}"? The application stays on other instances.`,
+    onConfirm: () => doUnassign(app, inst),
+    variant: 'danger',
+  })
+  const doUnassign = async (app, inst) => {
+    try {
+      await api.unassign(inst.id, app.id)
+      toast.success('Application unassigned')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setConfirm(null)
+    }
+  }
+  const assignFromDetail = async (app, inst) => {
+    try {
+      await api.assign(inst.id, app.id)
+      toast.success('Application assigned')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
   const f = (k) => ({
     value: form[k],
     onChange: (e) => setForm((p) => ({ ...p, [k]: e.target.value })),
@@ -246,9 +305,15 @@ export default function Applications() {
     return { assigned, drifting, unhealthy }
   }, [appStats])
 
+  const focusApp = useMemo(
+    () => (focusAppId ? apps.find((a) => a.id === focusAppId) : null),
+    [apps, focusAppId],
+  )
+
   const filteredApps = useMemo(() => {
     const q = search.trim().toLowerCase()
     return apps.filter((a) => {
+      if (focusAppId && a.id !== focusAppId) return false
       if (projectFilter) {
         const p = a.project || ''
         if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
@@ -257,7 +322,7 @@ export default function Applications() {
       if (q && ![a.name, a.project, a.repo_url, a.branch, a.path].join(' ').toLowerCase().includes(q)) return false
       return true
     })
-  }, [apps, search, projectFilter, repoFilter])
+  }, [apps, search, projectFilter, repoFilter, focusAppId])
 
   if (loading) {
     return (
@@ -292,16 +357,21 @@ export default function Applications() {
           className="filter-search"
           placeholder="Search application, project, repository…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => changeSearch(e.target.value)}
         />
         <button type="button" className="filter-add" onClick={openNew} disabled={!can('applications', 'create')}>
           ＋ New application
         </button>
       </div>
 
-      {(projectFilter || repoFilter) && (
+      {(focusAppId || projectFilter || repoFilter) && (
         <div className="active-filter">
           <span>Showing</span>
+          {focusAppId && (
+            <span className="filter-chip">
+              Application: {focusApp?.name || `#${focusAppId}`}
+            </span>
+          )}
           {projectFilter && (
             <span className="filter-chip">
               Project: {projectLabel(projectFilter === '__global__' ? '' : projectFilter)}
@@ -453,8 +523,6 @@ export default function Applications() {
         </Modal>
       )}
 
-      {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
-
       {filteredApps.length === 0 ? (
         <div className="empty">
           <p className="muted">
@@ -471,6 +539,8 @@ export default function Applications() {
               app={a}
               stats={appStats.get(a.id)}
               repo={repos.find((r) => r.url === a.repo_url)}
+              focused={a.id === focusAppId}
+              onDetail={openDetail}
               onHistory={() => setHistoryApp(a)}
               can={can}
               onEdit={openEdit}
@@ -497,12 +567,17 @@ export default function Applications() {
               {filteredApps.map((a) => {
                 const s = appStats.get(a.id) || { instances: 0, drift: 0, error: 0, stuck: 0 }
                 return (
-                  <tr key={a.id}>
+                  <tr key={a.id} id={`app-${a.id}`} className={a.id === focusAppId ? 'is-focused' : undefined}>
                     <td>
                       <div className="cell-title">
-                        <Link className="entity-link" to={`/instances?app=${a.id}`} title="View instances">
+                        <button
+                          type="button"
+                          className="app-name-link"
+                          onClick={() => openDetail(a)}
+                          title="Open application details"
+                        >
                           <strong>{a.name}</strong>
-                        </Link>
+                        </button>
                         <span className="cell-sub">
                           <CopyButton value={String(a.id)} size="small" title="Copy app ID" />
                           <span className="mono">id {a.id}</span>
@@ -569,6 +644,23 @@ export default function Applications() {
         </div>
       )}
 
+      {detailApp && (
+        <ApplicationDetail
+          app={detailApp}
+          stats={appStats.get(detailApp.id)}
+          repo={repos.find((r) => r.url === detailApp.repo_url)}
+          instances={instances}
+          can={can}
+          onClose={() => setDetailApp(null)}
+          onEdit={editFromDetail}
+          onVars={varsFromDetail}
+          onHistory={historyFromDetail}
+          onDelete={deleteFromDetail}
+          onUnassign={(inst) => unassignFromDetail(detailApp, inst)}
+          onAssign={(inst) => assignFromDetail(detailApp, inst)}
+        />
+      )}
+
       {historyApp && (
         <ApplicationHistory
           app={historyApp}
@@ -586,6 +678,8 @@ export default function Applications() {
           onClose={() => setVarsApp(null)}
         />
       )}
+
+      {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
     </section>
   )
 }

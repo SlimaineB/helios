@@ -286,6 +286,9 @@ envelope: `{items, total, limit, offset}` so the UI can render Prev/Next.
   (green check = a `--check` would change nothing, red glyph = drift would
   change things), the **drifting component names**, commit, a per-assignment
   **Auto-sync switch**, and Sync / Check / **Diff** / **Logs** buttons.
+- **Topology**: a live hub → agents → applications map with SVG assignment
+  edges colored by drift state, search and project/online filters,
+  expand/collapse of long app lists, and a 10s auto-refresh.
 - **Diff modal**: the **pre-apply diff** of the latest `--check` (+`--diff`)
   run — what a Sync would actually change. Also on every check run in the
   history.

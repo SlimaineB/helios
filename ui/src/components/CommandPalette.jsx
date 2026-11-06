@@ -7,8 +7,9 @@ const SHORTCUTS = [
 ]
 
 const NAV = [
-  { id: 'instances', label: 'Instances', path: '/' },
-  { id: 'applications', label: 'Applications', path: '/applications' },
+  { id: 'applications', label: 'Applications', path: '/', perm: 'applications.get' },
+  { id: 'instances', label: 'Instances', path: '/instances', perm: 'instances.get' },
+  { id: 'topology', label: 'Topology', path: '/topology', perm: 'instances.get' },
   { id: 'projects', label: 'Projects', path: '/projects', perm: 'projects.get' },
   { id: 'sync-windows', label: 'Sync windows', path: '/sync-windows', perm: 'windows.get' },
   { id: 'repositories', label: 'Repositories', path: '/repositories', perm: 'repositories.get' },

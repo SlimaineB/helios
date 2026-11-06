@@ -779,6 +779,14 @@ func (s *sqlstore) DeleteRepository(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *sqlstore) CountApplicationsByRepoURL(ctx context.Context, url string) (int, error) {
+	var n int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM applications WHERE repo_url=?`, url).Scan(&n); err != nil {
+		return 0, wrap(err, "count applications by repo url")
+	}
+	return n, nil
+}
+
 // EnsureRepositoryByURL makes the registry self-healing (ArgoCD style): an
 // application created against an unregistered URL gets a placeholder row, so
 // its connection always resolves at checkin time.
@@ -1441,6 +1449,14 @@ func (s *sqlstore) GetProjectByName(ctx context.Context, name string) (model.Pro
 	return p, nil
 }
 
+func (s *sqlstore) GetProjectByID(ctx context.Context, id int64) (model.Project, error) {
+	p, err := scanProject(s.queryRow(ctx, `SELECT `+projectCols+` FROM projects WHERE id=?`, id))
+	if err != nil {
+		return p, wrap(err, "get project by id")
+	}
+	return p, nil
+}
+
 func (s *sqlstore) CreateProject(ctx context.Context, in model.Project) (model.Project, error) {
 	in.CreatedAt = nowCtx(ctx)
 	id, err := s.insertID(ctx,
@@ -1485,6 +1501,22 @@ func (s *sqlstore) DeleteProject(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete project: %w", err)
 	}
 	return nil
+}
+
+func (s *sqlstore) CountApplicationsInProject(ctx context.Context, project string) (int, error) {
+	var n int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM applications WHERE project=?`, project).Scan(&n); err != nil {
+		return 0, wrap(err, "count applications in project")
+	}
+	return n, nil
+}
+
+func (s *sqlstore) CountInstancesInProject(ctx context.Context, project string) (int, error) {
+	var n int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM instances WHERE project=?`, project).Scan(&n); err != nil {
+		return 0, wrap(err, "count instances in project")
+	}
+	return n, nil
 }
 
 // ---- Sync windows ----

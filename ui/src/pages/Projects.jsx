@@ -58,7 +58,7 @@ export default function Projects() {
 
   const confirmDelete = (p) => setConfirm({
     title: 'Delete project',
-    message: `Delete "${p.name}"? Applications and instances keep the name but lose their scope.`,
+    message: `Delete "${p.name}"? Projects still used by applications or instances cannot be deleted.`,
     onConfirm: () => doDelete(p),
     variant: 'danger'
   })

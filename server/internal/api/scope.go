@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -177,6 +178,31 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("projectId"), 10, 64)
 	if err != nil || id == 0 {
 		writeErr(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+	project, err := s.store.GetProjectByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "project not found")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	apps, err := s.store.CountApplicationsInProject(r.Context(), project.Name)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	instances, err := s.store.CountInstancesInProject(r.Context(), project.Name)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if apps > 0 || instances > 0 {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"project %q is still in use by %d application(s) and %d instance(s); move or delete them first",
+			project.Name, apps, instances))
 		return
 	}
 	if err := s.store.DeleteProject(r.Context(), id); err != nil {

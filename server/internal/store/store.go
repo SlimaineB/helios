@@ -52,6 +52,9 @@ type Store interface {
 	CreateRepository(ctx context.Context, in model.Repository) (model.Repository, error)
 	UpdateRepository(ctx context.Context, in model.Repository) error
 	DeleteRepository(ctx context.Context, id int64) error
+	// CountApplicationsByRepoURL returns how many applications reference a
+	// repository URL, used to prevent deleting repositories still in use.
+	CountApplicationsByRepoURL(ctx context.Context, url string) (int, error)
 	// EnsureRepositoryByURL guarantees a registry row exists for url,
 	// creating a placeholder (name = url) when missing — ArgoCD-style, an
 	// application's repoURL always resolves in the registry.
@@ -103,9 +106,15 @@ type Store interface {
 	// Projects (RBAC scopes + repository allowlists)
 	ListProjects(ctx context.Context) ([]model.Project, error)
 	GetProjectByName(ctx context.Context, name string) (model.Project, error)
+	GetProjectByID(ctx context.Context, id int64) (model.Project, error)
 	CreateProject(ctx context.Context, in model.Project) (model.Project, error)
 	UpdateProject(ctx context.Context, in model.Project) error
 	DeleteProject(ctx context.Context, id int64) error
+	// CountApplicationsInProject and CountInstancesInProject return the number
+	// of objects scoped to a project, used to prevent deleting projects still
+	// in use.
+	CountApplicationsInProject(ctx context.Context, project string) (int, error)
+	CountInstancesInProject(ctx context.Context, project string) (int, error)
 
 	// Sync windows (freeze/allow schedules)
 	ListSyncWindows(ctx context.Context) ([]model.SyncWindow, error)

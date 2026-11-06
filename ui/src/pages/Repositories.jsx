@@ -44,7 +44,7 @@ export default function Repositories() {
     } catch (err) { setFormError(err.message) }
   }
 
-  const confirmDelete = (repo) => setConfirm({ title: 'Delete repository', message: `Delete "${repo.url}"?`, onConfirm: () => doDelete(repo), variant: 'danger' })
+  const confirmDelete = (repo) => setConfirm({ title: 'Delete repository', message: `Delete "${repo.url}"? Repositories still used by applications cannot be deleted.`, onConfirm: () => doDelete(repo), variant: 'danger' })
   const doDelete = async (repo) => { try { await api.deleteRepository(repo.id); toast.success('Repository deleted'); refresh() } catch (e) { toast.error(e.message) } finally { setConfirm(null) } }
 
   const f = (k) => ({ value: form[k], onChange: (e) => setForm((p) => ({ ...p, [k]: e.target.value })) })
