@@ -229,6 +229,32 @@ export default function Applications() {
     setDetailApp(null)
     confirmDelete(app)
   }
+  const unassignFromDetail = (app, inst) => setConfirm({
+    title: 'Unassign application',
+    message: `Unassign "${app.name}" from "${inst.name}"? The application stays on other instances.`,
+    onConfirm: () => doUnassign(app, inst),
+    variant: 'danger',
+  })
+  const doUnassign = async (app, inst) => {
+    try {
+      await api.unassign(inst.id, app.id)
+      toast.success('Application unassigned')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setConfirm(null)
+    }
+  }
+  const assignFromDetail = async (app, inst) => {
+    try {
+      await api.assign(inst.id, app.id)
+      toast.success('Application assigned')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
 
   const f = (k) => ({
     value: form[k],
@@ -497,8 +523,6 @@ export default function Applications() {
         </Modal>
       )}
 
-      {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
-
       {filteredApps.length === 0 ? (
         <div className="empty">
           <p className="muted">
@@ -632,6 +656,8 @@ export default function Applications() {
           onVars={varsFromDetail}
           onHistory={historyFromDetail}
           onDelete={deleteFromDetail}
+          onUnassign={(inst) => unassignFromDetail(detailApp, inst)}
+          onAssign={(inst) => assignFromDetail(detailApp, inst)}
         />
       )}
 
@@ -652,6 +678,8 @@ export default function Applications() {
           onClose={() => setVarsApp(null)}
         />
       )}
+
+      {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
     </section>
   )
 }

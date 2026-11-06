@@ -8,6 +8,7 @@ import DiffModal from '../components/DiffModal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
 import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import Modal from '../components/Modal.jsx'
+import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Pager from '../components/Pager.jsx'
 import CopyButton from '../components/CopyButton.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
@@ -41,10 +42,20 @@ function appState(app) {
   return s === 'failed' ? 'error' : s || 'unknown'
 }
 
-function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, collapsed, toggle, pendingFor, appFilter }) {
-  const appsFor = (inst) => (appFilter
-    ? inst.apps.filter((a) => String(a.application.id) === appFilter)
-    : inst.apps)
+function instanceMatches(inst, q) {
+  return !q || [inst.name, inst.id, inst.project].join(' ').toLowerCase().includes(q)
+}
+
+function appMatches(inst, app, { appFilter, stateFilter, q }) {
+  if (appFilter && String(app.application.id) !== appFilter) return false
+  if (stateFilter && appState(app) !== stateFilter) return false
+  if (q && !instanceMatches(inst, q) && !app.application.name.toLowerCase().includes(q)) return false
+  return true
+}
+
+function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign, can, collapsed, toggle, pendingFor, appFilter, search, stateFilter }) {
+  const q = search.trim().toLowerCase()
+  const appsFor = (inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))
 
   const groups = useMemo(() => {
     const map = new Map()
@@ -264,6 +275,14 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                             >
                               Vars
                             </button>
+                            <button
+                              className="btn danger small"
+                              disabled={!can('instances', 'update')}
+                              onClick={() => onUnassign(inst, app)}
+                              title="Remove this application from this instance only"
+                            >
+                              Unassign
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -275,7 +294,9 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                         <td />
                         <td />
                         <td colSpan={5} className="muted">
-                          No application assigned — assign one from the Applications page.
+                          {appFilter || stateFilter || (q && !instanceMatches(inst, q))
+                            ? 'No application matches these filters.'
+                            : 'No application assigned — assign one from the Applications page.'}
                         </td>
                       </tr>
                     )}
@@ -307,6 +328,7 @@ export default function Instances() {
   const [runModal, setRunModal] = useState(null)
   const [diffModal, setDiffModal] = useState(null)
   const [varsApp, setVarsApp] = useState(null)
+  const [confirm, setConfirm] = useState(null)
   const [pageOff, setPageOff] = useState(0)
   const [collapsed, setCollapsed] = useState(() => new Set())
 
@@ -330,7 +352,7 @@ export default function Instances() {
   }, [])
 
   const commands = useCommandRunner(refresh)
-  const modalOpen = showReg || !!runModal || !!diffModal || !!varsApp
+  const modalOpen = showReg || !!runModal || !!diffModal || !!varsApp || !!confirm
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -423,6 +445,25 @@ export default function Instances() {
     }
   }
 
+  const confirmUnassign = (inst, app) => setConfirm({
+    title: 'Unassign application',
+    message: `Unassign "${app.application.name}" from "${inst.name}"? The application stays on other instances.`,
+    onConfirm: () => doUnassign(inst, app),
+    variant: 'danger',
+  })
+
+  const doUnassign = async (inst, app) => {
+    try {
+      await api.unassign(inst.id, app.application.id)
+      toast.success('Application unassigned')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setConfirm(null)
+    }
+  }
+
   const projectOptions = useMemo(() => {
     const set = new Set()
     for (const i of instances) set.add(i.project || '')
@@ -437,30 +478,33 @@ export default function Instances() {
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
   }, [instances])
 
+  const q = search.trim().toLowerCase()
+
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
     return instances.filter((inst) => {
-      if (stateFilter && inst.state !== stateFilter) return false
+      if (stateFilter && inst.state !== stateFilter
+        && !inst.apps.some((a) => appState(a) === stateFilter)) return false
       if (projectFilter) {
         const p = inst.project || ''
         if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
       }
       if (appFilter && !inst.apps.some((a) => String(a.application.id) === appFilter)) return false
       if (onlineOnly && !online(inst)) return false
-      if (q) {
-        const hay = [inst.name, inst.id, inst.project, ...inst.apps.map((a) => a.application.name)]
-          .join(' ')
-          .toLowerCase()
-        if (!hay.includes(q)) return false
-      }
+      if (q && !instanceMatches(inst, q)
+        && !inst.apps.some((a) => a.application.name.toLowerCase().includes(q))) return false
       return true
     })
-  }, [instances, search, stateFilter, projectFilter, appFilter, onlineOnly])
+  }, [instances, q, stateFilter, projectFilter, appFilter, onlineOnly])
+
+  const visibleApps = useMemo(
+    () => filtered.flatMap((inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))),
+    [filtered, appFilter, stateFilter, q]
+  )
 
   const stats = {
     total: filtered.length,
-    ok: filtered.filter((i) => i.state === 'ok').length,
-    drift: filtered.filter((i) => i.state === 'drift').length,
+    ok: visibleApps.filter((a) => appState(a) === 'ok').length,
+    drift: visibleApps.filter((a) => appState(a) === 'drift').length,
     offline: filtered.filter((i) => !online(i)).length,
   }
 
@@ -500,10 +544,10 @@ export default function Instances() {
 
       <div className="stats">
         <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{stats.total}</span><span className="stat-label">Instances</span></div>
-        <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{stats.ok}</span><span className="stat-label">Synced</span></div>
-        <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{stats.drift}</span><span className="stat-label">In drift</span></div>
+        <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{stats.ok}</span><span className="stat-label">Synced apps</span></div>
+        <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{stats.drift}</span><span className="stat-label">Drifted apps</span></div>
         <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{stats.offline}</span><span className="stat-label">Offline</span></div>
-        <div className="stats-note">Poll every 10s · pull-based, agents reach out to the server</div>
+        <div className="stats-note">App states from latest checks · agents poll every 10s</div>
       </div>
 
       <div className="filters">
@@ -514,7 +558,12 @@ export default function Instances() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} aria-label="State">
+        <select
+          value={stateFilter}
+          onChange={(e) => setStateFilter(e.target.value)}
+          aria-label="State"
+          title="Filters agents and their applications"
+        >
           <option value="">All states</option>
           <option value="ok">Synced</option>
           <option value="drift">Drift</option>
@@ -551,7 +600,7 @@ export default function Instances() {
         </button>
       </div>
 
-      {(appFilter || projectFilter) && (
+      {(appFilter || projectFilter || stateFilter) && (
         <div className="active-filter">
           <span>Showing</span>
           {appFilter && (
@@ -563,6 +612,9 @@ export default function Instances() {
             <span className="filter-chip">
               Project: {projectLabel(projectFilter === '__global__' ? '' : projectFilter)}
             </span>
+          )}
+          {stateFilter && (
+            <span className="filter-chip">State: {stateLabel(stateFilter)}</span>
           )}
           <span className="spacer" />
           <button type="button" className="ghost small" onClick={clearFilters}>Clear filters</button>
@@ -625,17 +677,21 @@ export default function Instances() {
           onDiff={(runId) => setDiffModal(runId)}
           onLogs={(runId) => setRunModal({ runId, view: 'text' })}
           onVars={setVarsApp}
+          onUnassign={confirmUnassign}
           can={can}
           collapsed={collapsed}
           toggle={toggleCollapse}
           pendingFor={(instId, appId) => commands.pending[`${instId}:${appId}`] || null}
           appFilter={appFilter}
+          search={search}
+          stateFilter={stateFilter}
         />
       )}
 
       {runModal && <LogsModal runId={runModal.runId} initialView={runModal.view} onClose={() => setRunModal(null)} />}
       {diffModal && <DiffModal runId={diffModal} onClose={() => setDiffModal(null)} />}
       {varsApp && <VariableEditor title={`Host variables · ${varsApp.inst.name}`} subtitle={`Overrides for ${varsApp.app.application.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(varsApp.inst.id, varsApp.app.application.id)} save={(items) => api.saveAssignmentVariables(varsApp.inst.id, varsApp.app.application.id, items)} onClose={() => setVarsApp(null)} />}
+      {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
       <Pager total={filtered.length} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
     </section>
   )

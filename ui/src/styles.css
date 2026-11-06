@@ -1080,6 +1080,16 @@ details summary { cursor: pointer; color: var(--muted); }
   font-size: 11.5px;
   color: var(--muted);
 }
+.app-assign {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+
+.app-assign select { min-width: 240px; }
+
 .app-detail-actions {
   display: flex;
   align-items: center;

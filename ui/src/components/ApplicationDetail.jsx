@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { GitCommit } from 'lucide-react'
 import Modal from './Modal.jsx'
@@ -37,7 +38,11 @@ export default function ApplicationDetail({
   onVars,
   onDelete,
   onHistory,
+  onUnassign,
+  onAssign,
 }) {
+  const [assignTo, setAssignTo] = useState('')
+  const [assigning, setAssigning] = useState(false)
   const s = stats || { instances: 0, drift: 0, error: 0, stuck: 0 }
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0
@@ -67,6 +72,23 @@ export default function ApplicationDetail({
       ),
     }))
     .filter(({ assignment }) => !!assignment)
+
+  const assignedIds = new Set(assigned.map(({ inst }) => inst.id))
+  const available = (instances || []).filter((inst) =>
+    (inst.project || '') === (app.project || '') && !assignedIds.has(inst.id)
+  )
+
+  const assign = async () => {
+    const inst = available.find((i) => i.id === assignTo)
+    if (!inst || !onAssign) return
+    setAssigning(true)
+    try {
+      await onAssign(inst)
+      setAssignTo('')
+    } finally {
+      setAssigning(false)
+    }
+  }
 
   return (
     <Modal title={`Application · ${app.name}`} onClose={onClose} wide>
@@ -135,6 +157,36 @@ export default function ApplicationDetail({
       )}
 
       <h3>Assigned instances</h3>
+      {onAssign && (
+        <div className="app-assign">
+          {available.length > 0 ? (
+            <>
+              <select
+                value={assignTo}
+                onChange={(e) => setAssignTo(e.target.value)}
+                aria-label="Assign to instance"
+              >
+                <option value="">Assign to instance…</option>
+                {available.map((inst) => (
+                  <option key={inst.id} value={inst.id}>
+                    {inst.name} · {projectLabel(inst.project)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn small"
+                disabled={!assignTo || assigning || !can('instances', 'update')}
+                onClick={assign}
+              >
+                {assigning ? 'Assigning…' : 'Assign'}
+              </button>
+            </>
+          ) : (
+            <span className="muted">No unassigned instance in this project.</span>
+          )}
+        </div>
+      )}
       {assigned.length === 0 ? (
         <p className="muted">This application is not assigned to any instance yet.</p>
       ) : (
@@ -146,7 +198,7 @@ export default function ApplicationDetail({
                 <th style={{ width: '130px' }}>Project</th>
                 <th style={{ width: '120px' }}>State</th>
                 <th style={{ width: '190px' }}>Last check</th>
-                <th style={{ width: '90px' }} />
+                <th style={{ width: '190px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -166,7 +218,20 @@ export default function ApplicationDetail({
                     <td><Badge state={state} label={STATE_LABEL[state]} small /></td>
                     <td className="muted">{fmt(assignment.last_check_at || assignment.latest_check?.finished_at)}</td>
                     <td>
-                      <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
+                      <div className="app-actions">
+                        <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
+                        {onUnassign && (
+                          <button
+                            type="button"
+                            className="btn danger small"
+                            disabled={!can('instances', 'update')}
+                            onClick={() => onUnassign(inst)}
+                            title="Remove this application from this instance only"
+                          >
+                            Unassign
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
