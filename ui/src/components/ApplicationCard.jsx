@@ -8,7 +8,7 @@ const EMPTY = { instances: 0, drift: 0, error: 0, stuck: 0 }
 
 const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
 
-export default function ApplicationCard({ app, stats, repo, can, onEdit, onDelete, onVars, onHistory }) {
+export default function ApplicationCard({ app, stats, repo, focused, can, onDetail, onEdit, onDelete, onVars, onHistory }) {
   const s = stats || EMPTY
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0 ? 'failed' : s.instances === 0 ? 'unknown' : s.drift > 0 ? 'drift' : 'ok'
@@ -21,13 +21,18 @@ export default function ApplicationCard({ app, stats, repo, can, onEdit, onDelet
         : 'Healthy'
 
   return (
-    <article className={`app-card health-${health}`}>
+    <article id={`app-${app.id}`} className={`app-card health-${health}${focused ? ' is-focused' : ''}`}>
       <header className="card-head">
         <div className="app-main">
           <div className="cell-title">
-            <Link className="entity-link" to={`/instances?app=${app.id}`} title="View instances">
+            <button
+              type="button"
+              className="app-name-link"
+              onClick={() => onDetail(app)}
+              title="Open application details"
+            >
               <strong className="app-name">{app.name}</strong>
-            </Link>
+            </button>
             <span className="cell-sub">
               <CopyButton value={String(app.id)} size="small" title="Copy app ID" />
               <span className="mono">id {app.id}</span>

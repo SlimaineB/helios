@@ -41,7 +41,11 @@ function appState(app) {
   return s === 'failed' ? 'error' : s || 'unknown'
 }
 
-function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, collapsed, toggle, pendingFor }) {
+function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, collapsed, toggle, pendingFor, appFilter }) {
+  const appsFor = (inst) => (appFilter
+    ? inst.apps.filter((a) => String(a.application.id) === appFilter)
+    : inst.apps)
+
   const groups = useMemo(() => {
     const map = new Map()
     for (const inst of instances) {
@@ -69,7 +73,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
         {groups.map(([project, list]) => {
           const pkey = `p:${project}`
           const pOpen = !collapsed.has(pkey)
-          const appCount = list.reduce((n, i) => n + i.apps.length, 0)
+          const appCount = list.reduce((n, i) => n + appsFor(i).length, 0)
           return (
             <tbody key={pkey}>
               <tr className="tree-group">
@@ -92,6 +96,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
               {pOpen && list.map((inst) => {
                 const ikey = `i:${inst.id}`
                 const iOpen = !collapsed.has(ikey)
+                const apps = appsFor(inst)
                 return (
                   <Fragment key={ikey}>
                     <tr className="tree-instance">
@@ -129,8 +134,8 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                       <td className="muted">{fmtTime(inst.last_check_at)}</td>
                       <td>
                         <span className="muted">
-                          {inst.apps.length
-                            ? `${inst.apps.length} application${inst.apps.length === 1 ? '' : 's'}`
+                          {apps.length
+                            ? `${apps.length} application${apps.length === 1 ? '' : 's'}`
                             : 'no application'}
                         </span>
                       </td>
@@ -139,7 +144,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                       </td>
                     </tr>
 
-                    {iOpen && inst.apps.map((app) => {
+                    {iOpen && apps.map((app) => {
                       const pending = pendingFor(inst.id, app.application.id)
                       return (
                       <tr className="tree-app" key={`${inst.id}-${app.application.id}`}>
@@ -265,7 +270,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, can, colla
                       )
                     })}
 
-                    {iOpen && !inst.apps.length && (
+                    {iOpen && !apps.length && (
                       <tr className="tree-app tree-empty">
                         <td />
                         <td />
@@ -624,6 +629,7 @@ export default function Instances() {
           collapsed={collapsed}
           toggle={toggleCollapse}
           pendingFor={(instId, appId) => commands.pending[`${instId}:${appId}`] || null}
+          appFilter={appFilter}
         />
       )}
 

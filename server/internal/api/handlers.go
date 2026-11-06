@@ -1046,8 +1046,28 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "missing repo id")
 		return
 	}
+	repo, err := s.store.GetRepository(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "repository not found")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	apps, err := s.store.CountApplicationsByRepoURL(r.Context(), repo.URL)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if apps > 0 {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"repository %q is still used by %d application(s); change or delete them first",
+			repo.URL, apps))
+		return
+	}
 	if err := s.store.DeleteRepository(r.Context(), id); err != nil {
-		writeErr(w, http.StatusNotFound, "repository not found")
+		s.internalError(w, r, err)
 		return
 	}
 	ok200(w)
