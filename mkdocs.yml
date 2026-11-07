@@ -42,6 +42,7 @@ nav:
       - Airgap / offline: AIRGAP.md
       - Kubernetes (k3s): K3S.md
   - Operations:
+      - Optional GitOps: GITOPS.md
       - Authentication & RBAC: AUTH.md
       - Database schema: DATABASE.md
       - Releases and packages: RELEASES.md

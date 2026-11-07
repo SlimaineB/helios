@@ -8,6 +8,7 @@ import Repositories from './pages/Repositories.jsx'
 import SyncWindows from './pages/SyncWindows.jsx'
 import Audit from './pages/Audit.jsx'
 import Projects from './pages/Projects.jsx'
+import ConfigRepos from './pages/ConfigRepos.jsx'
 import { api, setBasic, clearBasic } from './api/client.js'
 import ToastContainer from './components/Toast.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
@@ -124,6 +125,7 @@ export default function App() {
                 <Route path="/projects" element={<Projects />} />
                 <Route path="/sync-windows" element={<SyncWindows />} />
                 <Route path="/repositories" element={<Repositories />} />
+                <Route path="/gitops" element={<ConfigRepos />} />
                 <Route path="/audit" element={<Audit />} />
               </Routes>
             </ErrorBoundary>

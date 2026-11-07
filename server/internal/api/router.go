@@ -80,6 +80,12 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/repositories/{repoId}", s.op("repositories.update", s.handleUpdateRepository))
 	m.HandleFunc("DELETE /api/v1/repositories/{repoId}", s.op("repositories.delete", s.handleDeleteRepository))
 
+	m.HandleFunc("GET /api/v1/config-repos", s.op("configrepos.get", s.handleListConfigRepos))
+	m.HandleFunc("POST /api/v1/config-repos", s.op("configrepos.create", s.handleCreateConfigRepo))
+	m.HandleFunc("PUT /api/v1/config-repos/{repoId}", s.op("configrepos.update", s.handleUpdateConfigRepo))
+	m.HandleFunc("DELETE /api/v1/config-repos/{repoId}", s.op("configrepos.delete", s.handleDeleteConfigRepo))
+	m.HandleFunc("POST /api/v1/config-repos/{repoId}/sync", s.op("configrepos.sync", s.handleSyncConfigRepo))
+
 	// Agent (bearer-token authenticated, unchanged)
 	m.HandleFunc("POST /api/v1/agent/checkin", s.agentAuth(s.handleCheckin))
 	m.HandleFunc("POST /api/v1/agent/status", s.agentAuth(s.handleStatus))

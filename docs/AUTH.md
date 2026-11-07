@@ -60,11 +60,12 @@ scope. Rules are a union (no deny lists). Unauthenticated requests return
 | `applications.*` | Application management |
 | `repositories.*` | Repository registry |
 | `projects.*` | Projects and project-scoped access |
+| `configrepos.*` | Optional GitOps config repositories, including `sync` |
 | `windows.*` | Sync windows |
 | `audit.get` | Audit log |
 
-`repositories.*`, `projects.*`, `windows.*` and `audit.get` require the global
-(`*`) object scope.
+`repositories.*`, `projects.*`, `configrepos.*`, `windows.*` and `audit.get`
+require the global (`*`) object scope.
 
 For a production setup, see [Install](INSTALL.md) and the
 [configuration section](INSTALL.md#compose-configuration) for the relevant

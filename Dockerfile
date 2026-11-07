@@ -28,7 +28,7 @@ RUN tar -C /out/amd64 -czf /out/helios-agent-linux-amd64.tar.gz . \
     && tar -C /out/arm64 -czf /out/helios-agent-linux-arm64.tar.gz .
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata git openssh-client \
     && addgroup -S -g 10001 helios \
     && adduser -S -D -H -u 10001 -G helios -h /app helios \
     && mkdir -p /app /app/downloads /data \

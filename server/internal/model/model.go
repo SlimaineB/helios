@@ -192,6 +192,33 @@ type SyncWindow struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ConfigRepo is an optional GitOps source of truth. When enabled, the server
+// polls this repository, parses Helios manifests and reconciles the desired
+// Projects/Repositories/Applications/Assignments. Manual API/UI writes remain
+// available; the reconciler only owns resources it has recorded as managed.
+type ConfigRepo struct {
+	ID           int64          `json:"id"`
+	Name         string         `json:"name"`
+	URL          string         `json:"url"`
+	Branch       string         `json:"branch"`
+	Path         string         `json:"path"`
+	PollInterval int            `json:"poll_interval"` // seconds
+	Enabled      bool           `json:"enabled"`
+	Prune        bool           `json:"prune"`
+	LastSynced   time.Time      `json:"last_synced,omitempty"`
+	LastCommit   string         `json:"last_commit,omitempty"`
+	LastError    string         `json:"last_error,omitempty"`
+	LastSummary  map[string]int `json:"last_summary,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+}
+
+// ManagedResource records that a ConfigRepo created/updated an object. It is
+// the ownership boundary used for safe pruning and multi-repo conflicts.
+type ManagedResource struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
 // AuditEntry is one mutating operator action.
 type AuditEntry struct {
 	ID       int64     `json:"id"`

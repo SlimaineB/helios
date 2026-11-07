@@ -15,12 +15,14 @@ HTTPS to the hub and read access to the git repositories.
 |-----------|-------------|
 | Hub | Linux amd64/arm64, 1 vCPU / 512 MB minimum, 10 GB disk |
 | Hub DB | SQLite (default) or PostgreSQL 14+ |
+| Optional GitOps | `git` and `openssh-client` on the hub; not needed if you only use the manual API/UI |
 | Hub exposure | HTTPS recommended (reverse proxy or `-tls-cert`/`-tls-key`) |
 | Agent | Linux amd64/arm64, `git`, `ansible-core` + `ansible.posix` |
 | Network | Agent → hub HTTPS; agent → git repo HTTPS/SSH |
 
 Docker is only needed for the container path. The server and agent are static Go
-binaries.
+binaries. The published server image already includes `git` and
+`openssh-client`; see [Optional GitOps](GITOPS.md) for the Git-driven workflow.
 
 For hosts without internet access, start with the
 [airgap / offline install](AIRGAP.md) guide instead.

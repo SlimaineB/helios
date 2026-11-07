@@ -190,7 +190,45 @@ A project-scoped rule never grants access to the global scope; `*` still means
 every project. List endpoints filter by the caller's visible projects, and
 detail/mutation handlers enforce the object scope (the web UI hides controls it
 knows are unavailable, but the server is authoritative). Repositories, projects,
-sync windows and the audit log are global-admin surfaces.
+sync windows, config repositories and the audit log are global-admin surfaces.
+
+### Optional GitOps
+
+Helios can reconcile its own control-plane objects from one or more Git config
+repositories. This is **opt-in**: with no config repository configured, the API
+and UI behave exactly as before. Supported manifests are `Project`,
+`Repository`, `Application` and `Assignment` (`apiVersion:
+helios.dev/v1alpha1`). Instances still register through the normal agent token
+flow and are referenced by ID in assignments.
+
+```yaml
+apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: web
+  project: finance
+spec:
+  repoURL: https://github.com/acme/finance-infra.git
+  branch: main
+  path: ansible/site.yml
+  autoHeal: true
+  syncInterval: 300
+```
+
+Configure a config repository from the **GitOps** page or
+`/api/v1/config-repos`; the hub polls it every `poll_interval` seconds
+(default 300, minimum 10) and a manual **Sync now** is always available.
+Credentials come from the existing **Repositories** registry, matched by URL.
+Prune is disabled by default: deleting a manifest stops reconciling the object
+but does not delete it unless prune is explicitly enabled. Ownership is tracked
+in `gitops_managed`; deleting a config repository releases its objects without
+deleting them. Manual edits remain possible, but they are overwritten on the
+next reconcile while the object is still managed.
+
+The server runtime needs `git` and `openssh-client`; the container image ships
+them. Local mirrors use `/tmp/helios-gitops`, overridable with
+`HELIOS_GITOPS_STATE_DIR`. See [Optional GitOps](docs/GITOPS.md) for the full
+manifest reference, RBAC and limitations.
 
 ## Components
 
@@ -200,7 +238,9 @@ sync windows and the audit log are global-admin surfaces.
   implementation is shared, with `?`→`$n` rebinding and `RETURNING id`
   inserts). Time columns are stored as RFC3339 TEXT on both backends.
   Environment override: `HELIOS_DB`. History is kept per
-  `(instance, app, mode)`.
+  `(instance, app, mode)`. An optional reconciler polls Git config
+  repositories and applies `Project`/`Repository`/`Application`/`Assignment`
+  manifests when GitOps is enabled.
 - **`agent/`** — Go. Config via YAML or `HELIOS_*` env vars; resolves the AWS
   instance-id via IMDSv2 (falls back to a local fingerprint on non-EC2),
   keeps per-app local repo mirrors under `state_dir`, runs
@@ -249,6 +289,12 @@ GET    /api/v1/projects
 POST   /api/v1/projects          {name, repo_patterns}
 PUT    /api/v1/projects/{projectId}
 DELETE /api/v1/projects/{projectId}
+
+GET    /api/v1/config-repos
+POST   /api/v1/config-repos      {name, url, branch, path, poll_interval, enabled, prune}
+PUT    /api/v1/config-repos/{repoId}
+DELETE /api/v1/config-repos/{repoId}
+POST   /api/v1/config-repos/{repoId}/sync
 
 GET    /api/v1/sync-windows
 POST   /api/v1/sync-windows      {name, kind, app_id, timezone, days, start_min, end_min, enabled}
@@ -318,6 +364,8 @@ envelope: `{items, total, limit, offset}` so the UI can render Prev/Next.
 - **Auto-sync override**: `autoheal_set:true` in the API means the value is an
   explicit override; otherwise it inherits the application default. `{inherit}`
   on the toggle endpoint clears the override.
+- **GitOps**: register config repositories, enable/disable polling and prune,
+  trigger a sync, and inspect last sync/commit/error and per-kind counts.
 - **Command palette**: press **⌘K** (or Ctrl+K) anywhere to jump between pages
   and see keyboard shortcuts; scoped to the caller's RBAC permissions.
 - **Toast notifications**: success/error/warn/info toasts replace inline banners
@@ -361,9 +409,10 @@ lists). Unauthenticated → `401`; unprivileged → `403`.
 Route map (what each permission unlocks in the UI): `instances.get` list/detail,
 `instances.create` register, `instances.update` assign/unassign/auto-sync,
 `commands.create` Sync & Check, `runs.get` logs/diffs, plus the natural
-`applications.*`, `repositories.*`, `projects.*`, `windows.*` and `audit.get`
-pairs. `repositories.*`, `projects.*`, `windows.*` and `audit.get` require the
-global (`*`) object scope.
+`applications.*`, `repositories.*`, `projects.*`, `configrepos.*`,
+`windows.*` and `audit.get` pairs. `repositories.*`, `projects.*`,
+`configrepos.*`, `windows.*` and `audit.get` require the global (`*`) object
+scope.
 
 ## Install the hub
 
@@ -421,6 +470,7 @@ and `ansible.posix`, writes `/etc/helios/agent.yaml`, and starts
 OIDC via `HELIOS_OIDC_*` env (see "Operator authentication & RBAC"
 above). With `-base-url https://…` cookies are marked Secure. Webhooks:
 `HELIOS_WEBHOOK_URL`, `HELIOS_WEBHOOK_SECRET`, `HELIOS_WEBHOOK_TIMEOUT`.
+GitOps scratch state: `HELIOS_GITOPS_STATE_DIR` (default `/tmp/helios-gitops`).
 
 `agent` (`/etc/helios/agent.yaml` or `HELIOS_*` env vars):
 
@@ -447,6 +497,7 @@ Ansible run is a separate process.
 - [Quickstart](docs/QUICKSTART.md) — install the hub and first agent.
 - [Install](docs/INSTALL.md) — Docker, systemd and Kubernetes/Helm.
 - [Airgap install](docs/AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
+- [Optional GitOps](docs/GITOPS.md) — manifests, config repositories and reconciliation.
 - [Authentication & RBAC](docs/AUTH.md) — local admin, OIDC and policies.
 - [Releases](docs/RELEASES.md) — GHCR images, binaries and tarballs.
 - [Development](docs/DEVELOPMENT.md) — source build, demo, tests and docs build.
@@ -468,6 +519,7 @@ GitHub Release via `.github/workflows/release.yml`; see [Releases](docs/RELEASES
 - [x] Sync windows / maintenance freezes
 - [x] Rollback by pinning an assignment to a commit
 - [x] Webhook notifications, Prometheus metrics, operator audit log
+- [x] Optional GitOps reconciliation from Git config repositories
 - [x] Projects with repository allowlists and project-scoped RBAC
 - [x] Ignored drift patterns (`ignore_paths`)
 - [ ] Filename-level diffs (not just changed-task names) from the `--diff` output

@@ -21,6 +21,7 @@ import (
 	"github.com/slim/helios/server/internal/notify"
 	"github.com/slim/helios/server/internal/oidc"
 	"github.com/slim/helios/server/internal/rbac"
+	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/store"
 )
 
@@ -114,6 +115,9 @@ func main() {
 	srv := api.New(st, log, oa, secure)
 	srv.SetNotifier(notify.FromEnv(log))
 	srv.SetDownloadsDir(*downloads)
+	gitopsState := envutil.Or("HELIOS_GITOPS_STATE_DIR", "/tmp/helios-gitops")
+	recon := reconciler.New(st, log, gitopsState)
+	srv.SetReconciler(recon)
 	metrics.SetInfo("dev")
 	handler := srv.Handler()
 
@@ -134,6 +138,7 @@ func main() {
 	// stop) instead of cutting them off mid-response.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	recon.Start(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
