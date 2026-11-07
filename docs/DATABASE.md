@@ -2,7 +2,7 @@
 
 Helios keeps all control-plane state in one relational database. There is no
 ORM, message queue or separate metadata store: the server owns the schema, and
-the agents are stateless clients.
+both server replicas and agents are stateless clients.
 
 Use SQLite for a single hub host and PostgreSQL 14+ for shared or
 higher-availability deployments. The schema is defined in
@@ -62,6 +62,9 @@ run the additive migrations.
   objects it created.
 - Managed resource names are stored as text (`kind`, `name`), not foreign keys,
   because they can point at objects in different tables.
+- Operator sessions and leases use `INTEGER` Unix-millisecond expiries so
+  expiration comparisons are numeric and safe on both backends. Other
+  timestamps remain RFC3339 text.
 
 ## Tables
 
@@ -286,6 +289,39 @@ Primary key: `(config_repo_id, kind, name)`. There is no foreign key, and
 deleting a config repository explicitly removes its ownership rows while
 leaving the managed objects in place.
 
+### `operator_sessions`
+
+Browser login sessions shared by every server replica. Only the SHA-256 hash of
+the session token is stored.
+
+| Column | Type | Notes |
+|---|---|---|
+| `token_hash` | `TEXT` PK | Hex SHA-256 of the browser token |
+| `sub` | `TEXT NOT NULL DEFAULT ''` | OIDC subject |
+| `email` | `TEXT NOT NULL DEFAULT ''` | Email |
+| `name` | `TEXT NOT NULL DEFAULT ''` | Display name |
+| `groups` | `TEXT NOT NULL DEFAULT '[]'` | JSON string array of IdP groups |
+| `roles` | `TEXT NOT NULL DEFAULT '[]'` | JSON string array of session roles |
+| `expires_at` | `INTEGER NOT NULL` | Absolute expiry, Unix milliseconds |
+| `created_at` | `TEXT NOT NULL` | Creation timestamp |
+
+Index: `idx_operator_sessions_expiry (expires_at)`. Expired rows are deleted on
+login and at server startup. Logout deletes the row, so it applies cluster-wide.
+
+### `leases`
+
+Short-lived coordination locks for background work. GitOps uses one
+cluster-wide lease; the holder renews it during long syncs.
+
+| Column | Type | Notes |
+|---|---|---|
+| `name` | `TEXT` PK | Lease name, e.g. `gitops:reconcile` |
+| `owner` | `TEXT NOT NULL` | Random per-process replica ID |
+| `expires_at` | `INTEGER NOT NULL` | Expiry, Unix milliseconds |
+
+Expired leases are reclaimable. This provides failover without a separate
+scheduler or leader-election service.
+
 ### `audit_log`
 
 One row per mutating operator action. It is append-only from the server's point
@@ -314,6 +350,9 @@ table grows with operator activity.
 | `projects.name` unique | Unique project names |
 | `config_repos.name` unique | Unique config repository names |
 | `gitops_managed` PK `(config_repo_id, kind, name)` | One ownership record per config repo/object |
+| `operator_sessions.token_hash` PK | One row per login session |
+| `idx_operator_sessions_expiry` | Expired-session cleanup |
+| `leases.name` PK | One live/reclaimable lease per name |
 | `assignments` PK `(instance_id, app_id)` | One assignment per instance/application pair |
 | `variables` PK `(app_id, key)` | One value per application variable |
 | `assignment_variables` PK `(instance_id, app_id, key)` | One value per per-instance override |
@@ -337,6 +376,10 @@ Instead:
    `PRAGMA table_info` and runs `ALTER TABLE ... ADD COLUMN` when it is missing.
 3. For existing PostgreSQL databases, the server runs the matching
    `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements.
+
+PostgreSQL schema setup is serialized with a session advisory lock. This lets
+several server replicas start at once without racing `CREATE TABLE`/`CREATE
+INDEX`, which is otherwise unsafe even with `IF NOT EXISTS`.
 
 Migrations are additive only: new columns get defaults so existing rows remain
 valid. There is no automatic destructive migration or downgrade path. Before an
@@ -367,6 +410,7 @@ their history is never cascaded away.
 - Repository `password` and `ssh_key` values are stored in plaintext. Config
   repositories do not store credentials themselves; they reuse the matching
   `repositories` row.
+- Operator session tokens are not stored; only their SHA-256 hashes are kept.
 - `variables.value` and `assignment_variables.value` are stored in plaintext,
   including rows with `is_secret = 1`. The operator API redacts secret values,
   but the database and backups do not encrypt them.

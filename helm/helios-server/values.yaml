@@ -1,6 +1,8 @@
 # Default values for helios-server.
 # This is a YAML-formatted file.
 
+# Multiple replicas require database.dsn (PostgreSQL). SQLite is single-writer.
+# The chart refuses replicaCount > 1 with the default SQLite backend.
 replicaCount: 1
 
 image:

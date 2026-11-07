@@ -226,9 +226,24 @@ deleting them. Manual edits remain possible, but they are overwritten on the
 next reconcile while the object is still managed.
 
 The server runtime needs `git` and `openssh-client`; the container image ships
-them. Local mirrors use `/tmp/helios-gitops`, overridable with
+them. Each replica uses its own scratch mirror under
+`/tmp/helios-gitops/replica-<id>/`, overridable with
 `HELIOS_GITOPS_STATE_DIR`. See [Optional GitOps](docs/GITOPS.md) for the full
 manifest reference, RBAC and limitations.
+
+### Multiple server replicas
+
+The server keeps no request state in process memory: operator sessions are
+stored in the shared database, command claiming is an atomic database update,
+and GitOps reconciles are guarded by a cluster-wide database lease.
+Replicas can therefore sit behind a plain round-robin load balancer with no
+sticky sessions.
+
+Use PostgreSQL for any multi-replica deployment; SQLite is single-writer. The
+Helm chart refuses `replicaCount > 1` with SQLite and mounts `/tmp` as
+per-pod scratch space. A failed GitOps replica's lease expires after two
+minutes and another replica takes over. See
+[High availability](docs/HA.md).
 
 ## Components
 
@@ -238,9 +253,11 @@ manifest reference, RBAC and limitations.
   implementation is shared, with `?`→`$n` rebinding and `RETURNING id`
   inserts). Time columns are stored as RFC3339 TEXT on both backends.
   Environment override: `HELIOS_DB`. History is kept per
-  `(instance, app, mode)`. An optional reconciler polls Git config
-  repositories and applies `Project`/`Repository`/`Application`/`Assignment`
-  manifests when GitOps is enabled.
+  `(instance, app, mode)`. Operator sessions and coordination leases live in
+  the same database, so multiple stateless server replicas can share one
+  PostgreSQL. An optional reconciler polls Git config repositories and applies
+  `Project`/`Repository`/`Application`/`Assignment` manifests when GitOps is
+  enabled.
 - **`agent/`** — Go. Config via YAML or `HELIOS_*` env vars; resolves the AWS
   instance-id via IMDSv2 (falls back to a local fingerprint on non-EC2),
   keeps per-app local repo mirrors under `state_dir`, runs
@@ -498,6 +515,7 @@ Ansible run is a separate process.
 - [Install](docs/INSTALL.md) — Docker, systemd and Kubernetes/Helm.
 - [Airgap install](docs/AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [Optional GitOps](docs/GITOPS.md) — manifests, config repositories and reconciliation.
+- [High availability](docs/HA.md) — stateless replicas, PostgreSQL and no sticky sessions.
 - [Authentication & RBAC](docs/AUTH.md) — local admin, OIDC and policies.
 - [Releases](docs/RELEASES.md) — GHCR images, binaries and tarballs.
 - [Development](docs/DEVELOPMENT.md) — source build, demo, tests and docs build.
@@ -520,6 +538,7 @@ GitHub Release via `.github/workflows/release.yml`; see [Releases](docs/RELEASES
 - [x] Rollback by pinning an assignment to a commit
 - [x] Webhook notifications, Prometheus metrics, operator audit log
 - [x] Optional GitOps reconciliation from Git config repositories
+- [x] Stateless, multi-replica server with DB sessions and GitOps leases
 - [x] Projects with repository allowlists and project-scoped RBAC
 - [x] Ignored drift patterns (`ignore_paths`)
 - [ ] Filename-level diffs (not just changed-task names) from the `--diff` output

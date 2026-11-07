@@ -92,18 +92,37 @@ func (c Creds) env() (_ []string, cleanup func(), err error) {
 		if err != nil {
 			return nil, cleanup, fmt.Errorf("temp ssh key: %w", err)
 		}
-		cleanup = func() { os.Remove(f.Name()) }
+		known, err := os.CreateTemp("", "helios-known-hosts-*")
+		if err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return nil, cleanup, fmt.Errorf("temp known_hosts: %w", err)
+		}
+		knownPath := known.Name()
+		if err := known.Close(); err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			os.Remove(knownPath)
+			return nil, cleanup, err
+		}
+		cleanup = func() {
+			os.Remove(f.Name())
+			os.Remove(knownPath)
+		}
 		if _, err := f.WriteString(c.SSHKey); err != nil {
 			f.Close()
+			cleanup()
 			return nil, cleanup, err
 		}
 		if err := f.Close(); err != nil {
+			cleanup()
 			return nil, cleanup, err
 		}
 		if err := os.Chmod(f.Name(), 0o600); err != nil {
+			cleanup()
 			return nil, cleanup, err
 		}
-		ssh := "ssh -i " + f.Name() + " -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+		ssh := "ssh -i " + f.Name() + " -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownPath
 		return []string{"GIT_SSH_COMMAND=" + ssh}, cleanup, nil
 	}
 	if c.Username == "" && c.Password == "" {

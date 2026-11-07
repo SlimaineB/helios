@@ -15,6 +15,7 @@ HTTPS to the hub and read access to the git repositories.
 |-----------|-------------|
 | Hub | Linux amd64/arm64, 1 vCPU / 512 MB minimum, 10 GB disk |
 | Hub DB | SQLite (default) or PostgreSQL 14+ |
+| Multi-replica hub | PostgreSQL 14+ is required; SQLite is single-writer |
 | Optional GitOps | `git` and `openssh-client` on the hub; not needed if you only use the manual API/UI |
 | Hub exposure | HTTPS recommended (reverse proxy or `-tls-cert`/`-tls-key`) |
 | Agent | Linux amd64/arm64, `git`, `ansible-core` + `ansible.posix` |
@@ -23,6 +24,7 @@ HTTPS to the hub and read access to the git repositories.
 Docker is only needed for the container path. The server and agent are static Go
 binaries. The published server image already includes `git` and
 `openssh-client`; see [Optional GitOps](GITOPS.md) for the Git-driven workflow.
+For several server replicas, see [High availability](HA.md).
 
 For hosts without internet access, start with the
 [airgap / offline install](AIRGAP.md) guide instead.
@@ -228,6 +230,8 @@ Notes:
 
 - The default storage uses SQLite on a PVC. Set `database.dsn` to a
   `postgres://` URL for production; the chart does not ship Postgres.
+- For more than one replica, set `replicaCount` **and** `database.dsn`; the
+  chart rejects multiple replicas with SQLite. See [High availability](HA.md).
 - Use `operatorAuth.existingSecret` instead of a password in values. If no
   password is supplied, the chart generates one and keeps it across upgrades;
   read it from the `<release>-helios-server-operator` Secret.

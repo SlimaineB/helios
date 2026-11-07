@@ -1,6 +1,8 @@
 # helm values for the helios-server chart (helm/helios-server).
 # Secrets are intentionally absent: pass the operator password on the CLI, or
 # pre-create a Secret with key `operator-password` and set operatorAuth.existingSecret.
+# >1 requires database.dsn (PostgreSQL); the chart rejects multiple replicas
+# with the default SQLite PVC.
 replicaCount: 1
 
 image:

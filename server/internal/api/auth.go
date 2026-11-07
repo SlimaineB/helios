@@ -31,7 +31,7 @@ type OpAuth struct {
 	// RBAC is the policy set evaluated on every operator action.
 	RBAC *rbac.RBAC
 	// Sessions is the browser session store for OIDC logins.
-	Sessions *auth.SessionStore
+	Sessions auth.SessionStore
 	// OIDC is the provider; nil disables SSO login.
 	OIDC *oidc.Provider
 	// BaseURL is the external base URL used to build the OIDC callback URL.
@@ -129,7 +129,7 @@ func (s *Server) resolvePrincipal(r *http.Request) (*principal, bool) {
 	}
 	if oa.Sessions != nil {
 		if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
-			if sess, ok := oa.Sessions.Get(c.Value); ok {
+			if sess, ok := oa.Sessions.Get(r.Context(), c.Value); ok {
 				roles := []string(nil)
 				if oa.RBAC != nil {
 					roles = oa.RBAC.RolesForGroups(sess.Groups)
@@ -203,7 +203,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "oidc login failed")
 		return
 	}
-	tok, err := s.opAuth.Sessions.Create(pr.Sub, pr.Email, pr.Name, pr.Groups, nil)
+	tok, err := s.opAuth.Sessions.Create(r.Context(), pr.Sub, pr.Email, pr.Name, pr.Groups, nil)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -218,7 +218,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 // with fetch() without tripping over a redirect.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil && s.opAuth != nil && s.opAuth.Sessions != nil {
-		s.opAuth.Sessions.Delete(c.Value)
+		s.opAuth.Sessions.Delete(r.Context(), c.Value)
 	}
 	http.SetCookie(w, s.cookie(cookieName, "", -1))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

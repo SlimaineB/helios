@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -163,6 +164,24 @@ CREATE TABLE IF NOT EXISTS gitops_managed (
   name           TEXT NOT NULL,
   created_at     TEXT NOT NULL,
   PRIMARY KEY (config_repo_id, kind, name)
+);
+
+CREATE TABLE IF NOT EXISTS operator_sessions (
+  token_hash TEXT PRIMARY KEY,
+  sub        TEXT NOT NULL DEFAULT '',
+  email      TEXT NOT NULL DEFAULT '',
+  name       TEXT NOT NULL DEFAULT '',
+  groups     TEXT NOT NULL DEFAULT '[]',
+  roles      TEXT NOT NULL DEFAULT '[]',
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operator_sessions_expiry ON operator_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS leases (
+  name       TEXT PRIMARY KEY,
+  owner      TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -331,6 +350,24 @@ CREATE TABLE IF NOT EXISTS gitops_managed (
   PRIMARY KEY (config_repo_id, kind, name)
 );
 
+CREATE TABLE IF NOT EXISTS operator_sessions (
+  token_hash TEXT PRIMARY KEY,
+  sub        TEXT NOT NULL DEFAULT '',
+  email      TEXT NOT NULL DEFAULT '',
+  name       TEXT NOT NULL DEFAULT '',
+  groups     TEXT NOT NULL DEFAULT '[]',
+  roles      TEXT NOT NULL DEFAULT '[]',
+  expires_at BIGINT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operator_sessions_expiry ON operator_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS leases (
+  name       TEXT PRIMARY KEY,
+  owner      TEXT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id        BIGSERIAL PRIMARY KEY,
   at        TEXT NOT NULL,
@@ -376,17 +413,45 @@ func Open(dsn string) (Store, error) {
 	return &sqlstore{db: db, driver: "sqlite"}, nil
 }
 
+// pgSchemaLockID serializes schema creation/migration across replicas that
+// start at the same time. Postgres DDL (even CREATE TABLE IF NOT EXISTS) is not
+// safe under concurrent creation and can fail with duplicate pg_type rows.
+const pgSchemaLockID int64 = 0x68656c696f73
+
 func openPostgres(dsn string) (Store, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(10)
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("postgres ping: %w", err)
+	if err := initPostgresSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
-	if _, err := db.Exec(pgSchema); err != nil {
-		return nil, fmt.Errorf("postgres schema: %w", err)
+	return &sqlstore{db: db, driver: "pgx"}, nil
+}
+
+func initPostgresSchema(db *sql.DB) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("postgres ping: %w", err)
+	}
+	// Keep the advisory lock on one connection: session-level locks are tied to
+	// the connection that acquired them.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres schema connection: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, pgSchemaLockID); err != nil {
+		return fmt.Errorf("postgres schema lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, pgSchemaLockID)
+	}()
+	if _, err := conn.ExecContext(ctx, pgSchema); err != nil {
+		return fmt.Errorf("postgres schema: %w", err)
 	}
 	// Postgres has no CREATE IF NOT EXISTS column; backfill columns that older
 	// databases predate. (SQLite equivalents live in migrate().)
@@ -401,11 +466,11 @@ func openPostgres(dsn string) (Store, error) {
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
-		if _, err := db.Exec(ddl); err != nil {
-			return nil, fmt.Errorf("postgres migrate: %w", err)
+		if _, err := conn.ExecContext(ctx, ddl); err != nil {
+			return fmt.Errorf("postgres migrate: %w", err)
 		}
 	}
-	return &sqlstore{db: db, driver: "pgx"}, nil
+	return nil
 }
 
 // rebind rewrites `?` placeholders to `$1..$n` for Postgres, leaving SQLite
@@ -1307,18 +1372,21 @@ func (s *sqlstore) ClaimCommands(ctx context.Context, instanceID string) ([]mode
 	if len(cmds) == 0 {
 		return cmds, nil
 	}
-	// Atomically flip pending -> running so a concurrent agent can't double-execute.
+	// Atomically flip pending -> running so a concurrent agent (possibly hitting
+	// another server replica) can't double-execute. Commands claimed by the
+	// winner are simply omitted from this response.
+	claimed := make([]model.Command, 0, len(cmds))
 	for _, c := range cmds {
 		res, err := s.exec(ctx,
 			`UPDATE commands SET status='running', claimed_at=? WHERE id=? AND status=?`, tm(now), c.ID, model.CmdPending)
 		if err != nil {
 			return nil, fmt.Errorf("claim command: %w", err)
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return nil, ErrNoCommand
+		if n, _ := res.RowsAffected(); n > 0 {
+			claimed = append(claimed, c)
 		}
 	}
-	return cmds, nil
+	return claimed, nil
 }
 
 func (s *sqlstore) CompleteCommand(ctx context.Context, instanceID string, id int64, status, result, commit string) error {
@@ -1798,6 +1866,124 @@ func (s *sqlstore) DeleteManagedResourcesForRepo(ctx context.Context, configRepo
 	_, err := s.exec(ctx, `DELETE FROM gitops_managed WHERE config_repo_id=?`, configRepoID)
 	if err != nil {
 		return fmt.Errorf("delete managed resources: %w", err)
+	}
+	return nil
+}
+
+// ---- Operator sessions ----
+
+func (s *sqlstore) CreateOperatorSession(ctx context.Context, tokenHash string, sess model.OperatorSession) error {
+	groups, err := json.Marshal(sess.Groups)
+	if err != nil {
+		return fmt.Errorf("encode session groups: %w", err)
+	}
+	roles, err := json.Marshal(sess.Roles)
+	if err != nil {
+		return fmt.Errorf("encode session roles: %w", err)
+	}
+	_, err = s.exec(ctx,
+		`INSERT INTO operator_sessions (token_hash, sub, email, name, groups, roles, expires_at, created_at)
+		 VALUES (?,?,?,?,?,?,?,?)`,
+		tokenHash, sess.Sub, sess.Email, sess.Name, string(groups), string(roles),
+		sess.Expiry.UTC().UnixMilli(), tm(nowCtx(ctx)))
+	if err != nil {
+		return fmt.Errorf("create operator session: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) GetOperatorSession(ctx context.Context, tokenHash string) (model.OperatorSession, error) {
+	var (
+		sess      model.OperatorSession
+		groups    string
+		roles     string
+		expiresAt int64
+	)
+	err := s.queryRow(ctx,
+		`SELECT sub, email, name, groups, roles, expires_at FROM operator_sessions WHERE token_hash=?`,
+		tokenHash).Scan(&sess.Sub, &sess.Email, &sess.Name, &groups, &roles, &expiresAt)
+	if err != nil {
+		return sess, wrap(err, "get operator session")
+	}
+	_ = json.Unmarshal([]byte(groups), &sess.Groups)
+	_ = json.Unmarshal([]byte(roles), &sess.Roles)
+	sess.Expiry = time.UnixMilli(expiresAt).UTC()
+	return sess, nil
+}
+
+func (s *sqlstore) DeleteOperatorSession(ctx context.Context, tokenHash string) error {
+	if _, err := s.exec(ctx, `DELETE FROM operator_sessions WHERE token_hash=?`, tokenHash); err != nil {
+		return fmt.Errorf("delete operator session: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteExpiredOperatorSessions(ctx context.Context, before time.Time) error {
+	if _, err := s.exec(ctx, `DELETE FROM operator_sessions WHERE expires_at < ?`, before.UTC().UnixMilli()); err != nil {
+		return fmt.Errorf("delete expired operator sessions: %w", err)
+	}
+	return nil
+}
+
+// ---- Leases ----
+
+// AcquireLease atomically takes a named lease. It returns false when another
+// live owner holds it. Expired leases are reclaimable, which allows failover
+// after a replica crash.
+func (s *sqlstore) AcquireLease(ctx context.Context, name, owner string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = time.Minute
+	}
+	now := nowCtx(ctx)
+	expires := now.Add(ttl).UnixMilli()
+	for attempt := 0; attempt < 4; attempt++ {
+		res, err := s.exec(ctx,
+			`UPDATE leases SET owner=?, expires_at=? WHERE name=? AND (owner=? OR expires_at <= ?)`,
+			owner, expires, name, owner, now.UnixMilli())
+		if err != nil {
+			return false, fmt.Errorf("renew lease: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			return true, nil
+		}
+		_, err = s.exec(ctx,
+			`INSERT INTO leases (name, owner, expires_at) VALUES (?,?,?)`, name, owner, expires)
+		if err == nil {
+			return true, nil
+		}
+		if !isUniqueViolation(err) {
+			return false, fmt.Errorf("acquire lease: %w", err)
+		}
+		// A concurrent replica won the insert, or the row was removed between
+		// our update and insert. Retry to observe the new state.
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+	return false, nil
+}
+
+func (s *sqlstore) RenewLease(ctx context.Context, name, owner string, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = time.Minute
+	}
+	expires := nowCtx(ctx).Add(ttl).UnixMilli()
+	res, err := s.exec(ctx,
+		`UPDATE leases SET expires_at=? WHERE name=? AND owner=?`, expires, name, owner)
+	if err != nil {
+		return fmt.Errorf("renew lease: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrLeaseLost
+	}
+	return nil
+}
+
+func (s *sqlstore) ReleaseLease(ctx context.Context, name, owner string) error {
+	if _, err := s.exec(ctx, `DELETE FROM leases WHERE name=? AND owner=?`, name, owner); err != nil {
+		return fmt.Errorf("release lease: %w", err)
 	}
 	return nil
 }

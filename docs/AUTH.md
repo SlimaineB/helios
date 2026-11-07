@@ -23,6 +23,11 @@ OIDC flow: `/api/v1/auth/login` → Authorization Code + PKCE → session cookie
 (`helios_sess`) → `/api/v1/auth/me` returns the identity and the effective
 `permissions` list the UI uses to enable or disable controls.
 
+Sessions are persisted in the shared database (`operator_sessions`) and only a
+SHA-256 hash of the browser token is stored. Login, logout and validation work
+on any server replica without sticky sessions; see
+[High availability](HA.md).
+
 ## Authorization
 
 `-rbac` / `HELIOS_RBAC_FILE` points to a YAML file of `p` (policy) and

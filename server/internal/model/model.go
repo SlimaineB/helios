@@ -219,6 +219,17 @@ type ManagedResource struct {
 	Name string `json:"name"`
 }
 
+// OperatorSession is a browser login session persisted in the shared database
+// so any server replica can validate it and logout works cluster-wide.
+type OperatorSession struct {
+	Sub    string
+	Email  string
+	Name   string
+	Groups []string
+	Roles  []string
+	Expiry time.Time
+}
+
 // AuditEntry is one mutating operator action.
 type AuditEntry struct {
 	ID       int64     `json:"id"`

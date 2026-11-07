@@ -21,6 +21,8 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   own repository, variables, sync interval and drift state.
 - **Operator controls** — Sync, Check, Diff, Logs, rollback to a pinned
   revision, sync windows, audit log and notifications.
+- **Stateless replicas** — database-backed sessions and coordination allow
+  multiple server replicas behind a normal load balancer.
 - **Optional GitOps** — poll Git config repositories for Helios manifests and
   reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
@@ -79,6 +81,7 @@ Building from source, running the development demo and tests:
 - [Airgap install](AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [k3s reference](K3S.md) — full cluster walkthrough.
 - [Optional GitOps](GITOPS.md) — manage Helios objects from Git manifests.
+- [High availability](HA.md) — run stateless server replicas on PostgreSQL.
 - [Authentication & RBAC](AUTH.md) — local admin, OIDC, ArgoCD-style policies.
 - [Releases and packages](RELEASES.md) — GitHub images, binaries and tarballs.
 - [Testing](TESTING.md) — unit, smoke, loop-safety, UI and capacity tests.

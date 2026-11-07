@@ -1,6 +1,9 @@
 {{- if and (not .Values.operatorAuth.user) (not .Values.operatorAuth.allowUnauthenticated) }}
 {{- fail "operatorAuth.user is required; set operatorAuth.allowUnauthenticated=true only for an isolated lab" }}
 {{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.database.dsn) }}
+{{- fail "replicaCount > 1 requires database.dsn (PostgreSQL); SQLite is single-writer and cannot be shared by replicas" }}
+{{- end }}
 {{- $baseURL := .Values.baseUrl }}
 {{- if and (not $baseURL) .Values.ingress.enabled }}
 {{- $baseURL = printf "%s://%s" (ternary "https" "http" .Values.ingress.tls.enabled) .Values.ingress.host }}
@@ -105,11 +108,19 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if not .Values.database.dsn }}
             - name: data
               mountPath: /data
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if not .Values.database.dsn }}
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "helios-server.fullname" . }}-data
+        {{- end }}

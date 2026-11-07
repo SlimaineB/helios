@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/store"
 )
 
@@ -487,5 +488,28 @@ func TestConfigRepoCRUD(t *testing.T) {
 	}
 	if _, err := st.GetConfigRepo(context.Background(), 1); err == nil {
 		t.Fatal("config repo still present after delete")
+	}
+}
+
+func TestSyncConfigRepoReturnsConflictWhenLeaseHeld(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	repo, err := st.CreateConfigRepo(ctx, model.ConfigRepo{
+		Name: "cfg", URL: "https://example.com/config.git", Branch: "main", PollInterval: 300, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create config repo: %v", err)
+	}
+	if ok, err := st.AcquireLease(ctx, "gitops:reconcile", "other-replica", time.Minute); err != nil || !ok {
+		t.Fatalf("seed lease: ok=%v err=%v", ok, err)
+	}
+	s.SetReconciler(reconciler.New(st, s.log, t.TempDir()))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config-repos/1/sync", nil)
+	req.SetPathValue("repoId", strconv.FormatInt(repo.ID, 10))
+	s.handleSyncConfigRepo(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("sync while leased: status %d body %s", rec.Code, rec.Body.String())
 	}
 }
