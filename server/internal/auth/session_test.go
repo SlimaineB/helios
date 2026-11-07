@@ -1,13 +1,14 @@
 package auth
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
 func TestSessionStoreKeepsAbsoluteExpiry(t *testing.T) {
-	s := NewSessionStore(time.Hour)
-	tok, err := s.Create("sub", "a@example.com", "A", []string{"g"}, nil)
+	s := NewMemorySessionStore(time.Hour)
+	tok, err := s.Create(context.Background(), "sub", "a@example.com", "A", []string{"g"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -15,7 +16,7 @@ func TestSessionStoreKeepsAbsoluteExpiry(t *testing.T) {
 	expiry := s.sessions[tok].Expiry
 	s.mu.Unlock()
 
-	sess, ok := s.Get(tok)
+	sess, ok := s.Get(context.Background(), tok)
 	if !ok {
 		t.Fatal("session not found")
 	}
@@ -25,8 +26,8 @@ func TestSessionStoreKeepsAbsoluteExpiry(t *testing.T) {
 }
 
 func TestSessionStoreExpiresAndDeletes(t *testing.T) {
-	s := NewSessionStore(time.Hour)
-	tok, err := s.Create("sub", "", "", nil, nil)
+	s := NewMemorySessionStore(time.Hour)
+	tok, err := s.Create(context.Background(), "sub", "", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestSessionStoreExpiresAndDeletes(t *testing.T) {
 	s.sessions[tok] = sess
 	s.mu.Unlock()
 
-	if _, ok := s.Get(tok); ok {
+	if _, ok := s.Get(context.Background(), tok); ok {
 		t.Fatal("expired session accepted")
 	}
 	s.mu.Lock()

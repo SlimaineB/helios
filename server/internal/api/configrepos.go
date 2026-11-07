@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/store"
 )
 
@@ -201,6 +203,10 @@ func (s *Server) handleSyncConfigRepo(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "config repo not found")
 			return
 		}
+		if errors.Is(err, reconciler.ErrSyncInProgress) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -218,9 +224,21 @@ func (s *Server) triggerConfigRepo(id int64, enabled bool) {
 	if s.reconciler == nil || !enabled {
 		return
 	}
+	s.bgMu.Lock()
+	if s.bgClosed {
+		s.bgMu.Unlock()
+		return
+	}
+	s.bgWG.Add(1)
+	s.bgMu.Unlock()
 	go func() {
-		if err := s.reconciler.Sync(context.Background(), id); err != nil {
-			s.log.Warn("gitops: initial sync failed", "config_repo_id", id, "error", err)
+		defer s.bgWG.Done()
+		ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+		defer cancel()
+		if err := s.reconciler.Sync(ctx, id); err != nil {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, reconciler.ErrSyncInProgress) {
+				s.log.Warn("gitops: initial sync failed", "config_repo_id", id, "error", err)
+			}
 		}
 	}()
 }

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/slim/helios/server/internal/auth"
@@ -39,6 +40,11 @@ type Server struct {
 	notifier      *notify.Notifier
 	downloadsDir  string
 	reconciler    *reconciler.Reconciler
+	bgCtx         context.Context
+	bgCancel      context.CancelFunc
+	bgMu          sync.Mutex
+	bgClosed      bool
+	bgWG          sync.WaitGroup
 }
 
 // SetNotifier enables webhook notifications (nil disables them).
@@ -46,6 +52,16 @@ func (s *Server) SetNotifier(n *notify.Notifier) { s.notifier = n }
 
 // SetReconciler enables the optional GitOps controller endpoints.
 func (s *Server) SetReconciler(r *reconciler.Reconciler) { s.reconciler = r }
+
+// Close cancels background GitOps work and waits for it to release leases
+// before the caller closes the database.
+func (s *Server) Close() {
+	s.bgMu.Lock()
+	s.bgClosed = true
+	s.bgCancel()
+	s.bgMu.Unlock()
+	s.bgWG.Wait()
+}
 
 // notifyEvent enriches the event with the application name and dispatches it.
 func (s *Server) notifyEvent(ctx context.Context, ev notify.Event) {
@@ -61,6 +77,7 @@ func (s *Server) notifyEvent(ctx context.Context, ev notify.Event) {
 }
 
 func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *Server {
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	s := &Server{
 		store:         st,
 		log:           log,
@@ -68,6 +85,8 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 		opAuth:        opAuth,
 		secureCookies: secureCookies,
 		maxHealStreak: 3,
+		bgCtx:         bgCtx,
+		bgCancel:      bgCancel,
 	}
 	if v := envutil.Get("HELIOS_HEAL_MAX_STREAK"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

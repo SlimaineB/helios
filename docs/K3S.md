@@ -114,6 +114,8 @@ helm install helios-server helm/helios-server -n helios \
 - `service.type: LoadBalancer` → Cilium picks a LAN IP (e.g. `192.168.1.107`).
 - `database.dsn` is supplied from the Secret-backed `${DB_PASSWORD}`; the
   server honours `HELIOS_DB` over its `-db` flag.
+- Add `--set replicaCount=3` for a stateless multi-replica hub; PostgreSQL is
+  already configured. See [High availability](HA.md).
 - The operator password lives only in the Secret created by the chart
   (`helios-server-helios-server-operator`); omit `operatorAuth.password` to let
   the chart generate and preserve one, or use `operatorAuth.existingSecret` to

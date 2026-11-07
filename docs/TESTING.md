@@ -33,6 +33,9 @@ HELIOS_TEST_PG='postgres://user:pass@localhost:5432/helios_test' \
   make test
 ```
 
+The Postgres variants cover store CRUD, concurrent replica startup, leases,
+concurrent command claiming and cross-replica operator sessions.
+
 ## 2. Stack smoke test (≈ 30 s)
 
 Start the lab stack once:

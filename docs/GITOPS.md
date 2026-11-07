@@ -180,11 +180,13 @@ The application and instance must belong to the same project.
 
 Each sync:
 
-1. clones/fetches the configured branch into a local mirror;
-2. parses and validates every manifest under `path`;
-3. applies projects, then repositories, then applications, then assignments;
-4. records which objects this config repository owns;
-5. optionally prunes objects that disappeared from Git.
+1. takes the cluster-wide GitOps lease, so only one server replica reconciles
+   config repositories at a time;
+2. clones/fetches the configured branch into a replica-local mirror;
+3. parses and validates every manifest under `path`;
+4. applies projects, then repositories, then applications, then assignments;
+5. records which objects this config repository owns;
+6. optionally prunes objects that disappeared from Git.
 
 Ordering makes references safe: a project exists before its applications, and
 an application exists before its assignment. Pruning runs in reverse order
@@ -226,12 +228,19 @@ hub looks up a repository whose `url` matches the config repository URL to get
 HTTPS/SSH credentials. If no entry exists, the clone is anonymous. Add the
 credentials on the Repositories page first for private config repositories.
 
-The local mirror is scratch state, not a source of truth. It defaults to
-`/tmp/helios-gitops` and can be changed with:
+The local mirror is scratch state, not a source of truth. Each server process
+uses its own directory under `/tmp/helios-gitops/replica-<id>/`, so multiple
+replicas never share a checkout. The base directory can be changed with:
 
 ```sh
 HELIOS_GITOPS_STATE_DIR=/var/lib/helios/gitops
 ```
+
+In a multi-replica deployment the sync lease lives in the shared database.
+Long syncs renew it; if a replica dies, the lease expires after two minutes
+and another replica takes over. A manual sync on another replica returns
+`409 Conflict` while a sync is active instead of racing the lease owner. See
+[High availability](HA.md).
 
 ## API
 
@@ -248,7 +257,8 @@ POST   /api/v1/config-repos/{repoId}/sync
 
 `PUT` accepts partial fields. `poll_interval` is in seconds (minimum 10,
 default 300). `prune` defaults to `false`; `enabled` defaults to `true` on
-create.
+create. `POST /api/v1/config-repos/{repoId}/sync` returns `409` when another
+server replica already owns the GitOps reconciliation lease.
 
 Example:
 

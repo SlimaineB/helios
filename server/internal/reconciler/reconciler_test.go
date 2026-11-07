@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/store"
@@ -147,6 +148,28 @@ spec:
 	}
 	if got.LastCommit == "" || got.LastSummary["deleted"] == 0 {
 		t.Fatalf("status not updated: %+v", got)
+	}
+}
+
+func TestSyncSkipsWhenAnotherReplicaHoldsLease(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "helios.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg, err := st.CreateConfigRepo(ctx, model.ConfigRepo{
+		Name: "cfg", URL: "https://example.com/config.git", Branch: "main", PollInterval: 300, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.AcquireLease(ctx, gitopsLease, "other-replica", time.Minute); err != nil || !ok {
+		t.Fatalf("seed lease: ok=%v err=%v", ok, err)
+	}
+	r := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), t.TempDir())
+	if err := r.Sync(ctx, cfg.ID); !errors.Is(err, ErrSyncInProgress) {
+		t.Fatalf("Sync = %v, want ErrSyncInProgress", err)
 	}
 }
 

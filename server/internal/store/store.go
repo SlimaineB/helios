@@ -14,6 +14,7 @@ var (
 	ErrAlreadyBound = errors.New("already bound")
 	ErrNoCommand    = errors.New("no command to claim")
 	ErrTokenInUse   = errors.New("token already in use")
+	ErrLeaseLost    = errors.New("lease lost")
 )
 
 // Store is the persistence contract. The SQLite implementation lives in
@@ -140,4 +141,15 @@ type Store interface {
 	// Audit log (mutating operator actions)
 	AppendAudit(ctx context.Context, e model.AuditEntry) error
 	ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error)
+
+	// Operator sessions (shared by all server replicas).
+	CreateOperatorSession(ctx context.Context, tokenHash string, sess model.OperatorSession) error
+	GetOperatorSession(ctx context.Context, tokenHash string) (model.OperatorSession, error)
+	DeleteOperatorSession(ctx context.Context, tokenHash string) error
+	DeleteExpiredOperatorSessions(ctx context.Context, before time.Time) error
+
+	// Leases coordinate background work across server replicas.
+	AcquireLease(ctx context.Context, name, owner string, ttl time.Duration) (bool, error)
+	RenewLease(ctx context.Context, name, owner string, ttl time.Duration) error
+	ReleaseLease(ctx context.Context, name, owner string) error
 }

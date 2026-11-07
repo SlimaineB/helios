@@ -6,6 +6,8 @@ package reconciler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,26 +23,53 @@ import (
 	"github.com/slim/helios/server/internal/store"
 )
 
-const scanInterval = 10 * time.Second
+const (
+	scanInterval = 10 * time.Second
+	syncLeaseTTL = 2 * time.Minute
+	gitopsLease  = "gitops:reconcile"
+)
+
+// ErrSyncInProgress means another server replica currently owns the GitOps
+// reconciliation lease.
+var ErrSyncInProgress = errors.New("another GitOps sync is already running")
 
 type Reconciler struct {
 	store    store.Store
 	log      *slog.Logger
 	stateDir string
-	mu       sync.Mutex
+	owner    string
+	sem      chan struct{}
+	wg       sync.WaitGroup
 }
 
 func New(st store.Store, log *slog.Logger, stateDir string) *Reconciler {
 	if stateDir == "" {
 		stateDir = filepath.Join(os.TempDir(), "helios-gitops")
 	}
-	return &Reconciler{store: st, log: log, stateDir: stateDir}
+	owner := newReplicaID()
+	return &Reconciler{
+		store:    st,
+		log:      log,
+		stateDir: filepath.Join(stateDir, "replica-"+owner),
+		owner:    owner,
+		sem:      make(chan struct{}, 1),
+	}
+}
+
+func newReplicaID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return hex.EncodeToString(b[:])
+	}
+	return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
 // Start runs the polling loop until ctx is cancelled. With no config repos it
 // is a harmless no-op, so the feature is opt-in by creating a ConfigRepo.
 func (r *Reconciler) Start(ctx context.Context) {
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		ticker := time.NewTicker(scanInterval)
 		defer ticker.Stop()
 		for {
@@ -53,6 +82,10 @@ func (r *Reconciler) Start(ctx context.Context) {
 		}
 	}()
 }
+
+// Wait blocks until the polling loop returns. Call it after cancelling the
+// Start context during shutdown to let the current sync release its lease.
+func (r *Reconciler) Wait() { r.wg.Wait() }
 
 func (r *Reconciler) runDue(ctx context.Context) {
 	repos, err := r.store.ListConfigRepos(ctx)
@@ -68,40 +101,96 @@ func (r *Reconciler) runDue(ctx context.Context) {
 			continue
 		}
 		if err := r.Sync(ctx, repo.ID); err != nil {
+			if errors.Is(err, ErrSyncInProgress) {
+				continue
+			}
 			r.log.Warn("gitops: sync failed", "config_repo", repo.Name, "error", err)
 		}
 	}
 }
 
-// Sync reconciles one config repo immediately. It is safe to call from an API
-// handler and from the polling loop; a single mutex serializes reconciles.
+// Sync reconciles one config repo immediately. The in-process semaphore avoids
+// duplicate work on one replica; the cluster-wide database lease ensures only
+// one replica reconciles GitOps at a time. This also keeps cross-repository
+// ownership checks and managed-resource writes consistent. Manual API syncs on
+// another replica get ErrSyncInProgress instead of racing the active sync.
 func (r *Reconciler) Sync(ctx context.Context, id int64) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	select {
+	case r.sem <- struct{}{}:
+		defer func() { <-r.sem }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
-	repo, err := r.store.GetConfigRepo(ctx, id)
+	return r.withLease(ctx, gitopsLease, func(ctx context.Context) error {
+		repo, err := r.store.GetConfigRepo(ctx, id)
+		if err != nil {
+			return err
+		}
+		summary := map[string]int{}
+		now := time.Now().UTC()
+
+		commit, reconcileErr := r.reconcile(ctx, repo, summary)
+		if commit == "" {
+			commit = repo.LastCommit
+		}
+		errMsg := ""
+		if reconcileErr != nil {
+			errMsg = reconcileErr.Error()
+		}
+		if err := r.store.UpdateConfigRepoStatus(ctx, repo.ID, now, commit, errMsg, summary); err != nil {
+			r.log.Warn("gitops: update config repo status failed", "config_repo", repo.Name, "error", err)
+		}
+		if reconcileErr != nil {
+			return reconcileErr
+		}
+		r.log.Info("gitops: reconciled", "config_repo", repo.Name, "commit", short(commit), "summary", summary)
+		return nil
+	})
+}
+
+func (r *Reconciler) withLease(ctx context.Context, name string, fn func(context.Context) error) error {
+	ok, err := r.store.AcquireLease(ctx, name, r.owner, syncLeaseTTL)
 	if err != nil {
-		return err
+		return fmt.Errorf("acquire GitOps lease: %w", err)
 	}
-	summary := map[string]int{}
-	now := time.Now().UTC()
+	if !ok {
+		return ErrSyncInProgress
+	}
 
-	commit, reconcileErr := r.reconcile(ctx, repo, summary)
-	if commit == "" {
-		commit = repo.LastCommit
+	leaseCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go r.keepLease(leaseCtx, name, cancel, done)
+	defer func() {
+		cancel()
+		<-done
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer releaseCancel()
+		if relErr := r.store.ReleaseLease(releaseCtx, name, r.owner); relErr != nil {
+			r.log.Warn("gitops: release lease failed", "lease", name, "error", relErr)
+		}
+	}()
+	return fn(leaseCtx)
+}
+
+func (r *Reconciler) keepLease(ctx context.Context, name string, cancel context.CancelFunc, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(syncLeaseTTL / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := r.store.RenewLease(ctx, name, r.owner, syncLeaseTTL); err != nil {
+				if !errors.Is(err, context.Canceled) {
+					r.log.Warn("gitops: lost lease", "lease", name, "error", err)
+				}
+				cancel()
+				return
+			}
+		}
 	}
-	errMsg := ""
-	if reconcileErr != nil {
-		errMsg = reconcileErr.Error()
-	}
-	if err := r.store.UpdateConfigRepoStatus(ctx, repo.ID, now, commit, errMsg, summary); err != nil {
-		r.log.Warn("gitops: update config repo status failed", "config_repo", repo.Name, "error", err)
-	}
-	if reconcileErr != nil {
-		return reconcileErr
-	}
-	r.log.Info("gitops: reconciled", "config_repo", repo.Name, "commit", short(commit), "summary", summary)
-	return nil
 }
 
 func (r *Reconciler) reconcile(ctx context.Context, repo model.ConfigRepo, summary map[string]int) (string, error) {

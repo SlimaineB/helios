@@ -52,6 +52,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+	if store.Kind(*dbPath) == "sqlite" {
+		log.Info("SQLite is single-writer: run one server replica; use PostgreSQL for multi-replica deployments")
+	}
+	_ = st.DeleteExpiredOperatorSessions(context.Background(), time.Now().UTC())
 
 	// One-shot migration: register repo URLs already used by applications so
 	// the Repositories page reflects them (ArgoCD order: repo then app).
@@ -82,7 +86,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	oa := &api.OpAuth{RBAC: rb, BaseURL: *baseURL, Sessions: auth.NewSessionStore(*sessTTL), BasicUser: opUser}
+	oa := &api.OpAuth{RBAC: rb, BaseURL: *baseURL, Sessions: auth.NewDBSessionStore(st, *sessTTL), BasicUser: opUser}
 	if opUser != "" {
 		oa.Basic = func(header string) bool { return auth.CheckBasic(header, opUser, opPass) }
 		log.Info("operator basic admin enabled", "user", opUser)
@@ -138,7 +142,13 @@ func main() {
 	// stop) instead of cutting them off mid-response.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
 	recon.Start(ctx)
+	defer func() {
+		srv.Close()
+		cancel()
+		recon.Wait()
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -161,8 +171,7 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Error("graceful shutdown failed", "error", err)
-			os.Exit(1)
+			log.Error("graceful shutdown timed out; cancelling background work", "error", err)
 		}
 	}
 }
