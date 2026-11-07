@@ -21,6 +21,8 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   own repository, variables, sync interval and drift state.
 - **Operator controls** — Sync, Check, Diff, Logs, rollback to a pinned
   revision, sync windows, audit log and notifications.
+- **Optional GitOps** — poll Git config repositories for Helios manifests and
+  reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
   the hub and read access to Git.
 
@@ -76,6 +78,7 @@ Building from source, running the development demo and tests:
 - [Install](INSTALL.md) — hub (Compose, systemd, Helm) and agents.
 - [Airgap install](AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [k3s reference](K3S.md) — full cluster walkthrough.
+- [Optional GitOps](GITOPS.md) — manage Helios objects from Git manifests.
 - [Authentication & RBAC](AUTH.md) — local admin, OIDC, ArgoCD-style policies.
 - [Releases and packages](RELEASES.md) — GitHub images, binaries and tarballs.
 - [Testing](TESTING.md) — unit, smoke, loop-safety, UI and capacity tests.

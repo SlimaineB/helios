@@ -80,6 +80,10 @@ In the UI, open **Applications → New application** and fill in:
 Assign the application to the instance. Click **Check** to run a dry run, or
 **Sync** to apply it now.
 
+To manage applications, projects, repositories and assignments from Git
+instead, see [Optional GitOps](GITOPS.md). It is disabled until you register a
+config repository.
+
 ## Upgrade
 
 The database is preserved. Re-run the installer with the same options.

@@ -57,6 +57,11 @@ run the additive migrations.
   deleted.
 - `sync_windows.app_id = 0` applies to all applications; a non-zero value is a
   logical reference to one application.
+- `gitops_managed.config_repo_id` refers to `config_repos.id` logically. A
+  config repository delete also removes its ownership rows, but keeps the
+  objects it created.
+- Managed resource names are stored as text (`kind`, `name`), not foreign keys,
+  because they can point at objects in different tables.
 
 ## Tables
 
@@ -242,6 +247,45 @@ Freeze (`deny`) or allow (`allow`) schedules for checks/applies.
 | `enabled` | `INTEGER NOT NULL DEFAULT 1` | `0`/`1` |
 | `created_at` | `TEXT NOT NULL` | Creation timestamp |
 
+### `config_repos`
+
+Optional GitOps config repositories polled by the server reconciler.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | Config repository ID |
+| `name` | `TEXT NOT NULL UNIQUE` | Display name |
+| `url` | `TEXT NOT NULL` | Git URL; credentials are resolved through the matching `repositories.url` |
+| `branch` | `TEXT NOT NULL DEFAULT 'main'` | Branch to clone/fetch |
+| `path` | `TEXT NOT NULL DEFAULT ''` | Subdirectory containing manifests; empty = repository root |
+| `poll_interval` | `INTEGER NOT NULL DEFAULT 300` | Seconds between syncs; minimum 10 |
+| `enabled` | `INTEGER NOT NULL DEFAULT 1` | Poll this config repository (`0`/`1`) |
+| `prune` | `INTEGER NOT NULL DEFAULT 0` | Delete objects that disappeared from Git (`0`/`1`, opt-in) |
+| `last_synced` | `TEXT NOT NULL DEFAULT ''` | Last completed sync timestamp |
+| `last_commit` | `TEXT NOT NULL DEFAULT ''` | Last synced commit |
+| `last_error` | `TEXT NOT NULL DEFAULT ''` | Last sync error, empty on success |
+| `last_summary` | `TEXT NOT NULL DEFAULT '{}'` | JSON counts for created/updated/deleted/unchanged/errors |
+| `created_at` | `TEXT NOT NULL` | Creation timestamp |
+
+The URL is not unique: multiple config repositories may point at the same Git
+repository with different `path` or `branch` values.
+
+### `gitops_managed`
+
+Ownership records used to detect conflicts and to restrict pruning and
+deletion. One row means “this config repository manages this object”.
+
+| Column | Type | Notes |
+|---|---|---|
+| `config_repo_id` | integer `NOT NULL` | Logical reference to `config_repos.id` |
+| `kind` | `TEXT NOT NULL` | `Project`, `Repository`, `Application` or `Assignment` |
+| `name` | `TEXT NOT NULL` | Object name (application/project name, instance/app pair, etc.) |
+| `created_at` | `TEXT NOT NULL` | First ownership timestamp |
+
+Primary key: `(config_repo_id, kind, name)`. There is no foreign key, and
+deleting a config repository explicitly removes its ownership rows while
+leaving the managed objects in place.
+
 ### `audit_log`
 
 One row per mutating operator action. It is append-only from the server's point
@@ -268,6 +312,8 @@ table grows with operator activity.
 | `applications.name` unique | Unique application names |
 | `repositories.url` unique | One registry entry per repository URL |
 | `projects.name` unique | Unique project names |
+| `config_repos.name` unique | Unique config repository names |
+| `gitops_managed` PK `(config_repo_id, kind, name)` | One ownership record per config repo/object |
 | `assignments` PK `(instance_id, app_id)` | One assignment per instance/application pair |
 | `variables` PK `(app_id, key)` | One value per application variable |
 | `assignment_variables` PK `(instance_id, app_id, key)` | One value per per-instance override |
@@ -318,7 +364,9 @@ their history is never cascaded away.
 ## Secrets and backups
 
 - Agent bootstrap tokens are not stored; only `instances.token_hash` is kept.
-- Repository `password` and `ssh_key` values are stored in plaintext.
+- Repository `password` and `ssh_key` values are stored in plaintext. Config
+  repositories do not store credentials themselves; they reuse the matching
+  `repositories` row.
 - `variables.value` and `assignment_variables.value` are stored in plaintext,
   including rows with `is_secret = 1`. The operator API redacts secret values,
   but the database and backups do not encrypt them.

@@ -60,6 +60,9 @@ spec:
   repoRef: app-repo
   branch: main
   path: site.yml
+  vars:
+    env: prod
+    replicas: 2
   autoHeal: true
 ---
 apiVersion: helios.dev/v1alpha1
@@ -96,6 +99,9 @@ spec:
 	}
 	if !app.AutoHeal || app.Project != "team" {
 		t.Fatalf("unexpected app: %+v", app)
+	}
+	if app.Vars != `{"env":"prod","replicas":2}` {
+		t.Fatalf("unexpected app vars: %s", app.Vars)
 	}
 	if _, err := st.GetAssignment(ctx, "ins-1", app.ID); err != nil {
 		t.Fatalf("assignment not created: %v", err)
