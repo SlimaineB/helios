@@ -1,5 +1,6 @@
 import { useState, createContext, useContext, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import HeliosMark from './HeliosMark.jsx'
 import {
   Server, Database, GitBranch, Layers, Clock,
   ChevronLeft, ChevronRight, FileText, Network, RefreshCw
@@ -55,7 +56,7 @@ export default function Sidebar({ can }) {
       <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'mobile-open' : ''}`} role="navigation" aria-label="Main navigation">
         <div className="sidebar-header">
           <div className="brand">
-            <span className="brand-mark">⌁</span>
+            <HeliosMark />
             {!collapsed && (
               <span className="brand-text">
                 <span className="brand-name">Helios</span>
