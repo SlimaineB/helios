@@ -9,8 +9,7 @@ installer downloads a release package and sets up a systemd service.
 
 ## Install in 5 minutes
 
-**Requirements:** a Linux server (amd64 or arm64) with systemd, root access,
-and port `8080` reachable from your browser.
+**Requirements:** a Linux server (amd64 or arm64) with systemd, root access to run the installer, and port `8080` reachable from your browser.
 
 ### 1. Install the hub
 
@@ -47,6 +46,13 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
 
 The agent installs `git`, `ansible-core` and `ansible.posix`, starts
 `helios-agent.service`, and appears in the UI within about 30 seconds.
+
+The installer still needs root (packages, binary, systemd unit). Once installed,
+the `helios-agent` service runs as a non-root `helios-agent` user by default, so
+you can adopt Helios on managed hosts without giving the agent permanent root.
+If a playbook must create system users, install packages, or write outside the
+agent state dir/home, opt that host into root with a systemd override:
+`systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
 ### 3. Add an application
 

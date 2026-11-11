@@ -6,13 +6,16 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/helios-agent -config /etc/helios/agent.yaml
-Environment=HOME=/root
+User=helios-agent
+Group=helios-agent
+Environment=HOME=/var/lib/helios
 Environment=LC_ALL=C.UTF-8
 Restart=always
 RestartSec=10
-# A configuration-management agent runs arbitrary playbooks as root: it must
-# create users, write /etc and persist state under /tmp, so no filesystem or
-# tmp namespace restrictions here.
+# Default: non-root. Playbooks run as this user, so they can manage files the
+# user owns and the state dir. Grant root (User=root in a systemd override)
+# only for playbooks that create system users, install packages, or write
+# outside $StateDir/$HOME.
 
 [Install]
 WantedBy=multi-user.target
