@@ -384,8 +384,11 @@ mirror and one Ansible process per check.
 
 ## Security notes
 
-- Agents run playbooks as **root** on the managed host. Treat the hub and its
-  instance tokens as highly privileged.
+- The installer needs root on the managed host (packages, binary, systemd unit).
+  The `helios-agent` service then runs as a non-root `helios-agent` user by
+  default. Playbooks run as that user; use a systemd override (`User=root`) only
+  for playbooks that create system users, install packages, or write outside the
+  agent state dir/home. Treat the hub and instance tokens as highly privileged.
 - The agent is **fail-closed**: it refuses applies if the hub is unreachable.
 - Secret application variables are redacted by the API, but Ansible output can
   still contain values from your playbooks. Use lookups (SSM/Vault) for real

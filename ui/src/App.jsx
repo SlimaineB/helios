@@ -14,6 +14,7 @@ import ToastContainer from './components/Toast.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
 import Sidebar, { SidebarProvider } from './components/Sidebar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import HeliosMark from './components/HeliosMark.jsx'
 import { Menu } from 'lucide-react'
 
 const Auth = createContext(null)
@@ -167,7 +168,7 @@ function LoginScreen({ realm, onDone }) {
     <div className="login-wrap">
       <div className="login-card">
         <div className="brand login-brand">
-          <span className="brand-mark">⌁</span>
+          <HeliosMark className="login-mark" />
           <span className="brand-text">
             <span className="brand-name">Helios</span>
             <span className="brand-tag">operator sign-in</span>

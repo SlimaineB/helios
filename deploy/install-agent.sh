@@ -175,7 +175,12 @@ EOF
 }
 
 install_unit() {
+    id -u helios-agent >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin helios-agent
     mkdir -p "$STATE_DIR"
+    chown -R helios-agent:helios-agent "$STATE_DIR"
+    chmod 750 "$STATE_DIR"
+    chown helios-agent:helios-agent /etc/helios/agent.yaml 2>/dev/null || true
+    chmod 600 /etc/helios/agent.yaml 2>/dev/null || true
     install -m644 "$SCRIPT_DIR/helios-agent.service" /etc/systemd/system/helios-agent.service
     systemctl daemon-reload
     systemctl enable --now helios-agent
