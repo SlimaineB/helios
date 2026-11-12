@@ -667,6 +667,7 @@ export default function Applications() {
                         >
                           {s.drift > 0 ? 'Review drift' : 'Instances'}
                         </Link>
+                        <button className="btn ghost small" title="Historique des runs" onClick={() => setHistoryApp(a)}>History</button>
                         <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => openEdit(a)}>Edit</button>
                         <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => setVarsApp(a)}>Vars</button>
                         <button className="btn danger small" disabled={!can('applications', 'delete')} onClick={() => confirmDelete(a)}>Delete</button>
