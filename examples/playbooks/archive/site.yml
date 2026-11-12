@@ -13,12 +13,12 @@
   tasks:
     - name: Ensure runtime directory
       ansible.builtin.file:
-        path: /opt/helios-demo45/app
+        path: /opt/helios-demo12/app
         state: directory
         mode: "0755"
 
     - name: Check whether the bundle is already installed
       ansible.builtin.stat:
-        path: /opt/helios-demo45/app/VERSION
+        path: /opt/helios-demo12/app/VERSION
       register: marker
 
