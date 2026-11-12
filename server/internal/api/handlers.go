@@ -21,6 +21,7 @@ import (
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
 	"github.com/slim/helios/server/internal/reconciler"
+	"github.com/slim/helios/server/internal/repocache"
 	"github.com/slim/helios/server/internal/store"
 	"github.com/slim/helios/server/internal/syncwindows"
 )
@@ -40,11 +41,18 @@ type Server struct {
 	notifier      *notify.Notifier
 	downloadsDir  string
 	reconciler    *reconciler.Reconciler
-	bgCtx         context.Context
-	bgCancel      context.CancelFunc
-	bgMu          sync.Mutex
-	bgClosed      bool
-	bgWG          sync.WaitGroup
+	// Agentless tunnel mode: runners authenticate with a shared bearer token
+	// and discover loopback ports allocated to tunnel instances.
+	runnerTokenHash string
+	tunnelGateway   string
+	tunnelPortMin   int
+	tunnelPortMax   int
+	repoCache       *repocache.Cache
+	bgCtx           context.Context
+	bgCancel        context.CancelFunc
+	bgMu            sync.Mutex
+	bgClosed        bool
+	bgWG            sync.WaitGroup
 }
 
 // SetNotifier enables webhook notifications (nil disables them).
@@ -52,6 +60,27 @@ func (s *Server) SetNotifier(n *notify.Notifier) { s.notifier = n }
 
 // SetReconciler enables the optional GitOps controller endpoints.
 func (s *Server) SetReconciler(r *reconciler.Reconciler) { s.reconciler = r }
+
+// SetRunnerToken enables the agentless runner API. An empty token disables it.
+func (s *Server) SetRunnerToken(token string) {
+	if token == "" {
+		s.runnerTokenHash = ""
+		return
+	}
+	s.runnerTokenHash = auth.Hash(token)
+}
+
+// SetTunnelConfig configures the reverse-SSH tunnel bootstrap advertised to
+// operators and the loopback port range allocated to tunnel instances.
+func (s *Server) SetTunnelConfig(gateway string, minPort, maxPort int) {
+	s.tunnelGateway = strings.TrimSpace(gateway)
+	if minPort > 0 {
+		s.tunnelPortMin = minPort
+	}
+	if maxPort >= s.tunnelPortMin {
+		s.tunnelPortMax = maxPort
+	}
+}
 
 // Close cancels background GitOps work and waits for it to release leases
 // before the caller closes the database.
@@ -85,6 +114,8 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 		opAuth:        opAuth,
 		secureCookies: secureCookies,
 		maxHealStreak: 3,
+		tunnelPortMin: 22000,
+		tunnelPortMax: 22999,
 		bgCtx:         bgCtx,
 		bgCancel:      bgCancel,
 	}
@@ -216,6 +247,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	out := make([]InstanceWithApps, 0, len(insts))
 	for _, inst := range insts {
+		inst = s.decorateInstance(inst)
 		as, err := s.appsForInstance(r.Context(), inst.ID, windows)
 		if err != nil {
 			s.internalError(w, r, err)
@@ -275,8 +307,9 @@ func effectiveAutoHeal(app model.Application, a model.Assignment) bool {
 // handleCreateInstance registers a new instance and returns its bootstrap token once.
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string `json:"name"`
-		Project string `json:"project"`
+		Name          string `json:"name"`
+		Project       string `json:"project"`
+		ExecutionMode string `json:"execution_mode"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -287,6 +320,14 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Project = strings.TrimSpace(body.Project)
+	body.ExecutionMode = strings.TrimSpace(body.ExecutionMode)
+	if body.ExecutionMode == "" {
+		body.ExecutionMode = model.ModeAgent
+	}
+	if body.ExecutionMode != model.ModeAgent && body.ExecutionMode != model.ModeTunnel {
+		writeErr(w, http.StatusBadRequest, "execution_mode must be agent|tunnel")
+		return
+	}
 	if !s.requireObject(w, r, "instances.create", body.Project) {
 		return
 	}
@@ -297,22 +338,62 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
+	tunnelPort := 0
+	if body.ExecutionMode == model.ModeTunnel {
+		var err error
+		tunnelPort, err = s.allocateTunnelPort(r.Context())
+		if err != nil {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+	}
 	token, err := auth.NewToken()
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	inst, err := s.store.CreateInstance(r.Context(), model.Instance{
-		ID:        genInstanceID(),
-		Name:      body.Name,
-		Project:   body.Project,
-		TokenHash: auth.Hash(token),
+		ID:            genInstanceID(),
+		Name:          body.Name,
+		Project:       body.Project,
+		ExecutionMode: body.ExecutionMode,
+		TunnelPort:    tunnelPort,
+		TokenHash:     auth.Hash(token),
 	})
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"instance": inst, "token": token})
+	writeJSON(w, http.StatusCreated, map[string]any{"instance": s.decorateInstance(inst), "token": token})
+}
+
+// allocateTunnelPort returns the first free loopback port in the configured
+// range. Tunnel instances are few and created by operators, so a simple scan
+// is enough (and avoids racing with an unused port allocator table).
+func (s *Server) allocateTunnelPort(ctx context.Context) (int, error) {
+	insts, err := s.store.ListTunnelInstances(ctx)
+	if err != nil {
+		return 0, err
+	}
+	used := make(map[int]bool, len(insts))
+	for _, inst := range insts {
+		if inst.TunnelPort > 0 {
+			used[inst.TunnelPort] = true
+		}
+	}
+	min, max := s.tunnelPortMin, s.tunnelPortMax
+	if min <= 0 {
+		min = 22000
+	}
+	if max < min {
+		max = min + 999
+	}
+	for p := min; p <= max; p++ {
+		if !used[p] {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("no free tunnel port in range %d-%d", min, max)
 }
 
 func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +410,7 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	if !s.requireObject(w, r, "instances.get", inst.Project) {
 		return
 	}
+	inst = s.decorateInstance(inst)
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	as, err := s.appsForInstance(r.Context(), inst.ID, windows)
 	if err != nil {
@@ -1110,6 +1192,7 @@ type checkinPayload struct {
 type checkinResponse struct {
 	Applications []model.Application `json:"applications"`
 	Commands     []model.Command     `json:"commands"`
+	RepoCache    bool                `json:"repo_cache"`
 }
 
 func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
@@ -1128,6 +1211,9 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	inst.Hostname = body.Hostname
 	inst.Platform = body.Platform
 	inst.LastSeen = time.Now().UTC()
+	if inst.ExecutionMode == model.ModeTunnel {
+		inst.LastTunnelAt = inst.LastSeen
+	}
 	if err := s.store.UpdateInstance(r.Context(), inst); err != nil {
 		s.internalError(w, r, err)
 		return
@@ -1135,7 +1221,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	metrics.Checkin(inst.ID)
-	resp := checkinResponse{}
+	resp := checkinResponse{RepoCache: s.repoCache != nil}
 	ass, err := s.store.ListAssignments(r.Context(), inst.ID)
 	if err != nil {
 		s.internalError(w, r, err)

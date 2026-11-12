@@ -5,3 +5,9 @@ Helios server is available at {{ .Values.baseUrl | default (printf "the %s servi
 The operator password was generated automatically. Read it with:
   kubectl -n {{ .Release.Namespace }} get secret {{ include "helios-server.operatorSecret" . }} -o jsonpath='{.data.operator-password}' | base64 -d
 {{- end }}
+
+{{- if .Values.repoCache.enabled }}
+
+Repo snapshot cache is enabled at {{ .Values.repoCache.dir | default "/var/cache/helios/repos" }} (ephemeral per pod, {{ .Values.repoCache.sizeLimit | default "5Gi" }} limit, TTL {{ .Values.repoCache.ttl | default "168h" }}, cap {{ .Values.repoCache.maxMB | default 2048 }} MiB).
+Each replica warms its own cache; a restart or newly scheduled pod refetches, and agents fall back to git while the cache is cold.
+{{- end }}

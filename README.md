@@ -54,6 +54,17 @@ If a playbook must create system users, install packages, or write outside the
 agent state dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
+**Outbound-only servers?** Register the instance as *Agentless · reverse SSH
+tunnel* instead. The host opens a reverse SSH tunnel to a bastion where a Helios
+runner executes Ansible; no agent is installed. The UI shows the mode, filters
+instances by mode, and marks bastion-backed nodes in the topology. See
+[Agentless mode](docs/INSTALL.md#agentless-mode--reverse-ssh-tunnel).
+
+**Large fleet?** Enable the hub's [repo snapshot cache](docs/INSTALL.md#repo-snapshot-cache)
+so agents download one immutable tarball per commit instead of cloning the same
+repository on every host. It is size- and age-capped, and agents fall back to
+git automatically if the cache is unavailable.
+
 ### 3. Add an application
 
 In the UI, open **Applications → New application**. Enter the Git repository
@@ -351,13 +362,14 @@ envelope: `{items, total, limit, offset}` so the UI can render Prev/Next.
 
 ### UI
 
-- **Main screen**: one row per (instance, app) — ArgoCD-like status icon
-  (green check = a `--check` would change nothing, red glyph = drift would
-  change things), the **drifting component names**, commit, a per-assignment
-  **Auto-sync switch**, and Sync / Check / **Diff** / **Logs** buttons.
-- **Topology**: a live hub → agents → applications map with SVG assignment
-  edges colored by drift state, search and project/online filters,
-  expand/collapse of long app lists, and a 10s auto-refresh.
+- **Applications and Instances**: switchable **Topology / Cards / List**
+  views, topology by default. The topology is a live hub → instances →
+  applications map with SVG assignment edges colored by drift state and
+  expand/collapse of long app lists.
+- **List view**: ArgoCD-like status icon (green check = a `--check` would
+  change nothing, red glyph = drift would change things), the **drifting
+  component names**, commit, a per-assignment **Auto-sync switch**, and
+  Sync / Check / **Diff** / **Logs** buttons.
 - **Diff modal**: the **pre-apply diff** of the latest `--check` (+`--diff`)
   run — what a Sync would actually change. Also on every check run in the
   history.

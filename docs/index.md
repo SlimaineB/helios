@@ -21,12 +21,16 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   own repository, variables, sync interval and drift state.
 - **Operator controls** — Sync, Check, Diff, Logs, rollback to a pinned
   revision, sync windows, audit log and notifications.
+- **Topology by default** — Applications and Instances switch between an
+  interactive hub → instances → applications map, cards, or a dense list.
 - **Stateless replicas** — database-backed sessions and coordination allow
   multiple server replicas behind a normal load balancer.
 - **Optional GitOps** — poll Git config repositories for Helios manifests and
   reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
   the hub and read access to Git.
+- **Agentless mode** — outbound-only hosts can stay agent-free: a runner on a
+  bastion executes Ansible through a reverse SSH tunnel opened by the host.
 
 ## Architecture
 
@@ -34,23 +38,26 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
 |-----------|------|
 | **Hub** | Go API + React dashboard + SQLite/PostgreSQL. Stores desired state, runs, commands and audit history. |
 | **Agent** | One static Go binary per managed host. Polls the hub, clones the playbooks, runs Ansible, reports results. |
+| **Bastion runner** | Optional runner for agentless hosts. Polls the hub and executes Ansible through a reverse SSH tunnel. |
 | **Git** | Source of truth for playbooks and variables. |
-| **Managed hosts** | Machines reconciled by the agents. |
+| **Managed hosts** | Machines reconciled by the agents, or reached through the bastion runner. |
 
 ```text
                     ┌──────────────┐
   Git repositories ─┤     Hub      ├─ Dashboard / API
-                    └──────┬───────┘
-                           │ HTTPS (poll, check-in, results)
-                 ┌─────────┴─────────┐
-                 │                   │
-           ┌─────▼─────┐       ┌─────▼─────┐
-           │  agent-1  │       │  agent-2  │
-           └─────┬─────┘       └─────┬─────┘
-                 │ ansible-playbook  │
-           ┌─────▼─────┐       ┌─────▼─────┐
-           │  host A   │       │  host B   │
-           └───────────┘       └───────────┘
+                    └───┬──────┬───┘
+                        │      │ HTTPS (poll, check-in, results)
+              ┌─────────▼─┐  ┌─▼───────────────┐
+              │  agent-1  │  │ bastion runner  │
+              └─────┬─────┘  └───────┬─────────┘
+                    │                │ ssh 127.0.0.1:<port>
+                    │                ▼
+                    │        reverse SSH tunnel
+                    │        (opened by host B)
+                    │                │
+              ┌─────▼─────┐    ┌─────▼─────┐
+              │  host A   │    │  host B   │
+              └───────────┘    └───────────┘
 ```
 
 ## Install in 5 minutes

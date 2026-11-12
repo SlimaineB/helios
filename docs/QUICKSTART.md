@@ -27,7 +27,8 @@ and UI, creates the `helios` system user, and starts `helios-server.service`.
 The database is stored in `/var/lib/helios/helios.db`.
 
 Open **http://YOUR_SERVER_IP:8080** and sign in as `admin` with the password from
-the command above.
+the command above. Applications and Instances open in **Topology** by default;
+use the **Topology / Cards / List** switch in the toolbar to change the view.
 
 Verify the installation:
 
@@ -67,6 +68,11 @@ appears in the UI within about 30 seconds.
 systemctl status helios-agent
 journalctl -u helios-agent -f
 ```
+
+> **Outbound-only host?** When registering, choose **Agentless · reverse SSH
+> tunnel** instead. The host opens a reverse tunnel to a bastion; a Helios
+> runner there executes Ansible. See
+> [Agentless mode](INSTALL.md#agentless-mode--reverse-ssh-tunnel).
 
 ## 3. Add an application
 

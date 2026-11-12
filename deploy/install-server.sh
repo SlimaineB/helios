@@ -25,6 +25,14 @@ TLS_CERT=""
 TLS_KEY=""
 DOWNLOAD_DIR="/usr/share/helios/downloads"
 AGENT_TARBALLS=""
+RUNNER_TOKEN="${HELIOS_RUNNER_TOKEN:-}"
+TUNNEL_GATEWAY="${HELIOS_TUNNEL_GATEWAY:-}"
+TUNNEL_PORT_MIN="${HELIOS_TUNNEL_PORT_MIN:-22000}"
+TUNNEL_PORT_MAX="${HELIOS_TUNNEL_PORT_MAX:-22999}"
+REPO_CACHE_DIR="${HELIOS_REPO_CACHE_DIR:-}"
+REPO_CACHE_TTL="${HELIOS_REPO_CACHE_TTL:-168h}"
+REPO_CACHE_MAX_MB="${HELIOS_REPO_CACHE_MAX_MB:-2048}"
+REPO_CACHE_RESOLVE_TTL="${HELIOS_REPO_CACHE_RESOLVE_TTL:-30s}"
 
 usage() {
     cat <<'EOF'
@@ -42,6 +50,14 @@ Usage: install-server.sh --binary PATH --ui DIR --operator-password SECRET [opti
   --tls-key FILE           private key for --tls-cert
   --agent-tarball FILE     publish an agent tarball from the hub (repeatable)
   --downloads-dir DIR      hub download directory (default: /usr/share/helios/downloads)
+  --runner-token TOKEN     shared bastion runner token (enables agentless mode)
+  --tunnel-gateway SSH     SSH destination shown for tunnel instances
+  --tunnel-port-min N      first hub loopback port (default: 22000)
+  --tunnel-port-max N      last hub loopback port (default: 22999)
+  --repo-cache-dir DIR     enable the repo snapshot cache (e.g. /var/lib/helios/repo-cache)
+  --repo-cache-ttl DUR     delete snapshots older than DUR (default: 168h)
+  --repo-cache-max-mb N    snapshot cache size cap in MiB (default: 2048)
+  --repo-cache-resolve-ttl DUR  branch resolution reuse (default: 30s)
 EOF
     exit 1
 }
@@ -61,6 +77,14 @@ while [ $# -gt 0 ]; do
         --agent-tarball) AGENT_TARBALLS="$AGENT_TARBALLS
 $2"; shift 2 ;;
         --downloads-dir) DOWNLOAD_DIR=$2; shift 2 ;;
+        --runner-token) RUNNER_TOKEN=$2; shift 2 ;;
+        --tunnel-gateway) TUNNEL_GATEWAY=$2; shift 2 ;;
+        --tunnel-port-min) TUNNEL_PORT_MIN=$2; shift 2 ;;
+        --tunnel-port-max) TUNNEL_PORT_MAX=$2; shift 2 ;;
+        --repo-cache-dir) REPO_CACHE_DIR=$2; shift 2 ;;
+        --repo-cache-ttl) REPO_CACHE_TTL=$2; shift 2 ;;
+        --repo-cache-max-mb) REPO_CACHE_MAX_MB=$2; shift 2 ;;
+        --repo-cache-resolve-ttl) REPO_CACHE_RESOLVE_TTL=$2; shift 2 ;;
         *) echo "unknown option: $1" >&2; usage ;;
     esac
 done
@@ -125,6 +149,9 @@ if [ -n "$AGENT_TARBALLS" ]; then
 fi
 
 install -d -m 0750 -o helios -g helios /var/lib/helios
+if [ -n "$REPO_CACHE_DIR" ]; then
+    install -d -m 0750 -o helios -g helios "$REPO_CACHE_DIR"
+fi
 install -d -m 0700 -o root -g root /etc/helios
 
 RBAC_ENV=""
@@ -151,6 +178,18 @@ umask 077
     if [ -n "$TLS_CERT_ENV" ]; then printf 'HELIOS_TLS_CERT=%s\n' "$TLS_CERT_ENV"; fi
     if [ -n "$TLS_KEY_ENV" ]; then printf 'HELIOS_TLS_KEY=%s\n' "$TLS_KEY_ENV"; fi
     printf 'HELIOS_DOWNLOADS_DIR=%s\n' "$DOWNLOAD_DIR"
+    if [ -n "$RUNNER_TOKEN" ]; then printf 'HELIOS_RUNNER_TOKEN=%s\n' "$RUNNER_TOKEN"; fi
+    if [ -n "$TUNNEL_GATEWAY" ]; then printf 'HELIOS_TUNNEL_GATEWAY=%s\n' "$TUNNEL_GATEWAY"; fi
+    if [ -n "$RUNNER_TOKEN" ]; then
+        printf 'HELIOS_TUNNEL_PORT_MIN=%s\n' "$TUNNEL_PORT_MIN"
+        printf 'HELIOS_TUNNEL_PORT_MAX=%s\n' "$TUNNEL_PORT_MAX"
+    fi
+    if [ -n "$REPO_CACHE_DIR" ]; then
+        printf 'HELIOS_REPO_CACHE_DIR=%s\n' "$REPO_CACHE_DIR"
+        printf 'HELIOS_REPO_CACHE_TTL=%s\n' "$REPO_CACHE_TTL"
+        printf 'HELIOS_REPO_CACHE_MAX_MB=%s\n' "$REPO_CACHE_MAX_MB"
+        printf 'HELIOS_REPO_CACHE_RESOLVE_TTL=%s\n' "$REPO_CACHE_RESOLVE_TTL"
+    fi
 } > /etc/helios/server.env
 chmod 0600 /etc/helios/server.env
 umask 022

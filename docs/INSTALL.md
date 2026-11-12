@@ -3,11 +3,13 @@
 Helios has two parts:
 
 1. **Hub** — Go server + React UI + database. Runs on one host or in Kubernetes.
-2. **Agents** — one Go binary per managed host. It clones the assigned playbooks,
-   runs `ansible-playbook --check`, reports drift and can apply on demand.
+2. **Execution side** — an agent per managed host, or a **runner** on a bastion
+   for agentless hosts. The agent clones the assigned playbooks, runs
+   `ansible-playbook --check`, reports drift and can apply on demand.
 
-The hub never needs SSH access to the managed hosts. Agents only need outbound
-HTTPS to the hub and read access to the git repositories.
+The hub itself never needs SSH access to the managed hosts. Agents only need
+outbound HTTPS to the hub and read access to the git repositories. Agentless
+hosts use an outbound reverse SSH tunnel instead.
 
 ## Requirements
 
@@ -17,6 +19,7 @@ HTTPS to the hub and read access to the git repositories.
 | Hub DB | SQLite (default) or PostgreSQL 14+ |
 | Multi-replica hub | PostgreSQL 14+ is required; SQLite is single-writer |
 | Optional GitOps | `git` and `openssh-client` on the hub; not needed if you only use the manual API/UI |
+| Repo snapshot cache | `git` on the hub and a writable cache directory (per-pod `emptyDir` on Kubernetes; included in the server image) |
 | Hub exposure | HTTPS recommended (reverse proxy or `-tls-cert`/`-tls-key`) |
 | Agent | Linux amd64/arm64, `git`, `ansible-core` + `ansible.posix` |
 | Network | Agent → hub HTTPS; agent → git repo HTTPS/SSH |
@@ -122,6 +125,9 @@ runs its SQLite/Postgres migrations automatically at startup.
 | `HELIOS_OPERATOR_PASSWORD` | **required** | Local password; choose a strong one |
 | `HELIOS_IMAGE` | `ghcr.io/slimaineb/helios-server:latest` | Release image (override to pin a version) |
 | `HELIOS_POSTGRES_PASSWORD` | required with the overlay | Postgres password |
+| `HELIOS_REPO_CACHE_TTL` | `168h` | Snapshot age cap (`0` disables) |
+| `HELIOS_REPO_CACHE_MAX_MB` | `2048` | Snapshot size cap in MiB (`0` disables) |
+| `HELIOS_REPO_CACHE_RESOLVE_TTL` | `30s` | Branch resolution reuse (`0` fetches every request) |
 
 OIDC and RBAC are configured with environment variables or a mounted file. See
 [Operator authentication & RBAC](AUTH.md).
@@ -371,6 +377,171 @@ mirror and one Ansible process per check.
 
 ---
 
+## Agentless mode — reverse SSH tunnel
+
+Use this mode for hosts that only allow **outbound** connections (no inbound
+SSH from the hub). The managed host keeps a reverse tunnel open to a bastion;
+a Helios **runner** on that bastion executes the same Ansible checks/applies
+through the tunnel. No Helios agent runs on the managed host, but it still needs
+`python3` for Ansible (install `ansible-core` only on the runner).
+
+Traffic path: `runner (bastion) → ssh → 127.0.0.1:<port> (tunnel) → sshd on managed host`.
+
+```text
+┌────────────────────┐   HTTPS poll / results   ┌──────────────────────┐
+│ Helios hub         │ ◀──────────────────────▶ │ Bastion              │
+│ control plane      │                          │ helios-runner        │
+└────────────────────┘                          └──────────┬───────────┘
+                                                           │ ssh 127.0.0.1:22000
+                                                           ▼
+                                              reverse SSH tunnel endpoint
+                                                           │
+                                          opened outbound by the managed host
+                                                           │
+                                                           ▼
+                                              ┌──────────────────────┐
+                                              │ Managed host         │
+                                              │ sshd :22 · python3   │
+                                              └──────────────────────┘
+```
+
+The UI shows the mode on every instance (`agent` or `tunnel`), provides a
+**Mode** filter on the Instances page, and marks bastion-backed nodes in the
+**Topology** view available from both Applications and Instances. The instance
+detail page renders the same path and shows the bastion gateway, tunnel port
+and last tunnel activity.
+
+Both Applications and Instances open in **Topology** by default. Use the
+**Topology / Cards / List** switch in the toolbar to change the view; the choice
+is remembered in the browser.
+
+### 1. Configure the hub
+
+```sh
+HELIOS_RUNNER_TOKEN=<long-random-shared-secret>
+HELIOS_TUNNEL_GATEWAY=helios-tunnel@bastion.example.com
+HELIOS_TUNNEL_PORT_MIN=22000
+HELIOS_TUNNEL_PORT_MAX=22999
+```
+
+With Helm, set `runner.token`, `runner.tunnelGateway`, `runner.tunnelPortMin`
+and `runner.tunnelPortMax` (or `runner.existingSecret` with key `runner-token`).
+An empty runner token disables the runner API (`503`).
+
+### 2. Prepare the bastion
+
+Create a dedicated tunnel account; its only job is accepting remote forwards:
+
+```sshdconfig
+# /etc/ssh/sshd_config on the bastion
+GatewayPorts no
+AllowTcpForwarding remote
+```
+
+Authorize each managed host's tunnel key with one exact listen port (repeat per
+instance, replacing `22000` with the port shown in the UI):
+
+```text
+restrict,port-forwarding,permitlisten="127.0.0.1:22000" ssh-ed25519 AAAA... tunnel@web-prod-01
+```
+
+Install the runner and its SSH identity used toward managed hosts (get
+`helios-runner` from the release artifacts, or build it from `agent/` with
+`go build ./cmd/runner`). The bastion needs `git`, `ansible-core`,
+`ansible.posix` and `openssh-client`; the managed hosts need only `python3`.
+
+```sh
+sudo useradd --system --home /var/lib/helios/runner --shell /usr/sbin/nologin helios-runner
+sudo install -m 0755 helios-runner /usr/local/bin/helios-runner
+sudo install -m 0644 deploy/helios-runner.service /etc/systemd/system/helios-runner.service
+sudo install -d -m 0750 -o helios-runner -g helios-runner /etc/helios
+sudo install -m 0600 -o helios-runner -g helios-runner ./runner_id /etc/helios/runner_id
+sudo install -m 0640 -o root -g helios-runner deploy/runner.env.example /etc/helios/runner.env
+sudo editor /etc/helios/runner.env   # HELIOS_SERVER, HELIOS_RUNNER_TOKEN, SSH user/key
+sudo systemctl daemon-reload
+sudo systemctl enable --now helios-runner
+```
+
+The runner discovers tunnel instances from the hub and starts one agent loop
+per instance. It only marks an instance online when the loopback port accepts a
+TCP connection.
+
+### 3. Register the instance and open the tunnel
+
+In **Instances → Register**, choose **Agentless · reverse SSH tunnel**. Copy the
+generated command to the managed host and run it under systemd (or your process
+manager):
+
+```sh
+ssh -N -T \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:22000:127.0.0.1:22 \
+  helios-tunnel@bastion.example.com
+```
+
+The instance becomes online on the next runner poll. From then on, checks,
+applies, drift state and commands are identical to the agent mode.
+
+> The tunnel key is powerful: it can forward to the host's sshd. Use a
+> dedicated key per host, `restrict` + `permitlisten` above, and never reuse an
+> operator key. Keep the runner token secret and serve the hub over HTTPS.
+
+---
+
+## Repo snapshot cache
+
+By default every agent clones or fetches its repository directly. On a fleet
+that means the same git server sees one fetch per host and per app. The hub can
+instead keep a bare mirror per repository and an immutable tarball per resolved
+commit; agents download the tarball once and skip git entirely for unchanged
+commits. If the cache misses, cannot resolve a revision (for example a semver
+range), or is unavailable, agents automatically fall back to the normal git
+sync.
+
+The cache is embedded in the hub process and uses a local directory. In
+Kubernetes each replica gets its own ephemeral `emptyDir`, so no shared PVC or
+ReadWriteMany storage class is involved. The cache is disposable and bounded by
+both age and size:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `HELIOS_REPO_CACHE_DIR` | empty (disabled) | Cache directory; set to enable |
+| `HELIOS_REPO_CACHE_TTL` | `168h` | Delete snapshots older than 7 days (`0` disables) |
+| `HELIOS_REPO_CACHE_MAX_MB` | `2048` | Evict least-recently-used snapshots above 2 GiB (`0` disables) |
+| `HELIOS_REPO_CACHE_RESOLVE_TTL` | `30s` | Reuse a branch resolution this long (`0` fetches every request) |
+
+For the systemd installer, add
+`--repo-cache-dir /var/lib/helios/repo-cache` (optionally `--repo-cache-ttl`,
+`--repo-cache-max-mb` and `--repo-cache-resolve-ttl`) and ensure `git` is
+installed on the hub.
+
+With Helm, enable the per-replica cache and size it for your repositories:
+
+```sh
+helm upgrade --install helios ./helm/helios-server \
+  --set repoCache.enabled=true \
+  --set repoCache.sizeLimit=5Gi \
+  --set repoCache.maxMB=2048
+```
+
+The chart mounts an `emptyDir` into every hub replica. Each replica warms its
+own cache independently; after a restart or reschedule it refetches from the
+upstream git server, and agents fall back to git while the cache is cold. This
+removes the previous shared PVC/RWX requirement and works the same on single-
+node and multi-node clusters. Size `repoCache.sizeLimit` against the node's
+local disk (the limit is per pod), and keep `repoCache.maxMB` below it for the
+snapshot portion.
+
+Docker Compose enables the cache automatically on the `helios-repo-cache`
+volume (bounded by the same defaults). Snapshots are the bulk of the disk use
+and are evicted by age/size; bare mirrors are kept for incremental fetches and
+removed after 30 days without use, so deleted apps eventually free their
+history.
+
+---
+
 ## Post-install checklist
 
 - [ ] Change the default `admin` password (or disable basic auth and use OIDC).
@@ -379,6 +550,8 @@ mirror and one Ansible process per check.
 - [ ] Back up the database volume before the first upgrade.
 - [ ] Restrict the hub port/API to your network.
 - [ ] Install agents on the managed hosts; assign apps and run a first check.
+- [ ] For outbound-only hosts, configure the runner and tunnel gateway (see Agentless mode).
+- [ ] Enable the repo snapshot cache for larger fleets (see Repo snapshot cache).
 - [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
 - [ ] Read the [convergence pitfalls](DEVELOPMENT.md#convergence-pitfalls) before writing playbooks.
 
@@ -390,6 +563,10 @@ mirror and one Ansible process per check.
   for playbooks that create system users, install packages, or write outside the
   agent state dir/home. Treat the hub and instance tokens as highly privileged.
 - The agent is **fail-closed**: it refuses applies if the hub is unreachable.
+- In agentless mode the bastion runner holds SSH keys for managed hosts and the
+  shared runner token can enumerate/act on every tunnel instance. Run it on a
+  dedicated bastion, restrict `HELIOS_RUNNER_TOKEN`, and keep tunnel keys
+  forwarding-only with per-instance `permitlisten`.
 - Secret application variables are redacted by the API, but Ansible output can
   still contain values from your playbooks. Use lookups (SSM/Vault) for real
   secrets and avoid `--diff`/debug output that prints them.

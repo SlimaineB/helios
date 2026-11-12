@@ -51,6 +51,32 @@ database:
 healing:
   maxDriftStreak: 3
 
+# Agentless (reverse SSH tunnel) mode. The runner API is disabled when no token
+# is configured. The gateway is the SSH destination shown to operators, for
+# example "helios-tunnel@bastion.example.com"; ports are allocated on the hub
+# loopback from this range for each tunnel instance.
+runner:
+  token: ""
+  # existingSecret: name of a Secret holding key `runner-token`.
+  existingSecret: ""
+  tunnelGateway: ""
+  tunnelPortMin: 22000
+  tunnelPortMax: 22999
+
+# Per-replica repo snapshot cache. Agents download an immutable tarball for the
+# resolved commit instead of cloning every repository from the git server.
+# Each pod gets its own ephemeral emptyDir, so no shared PVC or RWX storage is
+# required. A restart loses the cache and the replica simply refetches; agents
+# fall back to git whenever the cache is cold or unavailable. Snapshots are
+# capped by age and total size, and the emptyDir itself is bounded.
+repoCache:
+  enabled: false
+  dir: /var/cache/helios/repos
+  sizeLimit: 5Gi     # emptyDir size limit per pod; tune to the node disk
+  ttl: 168h          # delete snapshots older than 7 days (0 disables)
+  maxMB: 2048        # evict least-recently-used snapshots above 2 GiB (0 disables)
+  resolveTTL: 30s    # reuse a branch resolution this long (0 = fetch every request)
+
 # HTTP Basic auth protecting the operator UI + API. When password is empty and
 # no existingSecret is set, the chart generates one and keeps it across upgrades.
 operatorAuth:

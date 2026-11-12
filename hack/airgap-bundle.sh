@@ -120,6 +120,7 @@ fetch_asset() {
 fetch_asset checksums.txt
 if [ "$COMPONENT" = both ] || [ "$COMPONENT" = server ]; then
     fetch_asset "helios-server-${VERSION}-linux-${ARCH}.tar.gz"
+    fetch_asset "helios-runner-${VERSION}-linux-${ARCH}.tar.gz"
 fi
 if [ "$COMPONENT" = both ] || [ "$COMPONENT" = agent ]; then
     fetch_asset "helios-agent-${VERSION}-linux-${ARCH}.tar.gz"
@@ -134,13 +135,15 @@ verify_asset() {
 }
 if [ "$COMPONENT" = both ] || [ "$COMPONENT" = server ]; then
     verify_asset "helios-server-${VERSION}-linux-${ARCH}.tar.gz"
+    verify_asset "helios-runner-${VERSION}-linux-${ARCH}.tar.gz"
 fi
 if [ "$COMPONENT" = both ] || [ "$COMPONENT" = agent ]; then
     verify_asset "helios-agent-${VERSION}-linux-${ARCH}.tar.gz"
 fi
 
 cp deploy/install-server.sh deploy/install-agent.sh deploy/install-airgap.sh \
-    deploy/helios-server.service deploy/helios-agent.service "$BUNDLE/install/"
+    deploy/helios-server.service deploy/helios-agent.service \
+    deploy/helios-runner.service deploy/runner.env.example "$BUNDLE/install/"
 chmod +x "$BUNDLE/install/install-server.sh" "$BUNDLE/install/install-agent.sh" \
     "$BUNDLE/install/install-airgap.sh"
 cp deploy/install-airgap.sh "$BUNDLE/install-airgap.sh"

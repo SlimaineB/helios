@@ -3,7 +3,10 @@
 The Helios server is designed to be **stateless at the process level**: HTTP
 requests can land on any replica, and the shared database is the only source of
 truth. You can run several server replicas behind a load balancer without
-sticky sessions, as long as the database is PostgreSQL.
+sticky sessions, as long as the database is PostgreSQL. The optional repo
+snapshot cache is derived data: each replica keeps its own disposable cache,
+so there is no shared volume to coordinate and a cold replica simply refetches
+from git (or from upstream) when needed.
 
 SQLite remains the simple single-host default. It is **not** supported for
 multiple server replicas: it is a single-writer database and a database file
@@ -17,7 +20,8 @@ cannot be safely shared between hosts.
 | Sessions | Stored in PostgreSQL (`operator_sessions`), no shared secret or sticky cookie required |
 | Load balancer | Plain HTTP/HTTPS round-robin or least-connections; no affinity needed |
 | GitOps | Optional; coordinated by database leases, safe across replicas |
-| Local disk | Only ephemeral scratch space (`/tmp` or `HELIOS_GITOPS_STATE_DIR`) |
+| Repo cache | Optional; per-replica `emptyDir` bounded by TTL/size, no shared PVC or RWX storage |
+| Local disk | Ephemeral scratch space (`/tmp`, `HELIOS_GITOPS_STATE_DIR` and the per-pod cache) |
 | Config | Same image, RBAC file, OIDC settings and webhook settings on every replica |
 | Clocks | NTP-synchronized hosts; session and lease expiries use server time |
 
@@ -37,8 +41,11 @@ helm upgrade --install helios helm/helios-server \
 The chart:
 
 - rejects multiple replicas with the default SQLite backend;
-- mounts `/tmp` as an `emptyDir` for Git mirrors and temporary SSH files;
+- mounts `/tmp` as an `emptyDir` for temporary SSH files;
 - does not mount the SQLite PVC when `database.dsn` is set;
+- gives each replica an ephemeral repo snapshot cache (`repoCache.enabled`);
+  no shared PVC is required and caches are rebuilt independently after a
+  restart or reschedule;
 - keeps using the existing liveness/readiness probes (health checks the DB).
 
 Use a PodDisruptionBudget and anti-affinity in production if your platform does

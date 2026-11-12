@@ -151,7 +151,21 @@ func (r *Repo) head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// Head returns the commit SHA of an existing git work tree. It is empty for a
+// snapshot extraction, which has no .git directory.
+func Head(ctx context.Context, dir string) (string, error) {
+	r := Repo{Dir: dir}
+	return r.head(ctx)
+}
+
 func (r *Repo) clone(ctx context.Context, c Creds, env []string) error {
+	// The directory may hold a snapshot extraction (no .git) after the cache
+	// went away. A git clone refuses non-empty targets, so clear it first.
+	if _, err := os.Stat(filepath.Join(r.Dir, ".git")); err != nil {
+		if err := os.RemoveAll(r.Dir); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(r.Dir, 0o755); err != nil {
 		return err
 	}
@@ -180,7 +194,7 @@ func (r *Repo) fetch(ctx context.Context, c Creds, env []string) error {
 		args = gitArgs(c.InsecureSkipVerify,
 			"git", "-C", r.Dir, "fetch", "origin", "tag", r.Target)
 	} else {
-		args = gitArgs(c.InsecureSkipVerify, "git", "-C", r.Dir, "fetch", "origin", r.Target)
+		args = gitArgs(c.InsecureSkipVerify, "git", "-C", r.Dir, "fetch", "origin", "--", r.Target)
 	}
 	out, err := runGit(ctx, env, args...)
 	if err != nil {
@@ -218,6 +232,10 @@ func runGit(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Env = append(os.Environ(), env...)
+	// A git helper (ssh, credential helper) can inherit stdout/stderr and keep
+	// the pipe open after the main process is killed. WaitDelay prevents
+	// CombinedOutput from blocking forever in that case.
+	cmd.WaitDelay = 10 * time.Second
 	return cmd.CombinedOutput()
 }
 

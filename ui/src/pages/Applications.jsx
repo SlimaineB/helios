@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { GitCommit, LayoutGrid, List } from 'lucide-react'
+import { GitCommit, LayoutGrid, List, Network } from 'lucide-react'
 import { api, DEFAULT_PROJECT, projectForUi, projectForApi, projectLabel } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
@@ -10,22 +10,25 @@ import HealthBadge from '../components/HealthBadge.jsx'
 import ApplicationCard from '../components/ApplicationCard.jsx'
 import ApplicationHistory from '../components/ApplicationHistory.jsx'
 import ApplicationDetail from '../components/ApplicationDetail.jsx'
+import TopologyView from '../components/TopologyView.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
 const FETCH_ALL = 500
+const MAX_INSTANCES = 10000
 
 async function fetchAllInstances() {
   const all = []
   let offset = 0
   let total = Infinity
-  while (all.length < total) {
+  while (all.length < total && all.length < MAX_INSTANCES) {
     const d = await api.instances(`?limit=${FETCH_ALL}&offset=${offset}`)
-    all.push(...d.items)
-    total = d.total
-    if (!d.items.length) break
-    offset += d.items.length
+    const items = Array.isArray(d.items) ? d.items : []
+    if (!items.length) break
+    all.push(...items)
+    total = Number.isFinite(Number(d.total)) ? Number(d.total) : all.length
+    offset += items.length
   }
   return all
 }
@@ -57,7 +60,10 @@ export default function Applications() {
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [repoFilter, setRepoFilter] = useState(searchParams.get('repo') || '')
-  const [view, setView] = useState(() => (localStorage.getItem('anh_apps_view') === 'table' ? 'table' : 'cards'))
+  const [view, setView] = useState(() => {
+    const saved = localStorage.getItem('helios_apps_view')
+    return saved === 'cards' || saved === 'table' ? saved : 'topology'
+  })
   const focusAppId = useMemo(() => {
     const raw = Number(searchParams.get('app'))
     return Number.isInteger(raw) && raw > 0 ? raw : null
@@ -105,7 +111,7 @@ export default function Applications() {
 
   const changeView = (v) => {
     setView(v)
-    localStorage.setItem('anh_apps_view', v)
+    localStorage.setItem('helios_apps_view', v)
   }
 
   const changeSearch = (value) => {
@@ -324,6 +330,16 @@ export default function Applications() {
     })
   }, [apps, search, projectFilter, repoFilter, focusAppId])
 
+  const topologyInstances = useMemo(() => {
+    const appIds = new Set(filteredApps.map((a) => a.id))
+    return instances
+      .map((inst) => ({
+        ...inst,
+        apps: (inst.apps || []).filter((a) => appIds.has(a.application.id)),
+      }))
+      .filter((inst) => inst.apps.length > 0)
+  }, [instances, filteredApps])
+
   if (loading) {
     return (
       <section>
@@ -391,6 +407,14 @@ export default function Applications() {
           <div className="seg" role="group" aria-label="View mode">
             <button
               type="button"
+              className={'seg-btn' + (view === 'topology' ? ' active' : '')}
+              onClick={() => changeView('topology')}
+              title="Topology view"
+            >
+              <Network size={14} /> Topology
+            </button>
+            <button
+              type="button"
               className={'seg-btn' + (view === 'cards' ? ' active' : '')}
               onClick={() => changeView('cards')}
               title="Card view"
@@ -401,9 +425,9 @@ export default function Applications() {
               type="button"
               className={'seg-btn' + (view === 'table' ? ' active' : '')}
               onClick={() => changeView('table')}
-              title="Table view"
+              title="List view"
             >
-              <List size={14} /> Table
+              <List size={14} /> List
             </button>
           </div>
         </div>
@@ -531,6 +555,11 @@ export default function Applications() {
               : 'No applications match this search.'}
           </p>
         </div>
+      ) : view === 'topology' ? (
+        <TopologyView
+          instances={topologyInstances}
+          emptyMessage="No assignment matches these filters."
+        />
       ) : view === 'cards' ? (
         <div className="cards-grid">
           {filteredApps.map((a) => (

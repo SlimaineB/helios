@@ -23,11 +23,16 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
             <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} aria-hidden="true" />
             <div className="instance-title">
               <Link to={`/instances/${instance.id}`} className="instance-link"><strong>{instance.name}</strong></Link>
-<span className="instance-meta">
+            </div>
+            <span className="instance-meta">
+              <Badge
+                state={instance.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
+                label={instance.execution_mode === 'tunnel' ? 'bastion' : 'agent'}
+                small
+              />
               <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
               {instance.id} · {instance.project || 'global'}
             </span>
-            </div>
           </div>
           <div className="card-actions">
             <span className="muted">Not assigned</span>
@@ -44,11 +49,16 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
           <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} aria-hidden="true" />
           <div className="instance-title">
             <Link to={`/instances/${instance.id}`} className="instance-link"><strong>{instance.name}</strong></Link>
-            <span className="instance-meta">
-              <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
-              {instance.id} · {instance.project || 'global'}
-            </span>
           </div>
+          <span className="instance-meta">
+            <Badge
+              state={instance.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
+              label={instance.execution_mode === 'tunnel' ? 'bastion' : 'agent'}
+              small
+            />
+            <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
+            {instance.id} · {instance.project || 'global'}
+          </span>
         </div>
         <div className="card-actions">
           <span className={`state-badge ${instance.state}`}>{stateLabel(instance.state)}</span>

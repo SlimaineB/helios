@@ -2,11 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -27,6 +30,9 @@ CREATE TABLE IF NOT EXISTS instances (
   hostname    TEXT NOT NULL DEFAULT '',
   platform    TEXT NOT NULL DEFAULT '',
   project     TEXT NOT NULL DEFAULT '',
+  execution_mode TEXT NOT NULL DEFAULT 'agent',
+  tunnel_port INTEGER NOT NULL DEFAULT 0,
+  last_tunnel_at TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
 
@@ -211,6 +217,9 @@ CREATE TABLE IF NOT EXISTS instances (
   hostname    TEXT NOT NULL DEFAULT '',
   platform    TEXT NOT NULL DEFAULT '',
   project     TEXT NOT NULL DEFAULT '',
+  execution_mode TEXT NOT NULL DEFAULT 'agent',
+  tunnel_port INTEGER NOT NULL DEFAULT 0,
+  last_tunnel_at TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
 
@@ -383,6 +392,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 type sqlstore struct {
 	db     *sql.DB
 	driver string // "sqlite" or "pgx"
+
+	lockMu sync.Mutex
+	locks  map[string]*sync.Mutex
 }
 
 // Kind returns a human label for the backend a dsn selects (SQLite vs Postgres),
@@ -410,7 +422,7 @@ func Open(dsn string) (Store, error) {
 	if err := migrate(db); err != nil {
 		return nil, err
 	}
-	return &sqlstore{db: db, driver: "sqlite"}, nil
+	return &sqlstore{db: db, driver: "sqlite", locks: map[string]*sync.Mutex{}}, nil
 }
 
 // pgSchemaLockID serializes schema creation/migration across replicas that
@@ -428,7 +440,7 @@ func openPostgres(dsn string) (Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &sqlstore{db: db, driver: "pgx"}, nil
+	return &sqlstore{db: db, driver: "pgx", locks: map[string]*sync.Mutex{}}, nil
 }
 
 func initPostgresSchema(db *sql.DB) error {
@@ -463,6 +475,9 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS ignore_paths TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'agent'`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tunnel_port INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
@@ -471,6 +486,69 @@ func initPostgresSchema(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// AcquireLock is a process-level lock for SQLite and a session-level Postgres
+// advisory lock for multi-replica clusters. The advisory lock is held on a
+// dedicated pooled connection so unrelated queries cannot release it.
+func (s *sqlstore) AcquireLock(ctx context.Context, key string) (func(), error) {
+	if s.driver != "pgx" {
+		mu := s.localLock(key)
+		mu.Lock()
+		var once sync.Once
+		return func() { once.Do(mu.Unlock) }, nil
+	}
+
+	id := advisoryLockID(key)
+	for {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("lock connection: %w", err)
+		}
+		var acquired bool
+		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, id).Scan(&acquired)
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("pg_try_advisory_lock: %w", err)
+		}
+		if acquired {
+			var once sync.Once
+			release := func() {
+				once.Do(func() {
+					unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, _ = conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, id)
+					_ = conn.Close()
+				})
+			}
+			return release, nil
+		}
+		_ = conn.Close()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (s *sqlstore) localLock(key string) *sync.Mutex {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.locks == nil {
+		s.locks = map[string]*sync.Mutex{}
+	}
+	mu := s.locks[key]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.locks[key] = mu
+	}
+	return mu
+}
+
+func advisoryLockID(key string) int64 {
+	sum := sha256.Sum256([]byte(key))
+	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
 // rebind rewrites `?` placeholders to `$1..$n` for Postgres, leaving SQLite
@@ -535,6 +613,9 @@ func migrate(db *sql.DB) error {
 		{"applications", "ignore_paths", "ALTER TABLE applications ADD COLUMN ignore_paths TEXT NOT NULL DEFAULT ''"},
 		{"applications", "project", "ALTER TABLE applications ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 		{"instances", "project", "ALTER TABLE instances ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
+		{"instances", "execution_mode", "ALTER TABLE instances ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent'"},
+		{"instances", "tunnel_port", "ALTER TABLE instances ADD COLUMN tunnel_port INTEGER NOT NULL DEFAULT 0"},
+		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
@@ -602,19 +683,21 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, execution_mode, tunnel_port, last_tunnel_at, created_at`
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
-		inst              model.Instance
-		lastSeen, created string
+		inst                          model.Instance
+		lastSeen, lastTunnel, created string
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
-		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &created)
+		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project,
+		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &created)
 	if err != nil {
 		return inst, err
 	}
 	inst.LastSeen = parseTime(lastSeen)
+	inst.LastTunnelAt = parseTime(lastTunnel)
 	inst.CreatedAt = parseTime(created)
 	return inst, nil
 }
@@ -648,6 +731,25 @@ func (s *sqlstore) CountInstances(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// ListTunnelInstances returns every agentless (reverse SSH) instance so a
+// runner can discover the loopback ports it should reach.
+func (s *sqlstore) ListTunnelInstances(ctx context.Context) ([]model.Instance, error) {
+	rows, err := s.query(ctx, `SELECT `+instanceCols+` FROM instances WHERE execution_mode=? ORDER BY name`, model.ModeTunnel)
+	if err != nil {
+		return nil, wrap(err, "list tunnel instances")
+	}
+	defer rows.Close()
+	out := []model.Instance{}
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, wrap(err, "scan tunnel instance")
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqlstore) GetInstance(ctx context.Context, id string) (model.Instance, error) {
 	row := s.queryRow(ctx, `SELECT `+instanceCols+` FROM instances WHERE id=?`, id)
 	inst, err := scanInstance(row)
@@ -668,9 +770,12 @@ func (s *sqlstore) GetInstanceByToken(ctx context.Context, tokenHash string) (mo
 
 func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error) {
 	in.CreatedAt = nowCtx(ctx)
+	if in.ExecutionMode == "" {
+		in.ExecutionMode = model.ModeAgent
+	}
 	res, err := s.exec(ctx,
-		`INSERT INTO instances (id, name, token_hash, state, project, created_at) VALUES (?,?,?,?,?,?)`,
-		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, tm(in.CreatedAt))
+		`INSERT INTO instances (id, name, token_hash, state, project, execution_mode, tunnel_port, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.ExecutionMode, in.TunnelPort, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create instance: %w", err)
 	}
@@ -680,8 +785,9 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 
 func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error {
 	_, err := s.exec(ctx,
-		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=? WHERE id=?`,
-		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project, in.ID)
+		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, execution_mode=?, tunnel_port=?, last_tunnel_at=? WHERE id=?`,
+		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project,
+		in.ExecutionMode, in.TunnelPort, tm(in.LastTunnelAt), in.ID)
 	if err != nil {
 		return fmt.Errorf("update instance: %w", err)
 	}

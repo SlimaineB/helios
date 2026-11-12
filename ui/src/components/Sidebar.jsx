@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import HeliosMark from './HeliosMark.jsx'
 import {
   Server, Database, GitBranch, Layers, Clock,
-  ChevronLeft, ChevronRight, FileText, Network, RefreshCw
+  ChevronLeft, ChevronRight, FileText, RefreshCw
 } from 'lucide-react'
 
 const SidebarContext = createContext(null)
@@ -29,7 +29,6 @@ export function SidebarProvider({ children }) {
 const NAV_ITEMS = [
   { path: '/', label: 'Applications', icon: Database, perm: 'applications.get' },
   { path: '/instances', label: 'Instances', icon: Server, perm: 'instances.get' },
-  { path: '/topology', label: 'Topology', icon: Network, perm: 'instances.get' },
   { path: '/projects', label: 'Projects', icon: Layers, perm: 'projects.get' },
   { path: '/sync-windows', label: 'Sync windows', icon: Clock, perm: 'windows.get' },
   { path: '/repositories', label: 'Repositories', icon: GitBranch, perm: 'repositories.get' },

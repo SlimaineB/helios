@@ -19,3 +19,6 @@ app.kubernetes.io/part-of: helios
 {{- define "helios-server.operatorSecret" -}}
 {{- .Values.operatorAuth.existingSecret | default (printf "%s-operator" (include "helios-server.fullname" .)) }}
 {{- end }}
+{{- define "helios-server.runnerSecret" -}}
+{{- .Values.runner.existingSecret | default (printf "%s-runner" (include "helios-server.fullname" .)) }}
+{{- end }}

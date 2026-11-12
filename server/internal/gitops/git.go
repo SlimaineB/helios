@@ -85,6 +85,10 @@ func head(ctx context.Context, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// Env materializes the git credential helper environment for a command.
+// Callers must invoke cleanup once the git command has finished.
+func (c Creds) Env() ([]string, func(), error) { return c.env() }
+
 func (c Creds) env() (_ []string, cleanup func(), err error) {
 	cleanup = func() {}
 	if c.SSHKey != "" {
@@ -171,5 +175,6 @@ func runGit(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Env = append(os.Environ(), env...)
+	cmd.WaitDelay = 10 * time.Second
 	return cmd.CombinedOutput()
 }
