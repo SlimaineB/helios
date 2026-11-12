@@ -85,6 +85,9 @@ export const api = {
 
   setAutoHeal: (id, appId, enabled, inherit) =>
     request('PUT', `/api/v1/instances/${id}/assign/${appId}/autoheal`, { enabled, inherit }),
+  setAppAutoHeal: (id, enabled) =>
+    request('PUT', `/api/v1/applications/${id}/autoheal`, { enabled }),
+
   setRevision: (id, appId, revision) =>
     request('PUT', `/api/v1/instances/${id}/assign/${appId}/revision`, { revision }),
 

@@ -1023,6 +1023,36 @@ func (s *Server) handleDeleteApplication(w http.ResponseWriter, r *http.Request)
 	ok200(w)
 }
 
+// handleSetApplicationAutoHeal toggles auto-apply on drift for every instance
+// that inherits the application default (per-instance overrides still apply).
+func (s *Server) handleSetApplicationAutoHeal(w http.ResponseWriter, r *http.Request) {
+	id, ok := appIDParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "missing app id")
+		return
+	}
+	app, err := s.store.GetApplication(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if !s.requireObject(w, r, "applications.update", app.Project) {
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if err := s.store.SetApplicationAutoHeal(r.Context(), id, body.Enabled); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	ok200(w)
+}
+
 // ---- repositories (operator) ----
 
 // repoView is the operator-facing shape of a repository: credentials are never

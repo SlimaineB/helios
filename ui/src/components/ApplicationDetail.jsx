@@ -5,7 +5,8 @@ import Modal from './Modal.jsx'
 import Badge from './Badge.jsx'
 import HealthBadge from './HealthBadge.jsx'
 import CopyButton from './CopyButton.jsx'
-import { projectLabel } from '../api/client.js'
+import { api, projectLabel } from '../api/client.js'
+import { toast } from '../components/Toast.jsx'
 
 const shortRepo = (url = '') =>
   url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
@@ -43,6 +44,20 @@ export default function ApplicationDetail({
 }) {
   const [assignTo, setAssignTo] = useState('')
   const [assigning, setAssigning] = useState(false)
+  const [toggling, setToggling] = useState(false)
+
+  const toggleAppAutoHeal = async () => {
+    if (!can('applications', 'update') || toggling) return
+    setToggling(true)
+    try {
+      await api.setAppAutoHeal(app.id, !app.autoheal)
+      setApp((p) => ({ ...p, autoheal: !p.autoheal }))
+    } catch (e) {
+      toast.error(e.message || 'Failed to update auto-apply')
+    } finally {
+      setToggling(false)
+    }
+  }
   const s = stats || { instances: 0, drift: 0, error: 0, stuck: 0 }
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0
@@ -136,7 +151,17 @@ export default function ApplicationDetail({
         </div>
         <div className="detail">
           <label>Auto-apply on drift</label>
-          <div className="value">{app.autoheal ? 'on' : 'off'}</div>
+          <div className="value switch">
+            <label className="switch" title={`Auto-apply on drift is ${app.autoheal ? 'enabled' : 'disabled'}`}>
+              <input
+                type="checkbox"
+                checked={app.autoheal}
+                disabled={!can('applications', 'update')}
+                onChange={() => toggleAppAutoHeal()}
+              /><span className="slider" />
+            </label>
+            <span className="sub muted">{app.autoheal ? 'on' : 'off'}</span>
+          </div>
         </div>
         <div className="detail">
           <label>Latest revision</label>

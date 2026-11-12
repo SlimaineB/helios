@@ -892,6 +892,15 @@ func (s *sqlstore) UpdateApplication(ctx context.Context, in model.Application) 
 	return nil
 }
 
+func (s *sqlstore) SetApplicationAutoHeal(ctx context.Context, id int64, enabled bool) error {
+	autoheal := 0
+	if enabled {
+		autoheal = 1
+	}
+	_, err := s.exec(ctx, `UPDATE applications SET autoheal=? WHERE id=?`, autoheal, id)
+	return err
+}
+
 func (s *sqlstore) DeleteApplication(ctx context.Context, id int64) error {
 	_, err := s.exec(ctx, `DELETE FROM applications WHERE id=?`, id)
 	if err != nil {

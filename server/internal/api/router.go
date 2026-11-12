@@ -60,6 +60,7 @@ func (s *Server) routes() {
 	// Variables (app defaults + per-assignment host overrides); secrets write-only.
 	m.HandleFunc("GET /api/v1/applications/{appId}/variables", s.op("applications.get", s.handleListAppVariables))
 	m.HandleFunc("PUT /api/v1/applications/{appId}/variables", s.op("applications.update", s.handleUpdateAppVariables))
+	m.HandleFunc("PUT /api/v1/applications/{appId}/autoheal", s.op("applications.update", s.handleSetApplicationAutoHeal))
 	m.HandleFunc("GET /api/v1/instances/{id}/assign/{appId}/variables", s.op("instances.get", s.handleListAssignedVariables))
 	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/variables", s.op("instances.update", s.handleUpdateAssignedVariables))
 
