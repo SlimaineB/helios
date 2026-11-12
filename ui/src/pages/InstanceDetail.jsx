@@ -29,13 +29,14 @@ export default function InstanceDetail() {
   const [varsApp, setVarsApp] = useState(null)
   const [runsOff, setRunsOff] = useState(0)
   const [runsTotal, setRunsTotal] = useState(0)
+  const [appFilter, setAppFilter] = useState('')
   const [confirm, setConfirm] = useState(null)
 
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     try {
       setInst(await api.instance(id))
-      const d = await api.runs(id, `?limit=${PAGE_SIZE}&offset=${runsOff}`)
+      const d = await api.runs(id, `?limit=${PAGE_SIZE}&offset=${runsOff}${appFilter ? `&app_id=${appFilter}` : ''}`)
       setRuns(d.items)
       setRunsTotal(d.total)
       if (!d.items.length && d.total > 0 && runsOff > 0) setRunsOff(0)
@@ -61,6 +62,10 @@ export default function InstanceDetail() {
     const t = setInterval(() => { if (!document.hidden) refresh() }, 10000)
     return () => clearInterval(t)
   }, [refresh, modalOpen])
+
+  useEffect(() => {
+    setRunsOff(0)
+  }, [appFilter])
 
   const online = inst?.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
   const isTunnel = inst?.execution_mode === 'tunnel'
@@ -277,6 +282,19 @@ export default function InstanceDetail() {
         )
       })}
 
+      {inst && inst.apps.length > 1 && (
+        <div className="filters" style={{ marginBottom: '12px' }}>
+          <label>Application</label>
+          <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
+            <option value="">Toutes les applications</option>
+            {inst.apps.map((a) => (
+              <option key={a.application.id} value={String(a.application.id)}>
+                {a.application.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <h2>Run history</h2>
       <table className="grid">
         <thead><tr><th>#</th><th>Mode</th><th>Status</th><th style={{ width: '140px' }}>Application</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th></th></tr></thead>
