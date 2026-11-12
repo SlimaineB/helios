@@ -20,7 +20,7 @@ import (
 func (s *Server) SetRepoCache(c *repocache.Cache) { s.repoCache = c }
 
 // handleAgentSnapshot resolves the assigned application's revision through the
-// shared cache and streams a tarball (or 304 when the agent is current).
+// replica-local cache and streams a tarball (or 304 when the agent is current).
 func (s *Server) handleAgentSnapshot(w http.ResponseWriter, r *http.Request) {
 	if s.repoCache == nil {
 		writeErr(w, http.StatusServiceUnavailable, "repo cache disabled")
@@ -29,7 +29,11 @@ func (s *Server) handleAgentSnapshot(w http.ResponseWriter, r *http.Request) {
 	// A cold mirror can spend minutes in git fetch/archive before the first
 	// byte is written. Extend the response deadline before that work starts.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Minute))
-	inst := r.Context().Value(ctxInstance).(model.Instance)
+	inst, ok := r.Context().Value(ctxInstance).(model.Instance)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "missing instance context")
+		return
+	}
 	appID, err := strconv.ParseInt(r.PathValue("appId"), 10, 64)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid application id")
@@ -57,22 +61,25 @@ func (s *Server) handleAgentSnapshot(w http.ResponseWriter, r *http.Request) {
 	current := strings.TrimPrefix(strings.TrimSpace(r.Header.Get("If-None-Match")), "W/")
 	current = strings.Trim(current, `"`)
 
-	snap, err := s.repoCache.Ensure(r.Context(), app.RepoURL, app.Branch, creds, current)
-	if err != nil {
-		if errors.Is(err, repocache.ErrUnsupportedRevision) {
-			w.Header().Set("X-Helios-Fallback", "git")
-			writeErr(w, http.StatusUnprocessableEntity, "revision is not cacheable")
-			return
+	load := func(currentCommit string) (repocache.Snapshot, bool) {
+		snap, err := s.repoCache.Ensure(r.Context(), app.RepoURL, app.Branch, creds, currentCommit)
+		if err != nil {
+			if errors.Is(err, repocache.ErrUnsupportedRevision) {
+				w.Header().Set("X-Helios-Fallback", "git")
+				writeErr(w, http.StatusUnprocessableEntity, "revision is not cacheable")
+				return repocache.Snapshot{}, false
+			}
+			s.internalError(w, r, err)
+			return repocache.Snapshot{}, false
 		}
-		s.internalError(w, r, err)
-		return
+		return snap, true
 	}
 
-	w.Header().Set("ETag", `"`+snap.Commit+`"`)
-	w.Header().Set("X-Helios-Commit", snap.Commit)
-	if snap.Subject != "" {
-		w.Header().Set("X-Helios-Subject", url.QueryEscape(snap.Subject))
+	snap, ok := load(current)
+	if !ok {
+		return
 	}
+	setSnapshotHeaders(w, snap)
 	if snap.NotModified {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -82,6 +89,16 @@ func (s *Server) handleAgentSnapshot(w http.ResponseWriter, r *http.Request) {
 	// deadline. Extend it only for this response.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Minute))
 	f, err := os.Open(snap.Path)
+	if os.IsNotExist(err) {
+		// The hourly prune may have removed the tarball between Ensure and
+		// open. Regenerate once with an empty current commit, then retry.
+		snap, ok = load("")
+		if !ok {
+			return
+		}
+		setSnapshotHeaders(w, snap)
+		f, err = os.Open(snap.Path)
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -95,4 +112,14 @@ func (s *Server) handleAgentSnapshot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, filepath.Base(snap.Path), info.ModTime(), f)
+}
+
+func setSnapshotHeaders(w http.ResponseWriter, snap repocache.Snapshot) {
+	w.Header().Set("ETag", `"`+snap.Commit+`"`)
+	w.Header().Set("X-Helios-Commit", snap.Commit)
+	if snap.Subject != "" {
+		w.Header().Set("X-Helios-Subject", url.QueryEscape(snap.Subject))
+	} else {
+		w.Header().Del("X-Helios-Subject")
+	}
 }

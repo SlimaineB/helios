@@ -175,5 +175,6 @@ func runGit(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Env = append(os.Environ(), env...)
+	cmd.WaitDelay = 10 * time.Second
 	return cmd.CombinedOutput()
 }

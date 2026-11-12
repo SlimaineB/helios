@@ -159,6 +159,6 @@ spec:
         {{- end }}
         {{- if .Values.repoCache.enabled }}
         - name: repo-cache
-          persistentVolumeClaim:
-            claimName: {{ .Values.repoCache.existingClaim | default (printf "%s-repo-cache" (include "helios-server.fullname" .)) }}
+          emptyDir:
+            sizeLimit: {{ .Values.repoCache.sizeLimit | default "5Gi" }}
         {{- end }}

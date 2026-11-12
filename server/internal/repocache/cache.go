@@ -36,10 +36,11 @@ type Locker interface {
 
 // Config controls cache storage and eviction.
 type Config struct {
-	Dir        string
-	MaxBytes   int64         // 0 disables the size cap
-	TTL        time.Duration // 0 disables age-based eviction
-	ResolveTTL time.Duration // reuse a branch resolution for this long (0 = always fetch)
+	Dir           string
+	MaxBytes      int64         // 0 disables the size cap
+	TTL           time.Duration // 0 disables age-based eviction
+	ResolveTTL    time.Duration // reuse a branch resolution for this long (0 = always fetch)
+	MaxConcurrent int           // concurrent cache builds per replica (0 = default 4)
 }
 
 // Cache owns the mirror/snapshot tree rooted at Config.Dir.
@@ -47,6 +48,7 @@ type Cache struct {
 	cfg    Config
 	locker Locker
 	log    *slog.Logger
+	slots  chan struct{}
 }
 
 type resolvedCommit struct {
@@ -79,7 +81,11 @@ func New(cfg Config, locker Locker, log *slog.Logger) (*Cache, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.Dir, "resolved"), 0o755); err != nil {
 		return nil, fmt.Errorf("create repo cache resolutions: %w", err)
 	}
-	return &Cache{cfg: cfg, locker: locker, log: log}, nil
+	concurrency := cfg.MaxConcurrent
+	if concurrency <= 0 {
+		concurrency = 4
+	}
+	return &Cache{cfg: cfg, locker: locker, log: log, slots: make(chan struct{}, concurrency)}, nil
 }
 
 // Ensure resolves revision, updates the bare mirror, and materializes the
@@ -92,6 +98,15 @@ func (c *Cache) Ensure(ctx context.Context, repoURL, revision string, creds gito
 	revision, err := simpleRevision(revision)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	// Bound concurrent git/archive work per replica. Besides CPU and disk,
+	// each build holds a dedicated Postgres advisory-lock connection; without
+	// this cap a burst of cold repositories can starve the API connection pool.
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	case <-ctx.Done():
+		return Snapshot{}, ctx.Err()
 	}
 	repoKey := hashKey(repoURL)
 	mirror := filepath.Join(c.cfg.Dir, "mirrors", repoKey+".git")
@@ -117,16 +132,23 @@ func (c *Cache) Ensure(ctx context.Context, repoURL, revision string, creds gito
 	last, haveLast := c.readResolved(resolveKey)
 	useCached := haveLast && last.Commit != "" &&
 		(isHexSHA(revision) || (c.cfg.ResolveTTL > 0 && time.Since(last.At) < c.cfg.ResolveTTL))
+	// A resolution file can outlive the mirror or snapshot it points at (mirror
+	// pruned, PVC restored, interrupted fetch). Never trust it unless the commit
+	// object is actually present locally.
+	if useCached && !hasCommit(ctx, env, mirror, last.Commit) {
+		useCached = false
+	}
 
 	commit := last.Commit
 	if !useCached {
 		fetched, ferr := fetchCommit(ctx, mirror, revision, creds, env)
 		if ferr != nil {
-			if !haveLast || last.Commit == "" {
+			// The upstream is down but we may still have a usable stale commit.
+			// Only serve it when the object is present: otherwise git archive
+			// would fail later with a misleading error.
+			if !haveLast || last.Commit == "" || !hasCommit(ctx, env, mirror, last.Commit) {
 				return Snapshot{}, ferr
 			}
-			// The upstream is down but we already have a commit and its
-			// tarball. Serve stale rather than forcing every agent to fail.
 			if c.log != nil {
 				c.log.Warn("repo fetch failed; serving last cached commit",
 					"repo", repoURL, "revision", revision, "commit", last.Commit[:min(12, len(last.Commit))], "error", ferr)
@@ -213,6 +235,14 @@ func fetchCommit(ctx context.Context, mirror, revision string, creds gitops.Cred
 	return strings.TrimSpace(string(sha)), nil
 }
 
+func hasCommit(ctx context.Context, env []string, mirror, commit string) bool {
+	if commit == "" {
+		return false
+	}
+	_, err := runGit(ctx, env, "git", "-C", mirror, "cat-file", "-e", commit+"^{commit}")
+	return err == nil
+}
+
 func (c *Cache) writeSnapshot(ctx context.Context, mirror, commit, dst string, creds gitops.Creds, env []string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("create snapshot dir: %w", err)
@@ -249,7 +279,7 @@ func (c *Cache) readResolved(key string) (resolvedCommit, bool) {
 	if err != nil {
 		return r, false
 	}
-	if err := json.Unmarshal(b, &r); err != nil || r.Commit == "" {
+	if err := json.Unmarshal(b, &r); err != nil || !isHexSHA(r.Commit) {
 		return resolvedCommit{}, false
 	}
 	return r, true
@@ -349,13 +379,23 @@ func (c *Cache) Prune(ctx context.Context) error {
 	}
 	if c.cfg.MaxBytes > 0 && total > c.cfg.MaxBytes {
 		sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
-		for _, f := range files {
+		for i, f := range files {
 			if total <= c.cfg.MaxBytes {
 				break
+			}
+			// Keep the newest snapshot and never evict one touched in the last
+			// minute: it is most likely being generated or served right now.
+			// A single snapshot larger than the cap is also kept, otherwise the
+			// cache would delete and regenerate it forever.
+			if i == len(files)-1 || time.Since(f.mod) < time.Minute {
+				continue
 			}
 			if err := os.Remove(f.path); err == nil {
 				total -= f.size
 			}
+		}
+		if total > c.cfg.MaxBytes && c.log != nil {
+			c.log.Warn("repo cache is above its size cap", "bytes", total, "max_bytes", c.cfg.MaxBytes)
 		}
 	}
 	if c.log != nil && total != 0 {
@@ -440,7 +480,7 @@ func simpleRevision(revision string) (string, error) {
 	// Semver ranges are resolved by the agent's git implementation. Cache the
 	// common single-ref cases (branch, tag, SHA) and fall back for the rest.
 	if strings.HasPrefix(revision, "-") ||
-		strings.ContainsAny(revision, "*<>=^~, |") ||
+		strings.ContainsAny(revision, "*<>=^~, |:\\") ||
 		strings.HasSuffix(revision, ".x") ||
 		strings.HasSuffix(revision, ".X") {
 		return "", ErrUnsupportedRevision
@@ -487,5 +527,9 @@ func runGit(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Env = append(os.Environ(), env...)
+	// A git helper (ssh, credential helper) can inherit stdout/stderr and keep
+	// the pipe open after the main process is killed. WaitDelay prevents
+	// CombinedOutput from blocking forever in that case.
+	cmd.WaitDelay = 10 * time.Second
 	return cmd.CombinedOutput()
 }

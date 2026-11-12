@@ -8,8 +8,6 @@ The operator password was generated automatically. Read it with:
 
 {{- if .Values.repoCache.enabled }}
 
-Repo snapshot cache is enabled at {{ .Values.repoCache.dir | default "/var/cache/helios/repos" }} ({{ .Values.repoCache.size | default "5Gi" }}, TTL {{ .Values.repoCache.ttl | default "168h" }}, cap {{ .Values.repoCache.maxMB | default 2048 }} MiB).
-{{- if gt (int .Values.replicaCount) 1 }}
-WARNING: replicaCount > 1 shares this PVC across pods; use a ReadWriteMany storage class (or set replicaCount=1) on multi-node clusters.
-{{- end }}
+Repo snapshot cache is enabled at {{ .Values.repoCache.dir | default "/var/cache/helios/repos" }} (ephemeral per pod, {{ .Values.repoCache.sizeLimit | default "5Gi" }} limit, TTL {{ .Values.repoCache.ttl | default "168h" }}, cap {{ .Values.repoCache.maxMB | default 2048 }} MiB).
+Each replica warms its own cache; a restart or newly scheduled pod refetches, and agents fall back to git while the cache is cold.
 {{- end }}

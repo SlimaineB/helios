@@ -168,6 +168,9 @@ func (a *Agent) pass(ctx context.Context) {
 	a.repoCache = checkin.RepoCache
 	starts := time.Now()
 	a.processApps(ctx, checkin.Applications)
+	// Drop local state for apps no longer assigned before running commands so
+	// an old queued command cannot still apply a removed application.
+	a.pruneStates(checkin.Applications)
 	a.processCommands(ctx, checkin.Commands)
 	a.log.Info("pass complete", "apps", len(checkin.Applications), "commands", len(checkin.Commands),
 		"workers", a.maxConcurrent(), "took", time.Since(starts).Round(time.Millisecond).String())
@@ -310,14 +313,14 @@ func (a *Agent) syncRepo(ctx context.Context, app client.Application, st *appSta
 				}
 				return meta.Commit, meta.Commit, subject, nil
 			}
-			defer snap.Body.Close()
-			if xerr := gitops.ExtractSnapshot(snap.Body, dir, snap.Commit); xerr == nil {
+			xerr := gitops.ExtractSnapshot(snap.Body, dir, snap.Commit)
+			_ = snap.Body.Close()
+			if xerr == nil {
 				a.writeMeta(app.ID, repoMeta{Commit: snap.Commit, Subject: snap.Subject})
 				return meta.Commit, snap.Commit, snap.Subject, nil
-			} else {
-				a.log.Warn("snapshot extraction failed; falling back to git",
-					"app", app.Name, "commit", short(snap.Commit), "error", xerr)
 			}
+			a.log.Warn("snapshot extraction failed; falling back to git",
+				"app", app.Name, "commit", short(snap.Commit), "error", xerr)
 		} else if !errors.Is(serr, client.ErrSnapshotUnsupported) {
 			a.log.Warn("repo snapshot unavailable; falling back to git", "app", app.Name, "error", serr)
 		}
@@ -504,6 +507,34 @@ func (a *Agent) stateByAppID(id int64) *appState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.states[id]
+}
+
+// pruneStates forgets applications that are no longer assigned. Without this,
+// the state map and the per-app working trees grow forever as applications are
+// deleted or moved to other instances.
+func (a *Agent) pruneStates(assigned []client.Application) {
+	keep := make(map[int64]struct{}, len(assigned))
+	for _, app := range assigned {
+		keep[app.ID] = struct{}{}
+	}
+	a.mu.Lock()
+	var removed []*appState
+	for id, st := range a.states {
+		if _, ok := keep[id]; !ok {
+			removed = append(removed, st)
+			delete(a.states, id)
+		}
+	}
+	a.mu.Unlock()
+	for _, st := range removed {
+		if err := os.RemoveAll(st.RepoDir()); err != nil {
+			a.log.Warn("failed to remove unassigned app working tree", "app", st.app.Name, "error", err)
+		}
+		if err := os.Remove(a.metaPath(st.app.ID)); err != nil && !os.IsNotExist(err) {
+			a.log.Warn("failed to remove unassigned app metadata", "app", st.app.Name, "error", err)
+		}
+		a.log.Info("removed local state for unassigned app", "app", st.app.Name)
+	}
 }
 
 func repoRootDir(app client.Application, root string) string {

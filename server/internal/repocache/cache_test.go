@@ -158,6 +158,9 @@ func TestEnsureTagAndRevisionFallback(t *testing.T) {
 	if _, err := cache.Ensure(ctx, repo, ">=1.0.0", gitops.Creds{}, ""); !errors.Is(err, ErrUnsupportedRevision) {
 		t.Fatalf("semver error = %v, want ErrUnsupportedRevision", err)
 	}
+	if _, err := cache.Ensure(ctx, repo, "main:refs/heads/evil", gitops.Creds{}, ""); !errors.Is(err, ErrUnsupportedRevision) {
+		t.Fatalf("refspec error = %v, want ErrUnsupportedRevision", err)
+	}
 }
 
 func TestResolveTTLReusesBranchCommit(t *testing.T) {
@@ -257,18 +260,58 @@ func TestPruneRemovesSnapshotsOverCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := cache.Ensure(context.Background(), repo, "main", gitops.Creds{}, "")
+	ctx := context.Background()
+	first, err := cache.Ensure(ctx, repo, "main", gitops.Creds{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "site.yml"), []byte("- hosts: web\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "commit", "-am", "second")
+	second, err := cache.Ensure(ctx, repo, "main", gitops.Creds{}, first.Commit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cache.cfg.MaxBytes = 1
-	if err := os.Chtimes(snap.Path, time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)); err != nil {
+	if err := os.Chtimes(first.Path, time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.Prune(context.Background()); err != nil {
+	if err := cache.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(snap.Path); !os.IsNotExist(err) {
-		t.Fatalf("snapshot still exists: %v", err)
+	if _, err := os.Stat(first.Path); !os.IsNotExist(err) {
+		t.Fatalf("old snapshot still exists: %v", err)
 	}
+	if _, err := os.Stat(second.Path); err != nil {
+		t.Fatalf("newest snapshot was evicted: %v", err)
+	}
+}
+
+func TestEnsureRecoversAfterMirrorAndSnapshotPruned(t *testing.T) {
+	repo, _ := makeRepo(t)
+	cache, err := New(Config{Dir: t.TempDir(), ResolveTTL: time.Hour}, &memoryLocker{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	snap, err := cache.Ensure(ctx, repo, "main", gitops.Creds{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirror := filepath.Join(cache.cfg.Dir, "mirrors", hashKey(repo)+".git")
+	if err := os.RemoveAll(mirror); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(snap.Path); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := cache.Ensure(ctx, repo, "main", gitops.Creds{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Commit != snap.Commit || recovered.NotModified {
+		t.Fatalf("recovered snapshot = %+v, want commit %s", recovered, snap.Commit)
+	}
+	readSnapshot(t, recovered.Path, "- hosts: all\n")
 }

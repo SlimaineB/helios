@@ -114,6 +114,7 @@ func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON 
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = repo.Dir
+	cmd.WaitDelay = 15 * time.Second
 	cmd.Env = append(os.Environ(),
 		"ANSIBLE_STDOUT_CALLBACK=json",
 		"ANSIBLE_HOST_KEY_CHECKING=false",

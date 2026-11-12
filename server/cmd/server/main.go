@@ -134,14 +134,15 @@ func main() {
 			MaxBytes:   *repoCacheMax * 1024 * 1024,
 			TTL:        *repoCacheTTL,
 			ResolveTTL: *repoResolve,
-		}, st, log)
+		}, repocache.NewLocalLocker(), log)
 		if err != nil {
 			log.Error("failed to initialize repo cache", "error", err)
 			os.Exit(1)
 		}
 		repoCache = cache
 		log.Info("repo snapshot cache enabled",
-			"dir", *repoCacheDir, "max_mb", *repoCacheMax, "ttl", repoCacheTTL.String(), "resolve_ttl", repoResolve.String())
+			"dir", *repoCacheDir, "max_mb", *repoCacheMax, "ttl", repoCacheTTL.String(),
+			"resolve_ttl", repoResolve.String(), "scope", "per-replica")
 	}
 
 	srv := api.New(st, log, oa, secure)

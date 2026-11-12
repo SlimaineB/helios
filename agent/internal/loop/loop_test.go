@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,6 +74,42 @@ func TestPassDoesNothingWhenServerIsDown(t *testing.T) {
 
 	if !st.lastCheck.IsZero() {
 		t.Fatalf("app was processed while the server was down")
+	}
+}
+
+func TestPruneStatesRemovesUnassignedApps(t *testing.T) {
+	a := testAgent("http://example.invalid")
+	a.cfg.StateDir = t.TempDir()
+	keepApp := client.Application{ID: 1, Name: "keep", RepoURL: "https://example.test/keep.git"}
+	dropApp := client.Application{ID: 2, Name: "drop", RepoURL: "https://example.test/drop.git"}
+	keep := a.stateFor(keepApp)
+	drop := a.stateFor(dropApp)
+	for _, st := range []*appState{keep, drop} {
+		if err := os.MkdirAll(st.RepoDir(), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(st.RepoDir(), "site.yml"), []byte("---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a.writeMeta(st.app.ID, repoMeta{Commit: "abc", Subject: "test"})
+	}
+
+	a.pruneStates([]client.Application{keepApp})
+
+	if a.stateByAppID(keepApp.ID) == nil {
+		t.Fatal("assigned app state was removed")
+	}
+	if a.stateByAppID(dropApp.ID) != nil {
+		t.Fatal("unassigned app state was kept")
+	}
+	if _, err := os.Stat(keep.RepoDir()); err != nil {
+		t.Fatalf("assigned app working tree missing: %v", err)
+	}
+	if _, err := os.Stat(drop.RepoDir()); !os.IsNotExist(err) {
+		t.Fatalf("unassigned app working tree still exists: %v", err)
+	}
+	if _, err := os.Stat(a.metaPath(dropApp.ID)); !os.IsNotExist(err) {
+		t.Fatalf("unassigned app metadata still exists: %v", err)
 	}
 }
 

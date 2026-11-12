@@ -19,7 +19,7 @@ hosts use an outbound reverse SSH tunnel instead.
 | Hub DB | SQLite (default) or PostgreSQL 14+ |
 | Multi-replica hub | PostgreSQL 14+ is required; SQLite is single-writer |
 | Optional GitOps | `git` and `openssh-client` on the hub; not needed if you only use the manual API/UI |
-| Repo snapshot cache | `git` on the hub and a writable cache directory/PVC (included in the server image) |
+| Repo snapshot cache | `git` on the hub and a writable cache directory (per-pod `emptyDir` on Kubernetes; included in the server image) |
 | Hub exposure | HTTPS recommended (reverse proxy or `-tls-cert`/`-tls-key`) |
 | Agent | Linux amd64/arm64, `git`, `ansible-core` + `ansible.posix` |
 | Network | Agent → hub HTTPS; agent → git repo HTTPS/SSH |
@@ -500,8 +500,10 @@ commits. If the cache misses, cannot resolve a revision (for example a semver
 range), or is unavailable, agents automatically fall back to the normal git
 sync.
 
-The cache is embedded in the hub process and uses a local directory (a PVC in
-Kubernetes). It is bounded by both age and size:
+The cache is embedded in the hub process and uses a local directory. In
+Kubernetes each replica gets its own ephemeral `emptyDir`, so no shared PVC or
+ReadWriteMany storage class is involved. The cache is disposable and bounded by
+both age and size:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -515,19 +517,22 @@ For the systemd installer, add
 `--repo-cache-max-mb` and `--repo-cache-resolve-ttl`) and ensure `git` is
 installed on the hub.
 
-With Helm, enable the PVC and size it for your repositories:
+With Helm, enable the per-replica cache and size it for your repositories:
 
 ```sh
 helm upgrade --install helios ./helm/helios-server \
   --set repoCache.enabled=true \
-  --set repoCache.size=5Gi \
+  --set repoCache.sizeLimit=5Gi \
   --set repoCache.maxMB=2048
 ```
 
-The chart mounts one PVC into every hub replica. On a single-node k3s lab the
-default `ReadWriteOnce` works; on multi-node clusters use a `ReadWriteMany`
-storage class, or run one hub replica dedicated to the cache. Set
-`repoCache.existingClaim` to reuse a PVC managed outside the chart.
+The chart mounts an `emptyDir` into every hub replica. Each replica warms its
+own cache independently; after a restart or reschedule it refetches from the
+upstream git server, and agents fall back to git while the cache is cold. This
+removes the previous shared PVC/RWX requirement and works the same on single-
+node and multi-node clusters. Size `repoCache.sizeLimit` against the node's
+local disk (the limit is per pod), and keep `repoCache.maxMB` below it for the
+snapshot portion.
 
 Docker Compose enables the cache automatically on the `helios-repo-cache`
 volume (bounded by the same defaults). Snapshots are the bulk of the disk use

@@ -16,17 +16,19 @@ import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
 const FETCH_ALL = 500
+const MAX_INSTANCES = 10000
 
 async function fetchAllInstances() {
   const all = []
   let offset = 0
   let total = Infinity
-  while (all.length < total) {
+  while (all.length < total && all.length < MAX_INSTANCES) {
     const d = await api.instances(`?limit=${FETCH_ALL}&offset=${offset}`)
-    all.push(...d.items)
-    total = d.total
-    if (!d.items.length) break
-    offset += d.items.length
+    const items = Array.isArray(d.items) ? d.items : []
+    if (!items.length) break
+    all.push(...items)
+    total = Number.isFinite(Number(d.total)) ? Number(d.total) : all.length
+    offset += items.length
   }
   return all
 }
