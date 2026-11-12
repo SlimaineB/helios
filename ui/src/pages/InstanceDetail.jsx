@@ -32,6 +32,13 @@ export default function InstanceDetail() {
   const [appFilter, setAppFilter] = useState('')
   const [confirm, setConfirm] = useState(null)
 
+  const filteredRuns = useMemo(
+    () => runs.filter((r) =>
+      !appFilter || (appNamesById.get(r.app_id) || '').toLowerCase().includes(appFilter.toLowerCase())
+    ),
+    [runs, appFilter, appNamesById]
+  )
+
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     try {
@@ -282,24 +289,23 @@ export default function InstanceDetail() {
         )
       })}
 
-      {inst && inst.apps.length > 1 && (
+      {inst && inst.apps.length && (
         <div className="filters" style={{ marginBottom: '12px' }}>
           <label>Application</label>
-          <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
-            <option value="">Toutes les applications</option>
-            {inst.apps.map((a) => (
-              <option key={a.application.id} value={String(a.application.id)}>
-                {a.application.name}
-              </option>
-            ))}
-          </select>
+          <input
+            className="filter-search"
+            value={appFilter}
+            onChange={(e) => setAppFilter(e.target.value)}
+            placeholder="Filter by application…"
+            title="Filter runs by application name"
+          />
         </div>
       )}
       <h2>Run history</h2>
       <table className="grid">
         <thead><tr><th>#</th><th>Mode</th><th>Status</th><th style={{ width: '140px' }}>Application</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th></th></tr></thead>
         <tbody>
-          {runs.map((r) => (
+          {filteredRuns.map((r) => (
             <tr key={r.id}>
               <td className="mono"><CopyButton value={String(r.id)} label="" size="small" title="Copy run ID" />{r.id}</td>
               <td>{r.mode === 'apply' ? 'Apply' : 'Check'}</td>
@@ -324,7 +330,7 @@ export default function InstanceDetail() {
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
       {varsApp && <VariableEditor title={`Host variables · ${inst.name}`} subtitle={`Overrides for ${varsApp.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(id, varsApp.id)} save={(items) => api.saveAssignmentVariables(id, varsApp.id, items)} onClose={() => setVarsApp(null)} />}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
-      <Pager total={runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
+      <Pager total={appFilter ? filteredRuns.length : runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
     </section>
   )
 }
