@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
@@ -48,6 +48,10 @@ export default function InstanceDetail() {
   }, [id, runsOff])
 
   const commands = useCommandRunner(refresh)
+  const appNamesById = useMemo(
+    () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
+    [inst]
+  )
   const modalOpen = !!logRun || !!diffRun || !!varsApp || !!confirm
   useEffect(() => {
     refresh()
@@ -275,13 +279,14 @@ export default function InstanceDetail() {
 
       <h2>Run history</h2>
       <table className="grid">
-        <thead><tr><th>#</th><th>Mode</th><th>Status</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Mode</th><th>Status</th><th style={{ width: '140px' }}>Application</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th></th></tr></thead>
         <tbody>
           {runs.map((r) => (
             <tr key={r.id}>
               <td className="mono"><CopyButton value={String(r.id)} label="" size="small" title="Copy run ID" />{r.id}</td>
               <td>{r.mode === 'apply' ? 'Apply' : 'Check'}</td>
               <td><Badge state={r.status} label={r.status} small /></td>
+              <td className="mono">{appNamesById.get(r.app_id) || `#${r.app_id}`}</td>
               <td>{r.trigger}</td>
               <td className="commit-cell" title={r.commit_msg}><span className="mono"><CopyButton value={r.commit_after || ''} label="" size="small" title="Copy commit" />{r.commit_after?.slice(0, 9) || '—'}</span> {r.commit_msg && <span className="sub">{r.commit_msg}</span>}</td>
               <td className="mono">{Object.entries(r.summary || {}).map(([k, v]) => `${k}:${v}`).join(' ')}</td>
@@ -293,7 +298,7 @@ export default function InstanceDetail() {
               </td>
             </tr>
           ))}
-          {runs.length === 0 && <tr><td colSpan={8} className="muted">No runs yet.</td></tr>}
+          {runs.length === 0 && <tr><td colSpan={9} className="muted">No runs yet.</td></tr>}
         </tbody>
       </table>
 
