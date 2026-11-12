@@ -2,11 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -389,6 +392,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 type sqlstore struct {
 	db     *sql.DB
 	driver string // "sqlite" or "pgx"
+
+	lockMu sync.Mutex
+	locks  map[string]*sync.Mutex
 }
 
 // Kind returns a human label for the backend a dsn selects (SQLite vs Postgres),
@@ -416,7 +422,7 @@ func Open(dsn string) (Store, error) {
 	if err := migrate(db); err != nil {
 		return nil, err
 	}
-	return &sqlstore{db: db, driver: "sqlite"}, nil
+	return &sqlstore{db: db, driver: "sqlite", locks: map[string]*sync.Mutex{}}, nil
 }
 
 // pgSchemaLockID serializes schema creation/migration across replicas that
@@ -434,7 +440,7 @@ func openPostgres(dsn string) (Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &sqlstore{db: db, driver: "pgx"}, nil
+	return &sqlstore{db: db, driver: "pgx", locks: map[string]*sync.Mutex{}}, nil
 }
 
 func initPostgresSchema(db *sql.DB) error {
@@ -480,6 +486,69 @@ func initPostgresSchema(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// AcquireLock is a process-level lock for SQLite and a session-level Postgres
+// advisory lock for multi-replica clusters. The advisory lock is held on a
+// dedicated pooled connection so unrelated queries cannot release it.
+func (s *sqlstore) AcquireLock(ctx context.Context, key string) (func(), error) {
+	if s.driver != "pgx" {
+		mu := s.localLock(key)
+		mu.Lock()
+		var once sync.Once
+		return func() { once.Do(mu.Unlock) }, nil
+	}
+
+	id := advisoryLockID(key)
+	for {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("lock connection: %w", err)
+		}
+		var acquired bool
+		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, id).Scan(&acquired)
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("pg_try_advisory_lock: %w", err)
+		}
+		if acquired {
+			var once sync.Once
+			release := func() {
+				once.Do(func() {
+					unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, _ = conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, id)
+					_ = conn.Close()
+				})
+			}
+			return release, nil
+		}
+		_ = conn.Close()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (s *sqlstore) localLock(key string) *sync.Mutex {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.locks == nil {
+		s.locks = map[string]*sync.Mutex{}
+	}
+	mu := s.locks[key]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.locks[key] = mu
+	}
+	return mu
+}
+
+func advisoryLockID(key string) int64 {
+	sum := sha256.Sum256([]byte(key))
+	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
 // rebind rewrites `?` placeholders to `$1..$n` for Postgres, leaving SQLite

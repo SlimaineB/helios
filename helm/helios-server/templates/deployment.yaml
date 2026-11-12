@@ -64,7 +64,7 @@ spec:
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway .Values.repoCache.enabled }}
           env:
             {{- if $baseURL }}
             - name: HELIOS_BASE_URL
@@ -106,6 +106,16 @@ spec:
             - name: HELIOS_TUNNEL_PORT_MAX
               value: {{ .Values.runner.tunnelPortMax | quote }}
             {{- end }}
+            {{- if .Values.repoCache.enabled }}
+            - name: HELIOS_REPO_CACHE_DIR
+              value: {{ .Values.repoCache.dir | default "/var/cache/helios/repos" | quote }}
+            - name: HELIOS_REPO_CACHE_TTL
+              value: {{ .Values.repoCache.ttl | default "168h" | quote }}
+            - name: HELIOS_REPO_CACHE_MAX_MB
+              value: {{ .Values.repoCache.maxMB | default 2048 | quote }}
+            - name: HELIOS_REPO_CACHE_RESOLVE_TTL
+              value: {{ .Values.repoCache.resolveTTL | default "30s" | quote }}
+            {{- end }}
           {{- end }}
           ports:
             - name: http
@@ -133,6 +143,10 @@ spec:
             - name: data
               mountPath: /data
             {{- end }}
+            {{- if .Values.repoCache.enabled }}
+            - name: repo-cache
+              mountPath: {{ .Values.repoCache.dir | default "/var/cache/helios/repos" }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -142,4 +156,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "helios-server.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.repoCache.enabled }}
+        - name: repo-cache
+          persistentVolumeClaim:
+            claimName: {{ .Values.repoCache.existingClaim | default (printf "%s-repo-cache" (include "helios-server.fullname" .)) }}
         {{- end }}

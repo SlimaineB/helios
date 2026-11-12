@@ -1,0 +1,17 @@
+{{- if and .Values.repoCache.enabled (not .Values.repoCache.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "helios-server.fullname" . }}-repo-cache
+  labels:
+    {{- include "helios-server.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.repoCache.accessMode | default "ReadWriteOnce" }}
+  {{- if .Values.repoCache.className }}
+  storageClassName: {{ .Values.repoCache.className }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.repoCache.size | default "5Gi" }}
+{{- end }}

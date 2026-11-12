@@ -151,7 +151,21 @@ func (r *Repo) head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// Head returns the commit SHA of an existing git work tree. It is empty for a
+// snapshot extraction, which has no .git directory.
+func Head(ctx context.Context, dir string) (string, error) {
+	r := Repo{Dir: dir}
+	return r.head(ctx)
+}
+
 func (r *Repo) clone(ctx context.Context, c Creds, env []string) error {
+	// The directory may hold a snapshot extraction (no .git) after the cache
+	// went away. A git clone refuses non-empty targets, so clear it first.
+	if _, err := os.Stat(filepath.Join(r.Dir, ".git")); err != nil {
+		if err := os.RemoveAll(r.Dir); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(r.Dir, 0o755); err != nil {
 		return err
 	}
@@ -180,7 +194,7 @@ func (r *Repo) fetch(ctx context.Context, c Creds, env []string) error {
 		args = gitArgs(c.InsecureSkipVerify,
 			"git", "-C", r.Dir, "fetch", "origin", "tag", r.Target)
 	} else {
-		args = gitArgs(c.InsecureSkipVerify, "git", "-C", r.Dir, "fetch", "origin", r.Target)
+		args = gitArgs(c.InsecureSkipVerify, "git", "-C", r.Dir, "fetch", "origin", "--", r.Target)
 	}
 	out, err := runGit(ctx, env, args...)
 	if err != nil {

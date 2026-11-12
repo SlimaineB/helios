@@ -10,6 +10,7 @@ import VariableEditor from '../components/VariableEditor.jsx'
 import Pager from '../components/Pager.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard, SkeletonTable, SkeletonEmpty } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -174,6 +175,7 @@ export default function InstanceDetail() {
         <div><b>Platform</b> {inst.platform || '—'}</div>
         <div><b>Version</b> {inst.version || '—'}</div>
         <div><b>Mode</b> {isTunnel ? 'agentless · reverse SSH tunnel' : 'agent'}</div>
+        {isTunnel && <div><b>Bastion</b> <span className="mono">{inst.tunnel_gateway || '—'}</span></div>}
         {isTunnel && <div><b>Tunnel port</b> <span className="mono">{inst.tunnel_port || '—'}</span></div>}
         {isTunnel && <div><b>Last tunnel</b> {inst.last_tunnel_at ? new Date(inst.last_tunnel_at).toLocaleString() : 'never'}</div>}
         <div><b>Last seen</b> {inst.last_seen ? new Date(inst.last_seen).toLocaleString() : 'never'}</div>
@@ -186,13 +188,14 @@ export default function InstanceDetail() {
             <Badge state="tunnel" label="agentless" small />
           </div>
           <p className="sub">
-            This host has no Helios agent. Keep an outbound reverse tunnel open; the hub runner executes Ansible through it.
+            This host has no Helios agent. Keep an outbound reverse tunnel open; the runner on the bastion executes Ansible through it.
           </p>
+          <TunnelDiagram port={inst.tunnel_port} gateway={inst.tunnel_gateway} />
           {tunnelCommand ? (
             <>
               <p><strong>Keep this tunnel running on the host</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
               <pre className="token-pre">{tunnelCommand}</pre>
-              <p className="sub">Use a dedicated SSH key restricted to port forwarding. The hub connects to 127.0.0.1:{inst.tunnel_port}.</p>
+              <p className="sub">Use a dedicated SSH key restricted to port forwarding. The bastion runner connects to 127.0.0.1:{inst.tunnel_port}.</p>
             </>
           ) : (
             <p className="error">Tunnel gateway is not configured on the hub (HELIOS_TUNNEL_GATEWAY).</p>

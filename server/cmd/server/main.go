@@ -24,6 +24,7 @@ import (
 	"github.com/slim/helios/server/internal/oidc"
 	"github.com/slim/helios/server/internal/rbac"
 	"github.com/slim/helios/server/internal/reconciler"
+	"github.com/slim/helios/server/internal/repocache"
 	"github.com/slim/helios/server/internal/store"
 )
 
@@ -39,6 +40,10 @@ func main() {
 		downloads     = flag.String("downloads", envutil.Get("HELIOS_DOWNLOADS_DIR"), "directory of agent tarballs served under /downloads (optional)")
 		runnerToken   = flag.String("runner-token", envutil.Get("HELIOS_RUNNER_TOKEN"), "shared bearer token for bastion runners (empty disables agentless mode)")
 		tunnelGateway = flag.String("tunnel-gateway", envutil.Get("HELIOS_TUNNEL_GATEWAY"), "SSH destination shown for tunnel instances, e.g. helios-tunnel@bastion.example.com")
+		repoCacheDir  = flag.String("repo-cache-dir", envutil.Get("HELIOS_REPO_CACHE_DIR"), "repo snapshot cache directory (empty disables agent snapshot downloads)")
+		repoCacheTTL  = flag.Duration("repo-cache-ttl", envDuration("HELIOS_REPO_CACHE_TTL", 7*24*time.Hour), "delete repo snapshots older than this (0 disables)")
+		repoCacheMax  = flag.Int64("repo-cache-max-mb", envInt64("HELIOS_REPO_CACHE_MAX_MB", 2048), "repo snapshot cache size cap in MiB (0 disables)")
+		repoResolve   = flag.Duration("repo-cache-resolve-ttl", envDuration("HELIOS_REPO_CACHE_RESOLVE_TTL", 30*time.Second), "reuse a branch resolution for this long (0 = fetch every request)")
 		sessTTL       = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
 	)
 	flag.Parse()
@@ -122,7 +127,25 @@ func main() {
 		log.Warn("no operator authentication configured — UI/API is OPEN")
 	}
 
+	var repoCache *repocache.Cache
+	if *repoCacheDir != "" {
+		cache, err := repocache.New(repocache.Config{
+			Dir:        *repoCacheDir,
+			MaxBytes:   *repoCacheMax * 1024 * 1024,
+			TTL:        *repoCacheTTL,
+			ResolveTTL: *repoResolve,
+		}, st, log)
+		if err != nil {
+			log.Error("failed to initialize repo cache", "error", err)
+			os.Exit(1)
+		}
+		repoCache = cache
+		log.Info("repo snapshot cache enabled",
+			"dir", *repoCacheDir, "max_mb", *repoCacheMax, "ttl", repoCacheTTL.String(), "resolve_ttl", repoResolve.String())
+	}
+
 	srv := api.New(st, log, oa, secure)
+	srv.SetRepoCache(repoCache)
 	srv.SetNotifier(notify.FromEnv(log))
 	srv.SetDownloadsDir(*downloads)
 	srv.SetRunnerToken(*runnerToken)
@@ -155,6 +178,9 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	recon.Start(ctx)
+	if repoCache != nil {
+		repoCache.Start(ctx)
+	}
 	defer func() {
 		srv.Close()
 		cancel()
@@ -190,6 +216,24 @@ func main() {
 func envInt(name string, def int) int {
 	if v := envutil.Get(name); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envDuration(name string, def time.Duration) time.Duration {
+	if v := envutil.Get(name); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
+
+func envInt64(name string, def int64) int64 {
+	if v := envutil.Get(name); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

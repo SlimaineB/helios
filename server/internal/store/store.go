@@ -24,6 +24,11 @@ type Store interface {
 	Close() error
 	// Ping checks database connectivity (readiness probes).
 	Ping(ctx context.Context) error
+	// AcquireLock takes a cross-replica lock for a named resource. The returned
+	// release function is idempotent and must be called when the critical
+	// section ends. SQLite uses an in-process lock; Postgres uses advisory
+	// locks so all replicas coordinate.
+	AcquireLock(ctx context.Context, key string) (release func(), err error)
 
 	// Instances
 	ListInstances(ctx context.Context, limit, offset int) ([]model.Instance, error)

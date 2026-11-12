@@ -3,7 +3,9 @@
 The Helios server is designed to be **stateless at the process level**: HTTP
 requests can land on any replica, and the shared database is the only source of
 truth. You can run several server replicas behind a load balancer without
-sticky sessions, as long as the database is PostgreSQL.
+sticky sessions, as long as the database is PostgreSQL. The optional repo
+snapshot cache is derived data: mirrors and tarballs can be rebuilt, and
+Postgres advisory locks serialize mirror updates across replicas.
 
 SQLite remains the simple single-host default. It is **not** supported for
 multiple server replicas: it is a single-writer database and a database file
@@ -17,7 +19,8 @@ cannot be safely shared between hosts.
 | Sessions | Stored in PostgreSQL (`operator_sessions`), no shared secret or sticky cookie required |
 | Load balancer | Plain HTTP/HTTPS round-robin or least-connections; no affinity needed |
 | GitOps | Optional; coordinated by database leases, safe across replicas |
-| Local disk | Only ephemeral scratch space (`/tmp` or `HELIOS_GITOPS_STATE_DIR`) |
+| Repo cache | Optional; one shared PVC mounted by every replica (RWX on multi-node), bounded by TTL/size |
+| Local disk | Ephemeral scratch space (`/tmp` or `HELIOS_GITOPS_STATE_DIR`); cache PVC is separate |
 | Config | Same image, RBAC file, OIDC settings and webhook settings on every replica |
 | Clocks | NTP-synchronized hosts; session and lease expiries use server time |
 
@@ -37,8 +40,10 @@ helm upgrade --install helios helm/helios-server \
 The chart:
 
 - rejects multiple replicas with the default SQLite backend;
-- mounts `/tmp` as an `emptyDir` for Git mirrors and temporary SSH files;
+- mounts `/tmp` as an `emptyDir` for temporary SSH files;
 - does not mount the SQLite PVC when `database.dsn` is set;
+- can mount a shared PVC for the repo snapshot cache (`repoCache.enabled`); use
+  `ReadWriteMany` when replicas can land on different nodes;
 - keeps using the existing liveness/readiness probes (health checks the DB).
 
 Use a PodDisruptionBudget and anti-affinity in production if your platform does

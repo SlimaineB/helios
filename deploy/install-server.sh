@@ -29,6 +29,10 @@ RUNNER_TOKEN="${HELIOS_RUNNER_TOKEN:-}"
 TUNNEL_GATEWAY="${HELIOS_TUNNEL_GATEWAY:-}"
 TUNNEL_PORT_MIN="${HELIOS_TUNNEL_PORT_MIN:-22000}"
 TUNNEL_PORT_MAX="${HELIOS_TUNNEL_PORT_MAX:-22999}"
+REPO_CACHE_DIR="${HELIOS_REPO_CACHE_DIR:-}"
+REPO_CACHE_TTL="${HELIOS_REPO_CACHE_TTL:-168h}"
+REPO_CACHE_MAX_MB="${HELIOS_REPO_CACHE_MAX_MB:-2048}"
+REPO_CACHE_RESOLVE_TTL="${HELIOS_REPO_CACHE_RESOLVE_TTL:-30s}"
 
 usage() {
     cat <<'EOF'
@@ -50,6 +54,10 @@ Usage: install-server.sh --binary PATH --ui DIR --operator-password SECRET [opti
   --tunnel-gateway SSH     SSH destination shown for tunnel instances
   --tunnel-port-min N      first hub loopback port (default: 22000)
   --tunnel-port-max N      last hub loopback port (default: 22999)
+  --repo-cache-dir DIR     enable the repo snapshot cache (e.g. /var/lib/helios/repo-cache)
+  --repo-cache-ttl DUR     delete snapshots older than DUR (default: 168h)
+  --repo-cache-max-mb N    snapshot cache size cap in MiB (default: 2048)
+  --repo-cache-resolve-ttl DUR  branch resolution reuse (default: 30s)
 EOF
     exit 1
 }
@@ -73,6 +81,10 @@ $2"; shift 2 ;;
         --tunnel-gateway) TUNNEL_GATEWAY=$2; shift 2 ;;
         --tunnel-port-min) TUNNEL_PORT_MIN=$2; shift 2 ;;
         --tunnel-port-max) TUNNEL_PORT_MAX=$2; shift 2 ;;
+        --repo-cache-dir) REPO_CACHE_DIR=$2; shift 2 ;;
+        --repo-cache-ttl) REPO_CACHE_TTL=$2; shift 2 ;;
+        --repo-cache-max-mb) REPO_CACHE_MAX_MB=$2; shift 2 ;;
+        --repo-cache-resolve-ttl) REPO_CACHE_RESOLVE_TTL=$2; shift 2 ;;
         *) echo "unknown option: $1" >&2; usage ;;
     esac
 done
@@ -137,6 +149,9 @@ if [ -n "$AGENT_TARBALLS" ]; then
 fi
 
 install -d -m 0750 -o helios -g helios /var/lib/helios
+if [ -n "$REPO_CACHE_DIR" ]; then
+    install -d -m 0750 -o helios -g helios "$REPO_CACHE_DIR"
+fi
 install -d -m 0700 -o root -g root /etc/helios
 
 RBAC_ENV=""
@@ -168,6 +183,12 @@ umask 077
     if [ -n "$RUNNER_TOKEN" ]; then
         printf 'HELIOS_TUNNEL_PORT_MIN=%s\n' "$TUNNEL_PORT_MIN"
         printf 'HELIOS_TUNNEL_PORT_MAX=%s\n' "$TUNNEL_PORT_MAX"
+    fi
+    if [ -n "$REPO_CACHE_DIR" ]; then
+        printf 'HELIOS_REPO_CACHE_DIR=%s\n' "$REPO_CACHE_DIR"
+        printf 'HELIOS_REPO_CACHE_TTL=%s\n' "$REPO_CACHE_TTL"
+        printf 'HELIOS_REPO_CACHE_MAX_MB=%s\n' "$REPO_CACHE_MAX_MB"
+        printf 'HELIOS_REPO_CACHE_RESOLVE_TTL=%s\n' "$REPO_CACHE_RESOLVE_TTL"
     fi
 } > /etc/helios/server.env
 chmod 0600 /etc/helios/server.env

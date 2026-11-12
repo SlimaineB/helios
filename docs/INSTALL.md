@@ -3,11 +3,13 @@
 Helios has two parts:
 
 1. **Hub** — Go server + React UI + database. Runs on one host or in Kubernetes.
-2. **Agents** — one Go binary per managed host. It clones the assigned playbooks,
-   runs `ansible-playbook --check`, reports drift and can apply on demand.
+2. **Execution side** — an agent per managed host, or a **runner** on a bastion
+   for agentless hosts. The agent clones the assigned playbooks, runs
+   `ansible-playbook --check`, reports drift and can apply on demand.
 
-The hub never needs SSH access to the managed hosts. Agents only need outbound
-HTTPS to the hub and read access to the git repositories.
+The hub itself never needs SSH access to the managed hosts. Agents only need
+outbound HTTPS to the hub and read access to the git repositories. Agentless
+hosts use an outbound reverse SSH tunnel instead.
 
 ## Requirements
 
@@ -17,6 +19,7 @@ HTTPS to the hub and read access to the git repositories.
 | Hub DB | SQLite (default) or PostgreSQL 14+ |
 | Multi-replica hub | PostgreSQL 14+ is required; SQLite is single-writer |
 | Optional GitOps | `git` and `openssh-client` on the hub; not needed if you only use the manual API/UI |
+| Repo snapshot cache | `git` on the hub and a writable cache directory/PVC (included in the server image) |
 | Hub exposure | HTTPS recommended (reverse proxy or `-tls-cert`/`-tls-key`) |
 | Agent | Linux amd64/arm64, `git`, `ansible-core` + `ansible.posix` |
 | Network | Agent → hub HTTPS; agent → git repo HTTPS/SSH |
@@ -122,6 +125,9 @@ runs its SQLite/Postgres migrations automatically at startup.
 | `HELIOS_OPERATOR_PASSWORD` | **required** | Local password; choose a strong one |
 | `HELIOS_IMAGE` | `ghcr.io/slimaineb/helios-server:latest` | Release image (override to pin a version) |
 | `HELIOS_POSTGRES_PASSWORD` | required with the overlay | Postgres password |
+| `HELIOS_REPO_CACHE_TTL` | `168h` | Snapshot age cap (`0` disables) |
+| `HELIOS_REPO_CACHE_MAX_MB` | `2048` | Snapshot size cap in MiB (`0` disables) |
+| `HELIOS_REPO_CACHE_RESOLVE_TTL` | `30s` | Branch resolution reuse (`0` fetches every request) |
 
 OIDC and RBAC are configured with environment variables or a mounted file. See
 [Operator authentication & RBAC](AUTH.md).
@@ -381,6 +387,34 @@ through the tunnel. No Helios agent runs on the managed host, but it still needs
 
 Traffic path: `runner (bastion) → ssh → 127.0.0.1:<port> (tunnel) → sshd on managed host`.
 
+```text
+┌────────────────────┐   HTTPS poll / results   ┌──────────────────────┐
+│ Helios hub         │ ◀──────────────────────▶ │ Bastion              │
+│ control plane      │                          │ helios-runner        │
+└────────────────────┘                          └──────────┬───────────┘
+                                                           │ ssh 127.0.0.1:22000
+                                                           ▼
+                                              reverse SSH tunnel endpoint
+                                                           │
+                                          opened outbound by the managed host
+                                                           │
+                                                           ▼
+                                              ┌──────────────────────┐
+                                              │ Managed host         │
+                                              │ sshd :22 · python3   │
+                                              └──────────────────────┘
+```
+
+The UI shows the mode on every instance (`agent` or `tunnel`), provides a
+**Mode** filter on the Instances page, and marks bastion-backed nodes in the
+**Topology** view available from both Applications and Instances. The instance
+detail page renders the same path and shows the bastion gateway, tunnel port
+and last tunnel activity.
+
+Both Applications and Instances open in **Topology** by default. Use the
+**Topology / Cards / List** switch in the toolbar to change the view; the choice
+is remembered in the browser.
+
 ### 1. Configure the hub
 
 ```sh
@@ -456,6 +490,53 @@ applies, drift state and commands are identical to the agent mode.
 
 ---
 
+## Repo snapshot cache
+
+By default every agent clones or fetches its repository directly. On a fleet
+that means the same git server sees one fetch per host and per app. The hub can
+instead keep a bare mirror per repository and an immutable tarball per resolved
+commit; agents download the tarball once and skip git entirely for unchanged
+commits. If the cache misses, cannot resolve a revision (for example a semver
+range), or is unavailable, agents automatically fall back to the normal git
+sync.
+
+The cache is embedded in the hub process and uses a local directory (a PVC in
+Kubernetes). It is bounded by both age and size:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `HELIOS_REPO_CACHE_DIR` | empty (disabled) | Cache directory; set to enable |
+| `HELIOS_REPO_CACHE_TTL` | `168h` | Delete snapshots older than 7 days (`0` disables) |
+| `HELIOS_REPO_CACHE_MAX_MB` | `2048` | Evict least-recently-used snapshots above 2 GiB (`0` disables) |
+| `HELIOS_REPO_CACHE_RESOLVE_TTL` | `30s` | Reuse a branch resolution this long (`0` fetches every request) |
+
+For the systemd installer, add
+`--repo-cache-dir /var/lib/helios/repo-cache` (optionally `--repo-cache-ttl`,
+`--repo-cache-max-mb` and `--repo-cache-resolve-ttl`) and ensure `git` is
+installed on the hub.
+
+With Helm, enable the PVC and size it for your repositories:
+
+```sh
+helm upgrade --install helios ./helm/helios-server \
+  --set repoCache.enabled=true \
+  --set repoCache.size=5Gi \
+  --set repoCache.maxMB=2048
+```
+
+The chart mounts one PVC into every hub replica. On a single-node k3s lab the
+default `ReadWriteOnce` works; on multi-node clusters use a `ReadWriteMany`
+storage class, or run one hub replica dedicated to the cache. Set
+`repoCache.existingClaim` to reuse a PVC managed outside the chart.
+
+Docker Compose enables the cache automatically on the `helios-repo-cache`
+volume (bounded by the same defaults). Snapshots are the bulk of the disk use
+and are evicted by age/size; bare mirrors are kept for incremental fetches and
+removed after 30 days without use, so deleted apps eventually free their
+history.
+
+---
+
 ## Post-install checklist
 
 - [ ] Change the default `admin` password (or disable basic auth and use OIDC).
@@ -465,6 +546,7 @@ applies, drift state and commands are identical to the agent mode.
 - [ ] Restrict the hub port/API to your network.
 - [ ] Install agents on the managed hosts; assign apps and run a first check.
 - [ ] For outbound-only hosts, configure the runner and tunnel gateway (see Agentless mode).
+- [ ] Enable the repo snapshot cache for larger fleets (see Repo snapshot cache).
 - [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
 - [ ] Read the [convergence pitfalls](DEVELOPMENT.md#convergence-pitfalls) before writing playbooks.
 

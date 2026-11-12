@@ -21,6 +21,7 @@ import (
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
 	"github.com/slim/helios/server/internal/reconciler"
+	"github.com/slim/helios/server/internal/repocache"
 	"github.com/slim/helios/server/internal/store"
 	"github.com/slim/helios/server/internal/syncwindows"
 )
@@ -46,6 +47,7 @@ type Server struct {
 	tunnelGateway   string
 	tunnelPortMin   int
 	tunnelPortMax   int
+	repoCache       *repocache.Cache
 	bgCtx           context.Context
 	bgCancel        context.CancelFunc
 	bgMu            sync.Mutex
@@ -1190,6 +1192,7 @@ type checkinPayload struct {
 type checkinResponse struct {
 	Applications []model.Application `json:"applications"`
 	Commands     []model.Command     `json:"commands"`
+	RepoCache    bool                `json:"repo_cache"`
 }
 
 func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
@@ -1218,7 +1221,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	metrics.Checkin(inst.ID)
-	resp := checkinResponse{}
+	resp := checkinResponse{RepoCache: s.repoCache != nil}
 	ass, err := s.store.ListAssignments(r.Context(), inst.ID)
 	if err != nil {
 		s.internalError(w, r, err)

@@ -88,6 +88,7 @@ func (s *Server) routes() {
 
 	// Agent (bearer-token authenticated, unchanged)
 	m.HandleFunc("POST /api/v1/agent/checkin", s.agentAuth(s.handleCheckin))
+	m.HandleFunc("GET /api/v1/agent/apps/{appId}/snapshot", s.agentAuth(s.handleAgentSnapshot))
 	m.HandleFunc("POST /api/v1/agent/status", s.agentAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/agent/commands/{cmdId}/result", s.agentAuth(s.handleCommandResult))
 
@@ -95,6 +96,7 @@ func (s *Server) routes() {
 	// tunnel instances get the same drift/autoheal/command semantics.
 	m.HandleFunc("GET /api/v1/runner/instances", s.runnerAuth(s.handleRunnerInstances))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/checkin", s.runnerInstanceAuth(s.handleCheckin))
+	m.HandleFunc("GET /api/v1/runner/instances/{id}/apps/{appId}/snapshot", s.runnerInstanceAuth(s.handleAgentSnapshot))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/status", s.runnerInstanceAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/commands/{cmdId}/result", s.runnerInstanceAuth(s.handleCommandResult))
 }

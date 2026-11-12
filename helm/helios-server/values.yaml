@@ -63,6 +63,23 @@ runner:
   tunnelPortMin: 22000
   tunnelPortMax: 22999
 
+# Shared repo snapshot cache. Agents download an immutable tarball for the
+# resolved commit instead of cloning every repository from the git server.
+# Snapshots are capped by age and total size, so the volume cannot grow forever.
+# With replicaCount > 1 the PVC must be mountable by every replica (RWX on most
+# multi-node clusters); a single-node k3s lab can use ReadWriteOnce.
+repoCache:
+  enabled: false
+  dir: /var/cache/helios/repos
+  size: 5Gi
+  className: null    # null -> cluster default storage class
+  accessMode: ReadWriteOnce
+  # existingClaim: use an existing PVC instead of creating one.
+  existingClaim: ""
+  ttl: 168h          # delete snapshots older than 7 days (0 disables)
+  maxMB: 2048        # evict least-recently-used snapshots above 2 GiB (0 disables)
+  resolveTTL: 30s    # reuse a branch resolution this long (0 = fetch every request)
+
 # HTTP Basic auth protecting the operator UI + API. When password is empty and
 # no existingSecret is set, the chart generates one and keeps it across upgrades.
 operatorAuth:

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -82,6 +84,59 @@ type Command struct {
 type CheckinOK struct {
 	Applications []Application `json:"applications"`
 	Commands     []Command     `json:"commands"`
+	RepoCache    bool          `json:"repo_cache"`
+}
+
+// ErrSnapshotUnsupported means the server cannot cache this revision (for
+// example a semver range). Agents should fall back to their git implementation.
+var ErrSnapshotUnsupported = errors.New("revision not supported by repo cache")
+
+// Snapshot is a cached commit tarball streamed by the hub. The caller must
+// close Body.
+type Snapshot struct {
+	Commit      string
+	Subject     string
+	NotModified bool
+	Body        io.ReadCloser
+}
+
+// Snapshot asks the hub for the application's resolved commit. current is the
+// commit already extracted on this host; the hub returns NotModified when it
+// is still current.
+func (c *Client) Snapshot(ctx context.Context, appID int64, current string) (Snapshot, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/apps/%d/snapshot", c.prefix, appID), nil)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("User-Agent", "helios-agent")
+	if current != "" {
+		req.Header.Set("If-None-Match", `"`+current+`"`)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	switch resp.StatusCode {
+	case http.StatusNotModified:
+		_ = resp.Body.Close()
+		return Snapshot{Commit: current, NotModified: true}, nil
+	case http.StatusUnprocessableEntity:
+		_ = resp.Body.Close()
+		return Snapshot{}, ErrSnapshotUnsupported
+	case http.StatusOK:
+		subject, _ := url.QueryUnescape(resp.Header.Get("X-Helios-Subject"))
+		return Snapshot{
+			Commit:  resp.Header.Get("X-Helios-Commit"),
+			Subject: subject,
+			Body:    resp.Body,
+		}, nil
+	default:
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		return Snapshot{}, fmt.Errorf("snapshot: server responded %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
 }
 
 type CheckinIn struct {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -30,8 +32,9 @@ type Agent struct {
 	version    string
 	platform   string
 
-	mu     sync.Mutex
-	states map[int64]*appState
+	mu        sync.Mutex
+	states    map[int64]*appState
+	repoCache bool
 }
 
 func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
@@ -162,6 +165,7 @@ func (a *Agent) pass(ctx context.Context) {
 		return
 	}
 
+	a.repoCache = checkin.RepoCache
 	starts := time.Now()
 	a.processApps(ctx, checkin.Applications)
 	a.processCommands(ctx, checkin.Commands)
@@ -262,7 +266,7 @@ func (a *Agent) processApp(ctx context.Context, app client.Application) error {
 	st.lastCheck = time.Now()
 	a.mu.Unlock()
 
-	before, after, err := gitops.OpenSync(ctx, st.RepoDir(), app.RepoURL, app.Branch, credsFor(app))
+	before, after, msg, err := a.syncRepo(ctx, app, st)
 	if err != nil {
 		return err
 	}
@@ -276,8 +280,56 @@ func (a *Agent) processApp(ctx context.Context, app client.Application) error {
 	if after != "" && before != "" && before != after {
 		trigger = "repo"
 	}
-	msg, _ := repo.Subject(ctx, after)
 	return a.runCheck(ctx, app, st, playbook, after, msg, trigger)
+}
+
+// syncRepo downloads the resolved revision from the hub cache when available
+// and falls back to a direct git sync on any cache miss or error.
+func (a *Agent) syncRepo(ctx context.Context, app client.Application, st *appState) (before, after, subject string, err error) {
+	dir := st.RepoDir()
+	meta := a.readMeta(app.ID)
+	if _, statErr := os.Stat(dir); statErr != nil {
+		// The working tree was removed but the metadata survived. Request a
+		// full snapshot instead of trusting the stale commit marker.
+		meta.Commit = ""
+	}
+	if meta.Commit == "" {
+		if head, herr := gitops.Head(ctx, dir); herr == nil && head != "" {
+			meta.Commit = head
+			meta.Subject, _ = (&gitops.Repo{Dir: dir}).Subject(ctx, head)
+		}
+	}
+
+	if a.repoCache {
+		snap, serr := a.client.Snapshot(ctx, app.ID, meta.Commit)
+		if serr == nil {
+			if snap.NotModified {
+				subject = meta.Subject
+				if subject == "" {
+					subject = short(meta.Commit)
+				}
+				return meta.Commit, meta.Commit, subject, nil
+			}
+			defer snap.Body.Close()
+			if xerr := gitops.ExtractSnapshot(snap.Body, dir, snap.Commit); xerr == nil {
+				a.writeMeta(app.ID, repoMeta{Commit: snap.Commit, Subject: snap.Subject})
+				return meta.Commit, snap.Commit, snap.Subject, nil
+			} else {
+				a.log.Warn("snapshot extraction failed; falling back to git",
+					"app", app.Name, "commit", short(snap.Commit), "error", xerr)
+			}
+		} else if !errors.Is(serr, client.ErrSnapshotUnsupported) {
+			a.log.Warn("repo snapshot unavailable; falling back to git", "app", app.Name, "error", serr)
+		}
+	}
+
+	before, after, err = gitops.OpenSync(ctx, dir, app.RepoURL, app.Branch, credsFor(app))
+	if err != nil {
+		return before, "", "", err
+	}
+	subject, _ = (&gitops.Repo{Dir: dir}).Subject(ctx, after)
+	a.writeMeta(app.ID, repoMeta{Commit: after, Subject: subject})
+	return before, after, subject, nil
 }
 
 func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appState, playbook, commit, commitMsg, trigger string) error {
@@ -335,7 +387,7 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 	}
 	app := st.app
 	repo := &gitops.Repo{Dir: st.RepoDir()}
-	_, after, err := gitops.OpenSync(ctx, st.RepoDir(), app.RepoURL, app.Branch, credsFor(app))
+	_, after, msg, err := a.syncRepo(ctx, app, st)
 	if err != nil {
 		return err
 	}
@@ -357,7 +409,6 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 		res, err = a.runner.Check(ctx, repo, playbook, app.Vars)
 	}
 	ansible.FilterIgnored(&res, app.IgnorePaths)
-	msg, _ := repo.Subject(ctx, after)
 	a.report(ctx, app, cmd.Action, res, after, msg, "command", started, err)
 
 	status := "done"
@@ -472,6 +523,51 @@ func credsFor(app client.Application) gitops.Creds {
 		SSHKey:             app.Connection.SSHKey,
 		InsecureSkipVerify: app.Connection.InsecureSkipVerify,
 	}
+}
+
+type repoMeta struct {
+	Commit  string `json:"commit"`
+	Subject string `json:"subject"`
+}
+
+func (a *Agent) metaPath(appID int64) string {
+	return filepath.Join(a.cfg.StateDir, "meta", fmt.Sprintf("%d.json", appID))
+}
+
+func (a *Agent) readMeta(appID int64) repoMeta {
+	var m repoMeta
+	b, err := os.ReadFile(a.metaPath(appID))
+	if err != nil {
+		return m
+	}
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+func (a *Agent) writeMeta(appID int64, m repoMeta) {
+	path := a.metaPath(appID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".meta-*")
+	if err != nil {
+		return
+	}
+	name := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(name)
+		return
+	}
+	_ = os.Rename(name, path)
 }
 
 func machineID() string {

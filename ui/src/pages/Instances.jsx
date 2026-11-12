@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, LayoutGrid, List, Network } from 'lucide-react'
 import { api, stateLabel, DEFAULT_PROJECT, projectForApi, projectLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
 import LogsModal from '../components/LogsModal.jsx'
@@ -11,7 +11,10 @@ import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Pager from '../components/Pager.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
+import TopologyView from '../components/TopologyView.jsx'
+import InstancesCard from '../components/InstancesCard.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
@@ -133,9 +136,11 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                           <Link to={`/instances/${inst.id}`} className="instance-link">
                             <strong>{inst.name}</strong>
                           </Link>
-                          {inst.execution_mode === 'tunnel' && (
-                            <Badge state="tunnel" label="tunnel" small />
-                          )}
+                          <Badge
+                            state={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
+                            label={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
+                            small
+                          />
                           <span className="cell-sub">
                             <CopyButton value={String(inst.id)} size="small" title="Copy instance ID" />
                             <span className="mono">{inst.id}</span>
@@ -335,11 +340,16 @@ export default function Instances() {
   const [confirm, setConfirm] = useState(null)
   const [pageOff, setPageOff] = useState(0)
   const [collapsed, setCollapsed] = useState(() => new Set())
+  const [view, setView] = useState(() => {
+    const saved = localStorage.getItem('helios_instances_view')
+    return saved === 'list' || saved === 'cards' ? saved : 'topology'
+  })
 
   const [search, setSearch] = useState('')
   const [stateFilter, setStateFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [appFilter, setAppFilter] = useState(searchParams.get('app') || '')
+  const [modeFilter, setModeFilter] = useState('')
   const [onlineOnly, setOnlineOnly] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -383,7 +393,7 @@ export default function Instances() {
   useEffect(() => {
     setPageOff(0)
     setCollapsed(new Set())
-  }, [search, stateFilter, projectFilter, appFilter, onlineOnly])
+  }, [search, stateFilter, projectFilter, appFilter, modeFilter, onlineOnly])
 
   const addInstance = async (e) => {
     e.preventDefault()
@@ -506,15 +516,24 @@ export default function Instances() {
         if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
       }
       if (appFilter && !inst.apps.some((a) => String(a.application.id) === appFilter)) return false
+      if (modeFilter && (inst.execution_mode || 'agent') !== modeFilter) return false
       if (onlineOnly && !online(inst)) return false
       if (q && !instanceMatches(inst, q)
         && !inst.apps.some((a) => a.application.name.toLowerCase().includes(q))) return false
       return true
     })
-  }, [instances, q, stateFilter, projectFilter, appFilter, onlineOnly])
+  }, [instances, q, stateFilter, projectFilter, appFilter, modeFilter, onlineOnly])
 
   const visibleApps = useMemo(
     () => filtered.flatMap((inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))),
+    [filtered, appFilter, stateFilter, q]
+  )
+
+  const topologyInstances = useMemo(
+    () => filtered.map((inst) => ({
+      ...inst,
+      apps: inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q })),
+    })),
     [filtered, appFilter, stateFilter, q]
   )
 
@@ -523,6 +542,12 @@ export default function Instances() {
     ok: visibleApps.filter((a) => appState(a) === 'ok').length,
     drift: visibleApps.filter((a) => appState(a) === 'drift').length,
     offline: filtered.filter((i) => !online(i)).length,
+    bastion: filtered.filter((i) => i.execution_mode === 'tunnel').length,
+  }
+
+  const changeView = (next) => {
+    setView(next)
+    localStorage.setItem('helios_instances_view', next)
   }
 
   const toggleCollapse = (key) =>
@@ -534,12 +559,13 @@ export default function Instances() {
     })
 
   const pageItems = filtered.slice(pageOff, pageOff + PAGE_SIZE)
-  const filtersActive = !!(search || stateFilter || projectFilter || appFilter || onlineOnly)
+  const filtersActive = !!(search || stateFilter || projectFilter || appFilter || modeFilter || onlineOnly)
   const clearFilters = () => {
     setSearch('')
     setStateFilter('')
     setProjectFilter('')
     setAppFilter('')
+    setModeFilter('')
     setOnlineOnly(false)
     setSearchParams({}, { replace: true })
   }
@@ -564,7 +590,10 @@ export default function Instances() {
         <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{stats.ok}</span><span className="stat-label">Synced apps</span></div>
         <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{stats.drift}</span><span className="stat-label">Drifted apps</span></div>
         <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{stats.offline}</span><span className="stat-label">Offline</span></div>
-        <div className="stats-note">App states from latest checks · agents poll every 10s</div>
+        <div className="stats-note">
+          {stats.bastion ? `${stats.bastion} agentless via bastion · ` : ''}
+          App states from latest checks · poll every 10s
+        </div>
       </div>
 
       <div className="filters">
@@ -594,6 +623,11 @@ export default function Instances() {
             <option key={p} value={p}>{p}</option>
           ))}
         </select>
+        <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} aria-label="Execution mode">
+          <option value="">All modes</option>
+          <option value="agent">Agent</option>
+          <option value="tunnel">Agentless · bastion</option>
+        </select>
         <select value={appFilter} onChange={(e) => applyAppFilter(e.target.value)} aria-label="Application">
           <option value="">All applications</option>
           {appOptions.map(([id, name]) => (
@@ -617,9 +651,14 @@ export default function Instances() {
         </button>
       </div>
 
-      {(appFilter || projectFilter || stateFilter) && (
+      {(appFilter || projectFilter || stateFilter || modeFilter) && (
         <div className="active-filter">
           <span>Showing</span>
+          {modeFilter && (
+            <span className="filter-chip">
+              Mode: {modeFilter === 'tunnel' ? 'agentless · bastion' : 'agent'}
+            </span>
+          )}
           {appFilter && (
             <span className="filter-chip">
               Application: {appOptions.find(([id]) => String(id) === appFilter)?.[1] || `#${appFilter}`}
@@ -642,6 +681,34 @@ export default function Instances() {
         <span className="muted">
           {filtered.length} of {instances.length} instance{instances.length === 1 ? '' : 's'}
         </span>
+        <div className="toolbar-right">
+          <div className="seg" role="group" aria-label="View mode">
+            <button
+              type="button"
+              className={'seg-btn' + (view === 'topology' ? ' active' : '')}
+              onClick={() => changeView('topology')}
+              title="Topology view"
+            >
+              <Network size={14} /> Topology
+            </button>
+            <button
+              type="button"
+              className={'seg-btn' + (view === 'list' ? ' active' : '')}
+              onClick={() => changeView('list')}
+              title="List view"
+            >
+              <List size={14} /> List
+            </button>
+            <button
+              type="button"
+              className={'seg-btn' + (view === 'cards' ? ' active' : '')}
+              onClick={() => changeView('cards')}
+              title="Card view"
+            >
+              <LayoutGrid size={14} /> Cards
+            </button>
+          </div>
+        </div>
       </div>
 
       {showReg && (
@@ -651,11 +718,12 @@ export default function Instances() {
               {tunnelInstance ? (
                 <>
                   <p><strong>{regResult.instance.name}</strong> registered as an <strong>agentless (tunnel)</strong> instance. On the managed host, open a persistent reverse SSH tunnel:</p>
+                  <TunnelDiagram port={tunnelInstance.tunnel_port} gateway={tunnelInstance.tunnel_gateway} />
                   {tunnelCommand ? (
                     <>
                       <p><strong>Reverse tunnel</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
                       <pre className="token-pre">{tunnelCommand}</pre>
-                      <p className="sub">Run it as a systemd service (or under your process manager) with a dedicated SSH key that only allows port forwarding. The hub will dial 127.0.0.1:{tunnelInstance.tunnel_port} on its side.</p>
+                      <p className="sub">Run it as a systemd service (or under your process manager) with a dedicated SSH key that only allows port forwarding. The bastion runner dials 127.0.0.1:{tunnelInstance.tunnel_port}; the hub only stores control-plane state.</p>
                     </>
                   ) : (
                     <p className="error">Tunnel gateway is not configured on the hub. Set HELIOS_TUNNEL_GATEWAY (for example helios-tunnel@bastion.example.com) and reload the server.</p>
@@ -700,11 +768,29 @@ export default function Instances() {
         </Modal>
       )}
 
-      {pageItems.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="empty">
           <p className="muted">
             {filtersActive ? 'No instances match these filters.' : 'No instances yet. Register one to get started.'}
           </p>
+        </div>
+      ) : view === 'topology' ? (
+        <TopologyView
+          instances={topologyInstances}
+          emptyMessage="No instances match these filters."
+        />
+      ) : view === 'cards' ? (
+        <div className="cards-grid">
+          {pageItems.map((inst) => (
+            <InstancesCard
+              key={inst.id}
+              instance={inst}
+              onAction={act}
+              onDiff={(runId) => setDiffModal(runId)}
+              onLogs={(runId) => setRunModal({ runId, view: 'text' })}
+              onVars={setVarsApp}
+            />
+          ))}
         </div>
       ) : (
         <InstancesTree
@@ -728,7 +814,9 @@ export default function Instances() {
       {diffModal && <DiffModal runId={diffModal} onClose={() => setDiffModal(null)} />}
       {varsApp && <VariableEditor title={`Host variables · ${varsApp.inst.name}`} subtitle={`Overrides for ${varsApp.app.application.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(varsApp.inst.id, varsApp.app.application.id)} save={(items) => api.saveAssignmentVariables(varsApp.inst.id, varsApp.app.application.id, items)} onClose={() => setVarsApp(null)} />}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
-      <Pager total={filtered.length} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
+      {view !== 'topology' && (
+        <Pager total={filtered.length} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
+      )}
     </section>
   )
 }

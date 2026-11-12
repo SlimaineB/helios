@@ -421,6 +421,56 @@ label.row.small { font-size: 12px; }
 .badge.error, .badge.failed { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
 .badge.unknown, .badge.pending { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
 .badge.tunnel { color: var(--accent); background: var(--accent-soft); border-color: #c7d7fe; }
+.badge.agent { color: var(--muted); background: var(--panel-2); border-color: var(--border); }
+
+/* ---------------------------------------------------------- tunnel diagram */
+
+.tunnel-diagram {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: .6rem;
+  align-items: stretch;
+  margin: .85rem 0 .35rem;
+}
+.td-node {
+  min-width: 0;
+  padding: .7rem .8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.td-node.td-bastion { border-color: #c7d7fe; background: var(--accent-soft); }
+.td-node.td-host { border-color: #b7ebdd; background: var(--ok-soft); }
+.td-kicker {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.td-node strong { display: block; font-size: 13px; }
+.td-detail { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.td-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+.td-link .td-detail { margin-top: 0; font-size: 10px; }
+.td-arrow { color: var(--accent); font-size: 18px; line-height: 1; }
+
+@media (max-width: 768px) {
+  .tunnel-diagram { grid-template-columns: 1fr; }
+  .td-link { flex-direction: row; flex-wrap: wrap; gap: .35rem; padding: .15rem 0; }
+  .td-arrow { transform: rotate(90deg); }
+}
 
 .state-badge {
   font-size: 11px;
@@ -926,6 +976,9 @@ details summary { cursor: pointer; color: var(--muted); }
 .app-empty { color: var(--muted-2); font-size: 12px; }
 .app-info { display: flex; flex-direction: column; gap: .35rem; }
 .instance-title { display: inline-flex; align-items: center; gap: .5rem; font-size: 13px; font-weight: 600; }
+.instance-card .instance-main { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+.instance-card .instance-title { display: block; max-width: 100%; }
+.instance-card .instance-title .instance-link { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .repo-meta { font-size: 11px; color: var(--muted-2); }
 
 /* ------------------------------------------------------------- tree table */
@@ -1512,7 +1565,8 @@ details summary { cursor: pointer; color: var(--muted); }
 .topology-hub-stats {
   grid-column: 1 / -1;
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin-top: 7px;
   padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, .22);
@@ -1531,6 +1585,28 @@ details summary { cursor: pointer; color: var(--muted); }
 .topology-agent.agent-error { border-left-color: var(--err); }
 .topology-agent.agent-unknown { border-left-color: var(--unknown); }
 .topology-agent.is-offline { background: #fcfcfd; }
+.topology-agent.is-tunnel {
+  border-left-color: var(--accent);
+  border-left-style: dashed;
+  background: linear-gradient(90deg, rgba(234, 241, 255, .55), var(--panel) 42%);
+}
+.topology-agent.is-tunnel .topology-agent-icon { background: var(--accent-soft); color: var(--accent); }
+.topology-mode-badge {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.topology-mode-badge.is-tunnel {
+  border-color: #c7d7fe;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .topology-agent-icon {
   display: grid;
   place-items: center;
