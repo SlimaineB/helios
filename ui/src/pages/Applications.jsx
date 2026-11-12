@@ -587,7 +587,7 @@ export default function Applications() {
                 <th>Application</th>
                 <th>Project</th>
                 <th>Repository</th>
-                <th>Revision · path</th>
+                <th>Revision</th>
                 <th style={{ width: '140px' }}>Instances</th>
                 <th style={{ width: '160px' }}>Health</th>
                 <th style={{ width: '300px' }}>Actions</th>
@@ -631,7 +631,7 @@ export default function Applications() {
                     <td>
                       <div className="cell-title">
                         <span className="mono">{a.branch}</span>
-                        <span className="cell-sub mono">{a.path}</span>
+                        <span className="cell-sub mono">{a.path ? a.path.split('/').pop() : '—'}</span>
                       </div>
                     </td>
                     <td>
