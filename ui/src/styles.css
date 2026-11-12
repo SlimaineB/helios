@@ -420,6 +420,7 @@ label.row.small { font-size: 12px; }
 .badge.stuck { color: #9a3a00; background: #fdeee2; border-color: #f7cdb2; }
 .badge.error, .badge.failed { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
 .badge.unknown, .badge.pending { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
+.badge.tunnel { color: var(--accent); background: var(--accent-soft); border-color: #c7d7fe; }
 
 .state-badge {
   font-size: 11px;

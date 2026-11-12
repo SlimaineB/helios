@@ -206,11 +206,15 @@ jobs:
           mkdir -p dist/release
 
           for arch in amd64 arm64; do
-            mkdir -p "dist/agent-${arch}" "dist/server-${arch}"
+            mkdir -p "dist/agent-${arch}" "dist/server-${arch}" "dist/runner-${arch}"
 
             (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
               go build -trimpath -ldflags="-s -w" \
               -o "../dist/agent-${arch}/helios-agent" ./cmd/agent)
+
+            (cd agent && CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "../dist/runner-${arch}/helios-runner" ./cmd/runner)
 
             (cd server && CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
               go build -trimpath -ldflags="-s -w" \
@@ -218,15 +222,20 @@ jobs:
 
             cp deploy/install-agent.sh deploy/helios-agent.service "dist/agent-${arch}/"
             cp deploy/install-server.sh deploy/helios-server.service "dist/server-${arch}/"
+            cp deploy/helios-runner.service deploy/runner.env.example "dist/runner-${arch}/"
             cp -a ui/dist "dist/server-${arch}/ui"
 
             tar -C "dist/agent-${arch}" -czf \
               "dist/release/helios-agent-${VERSION}-linux-${arch}.tar.gz" .
             tar -C "dist/server-${arch}" -czf \
               "dist/release/helios-server-${VERSION}-linux-${arch}.tar.gz" .
+            tar -C "dist/runner-${arch}" -czf \
+              "dist/release/helios-runner-${VERSION}-linux-${arch}.tar.gz" .
 
             cp "dist/agent-${arch}/helios-agent" \
               "dist/release/helios-agent-linux-${arch}"
+            cp "dist/runner-${arch}/helios-runner" \
+              "dist/release/helios-runner-linux-${arch}"
             cp "dist/server-${arch}/helios-server" \
               "dist/release/helios-server-linux-${arch}"
           done

@@ -25,6 +25,10 @@ TLS_CERT=""
 TLS_KEY=""
 DOWNLOAD_DIR="/usr/share/helios/downloads"
 AGENT_TARBALLS=""
+RUNNER_TOKEN="${HELIOS_RUNNER_TOKEN:-}"
+TUNNEL_GATEWAY="${HELIOS_TUNNEL_GATEWAY:-}"
+TUNNEL_PORT_MIN="${HELIOS_TUNNEL_PORT_MIN:-22000}"
+TUNNEL_PORT_MAX="${HELIOS_TUNNEL_PORT_MAX:-22999}"
 
 usage() {
     cat <<'EOF'
@@ -42,6 +46,10 @@ Usage: install-server.sh --binary PATH --ui DIR --operator-password SECRET [opti
   --tls-key FILE           private key for --tls-cert
   --agent-tarball FILE     publish an agent tarball from the hub (repeatable)
   --downloads-dir DIR      hub download directory (default: /usr/share/helios/downloads)
+  --runner-token TOKEN     shared bastion runner token (enables agentless mode)
+  --tunnel-gateway SSH     SSH destination shown for tunnel instances
+  --tunnel-port-min N      first hub loopback port (default: 22000)
+  --tunnel-port-max N      last hub loopback port (default: 22999)
 EOF
     exit 1
 }
@@ -61,6 +69,10 @@ while [ $# -gt 0 ]; do
         --agent-tarball) AGENT_TARBALLS="$AGENT_TARBALLS
 $2"; shift 2 ;;
         --downloads-dir) DOWNLOAD_DIR=$2; shift 2 ;;
+        --runner-token) RUNNER_TOKEN=$2; shift 2 ;;
+        --tunnel-gateway) TUNNEL_GATEWAY=$2; shift 2 ;;
+        --tunnel-port-min) TUNNEL_PORT_MIN=$2; shift 2 ;;
+        --tunnel-port-max) TUNNEL_PORT_MAX=$2; shift 2 ;;
         *) echo "unknown option: $1" >&2; usage ;;
     esac
 done
@@ -151,6 +163,12 @@ umask 077
     if [ -n "$TLS_CERT_ENV" ]; then printf 'HELIOS_TLS_CERT=%s\n' "$TLS_CERT_ENV"; fi
     if [ -n "$TLS_KEY_ENV" ]; then printf 'HELIOS_TLS_KEY=%s\n' "$TLS_KEY_ENV"; fi
     printf 'HELIOS_DOWNLOADS_DIR=%s\n' "$DOWNLOAD_DIR"
+    if [ -n "$RUNNER_TOKEN" ]; then printf 'HELIOS_RUNNER_TOKEN=%s\n' "$RUNNER_TOKEN"; fi
+    if [ -n "$TUNNEL_GATEWAY" ]; then printf 'HELIOS_TUNNEL_GATEWAY=%s\n' "$TUNNEL_GATEWAY"; fi
+    if [ -n "$RUNNER_TOKEN" ]; then
+        printf 'HELIOS_TUNNEL_PORT_MIN=%s\n' "$TUNNEL_PORT_MIN"
+        printf 'HELIOS_TUNNEL_PORT_MAX=%s\n' "$TUNNEL_PORT_MAX"
+    fi
 } > /etc/helios/server.env
 chmod 0600 /etc/helios/server.env
 umask 022

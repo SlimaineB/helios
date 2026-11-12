@@ -35,6 +35,17 @@ type Config struct {
 	AwsRegion string `yaml:"-"`
 	// AnsibleBin overrides the ansible-playbook binary path.
 	AnsibleBin string `yaml:"ansible_bin"`
+	// TargetHost/TargetPort switch Ansible from local execution to SSH (used by
+	// the agentless runner). TargetPort 0 keeps the normal local mode.
+	TargetHost    string `yaml:"target_host"`
+	TargetPort    int    `yaml:"target_port"`
+	SSHUser       string `yaml:"ssh_user"`
+	SSHKey        string `yaml:"ssh_key"`
+	SSHCommonArgs string `yaml:"ssh_common_args"`
+	// Hostname/Platform let the runner report the tunnel instance rather than
+	// the bastion's own hostname.
+	Hostname string `yaml:"hostname"`
+	Platform string `yaml:"platform"`
 }
 
 func Default() Config {

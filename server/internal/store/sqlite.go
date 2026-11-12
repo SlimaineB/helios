@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS instances (
   hostname    TEXT NOT NULL DEFAULT '',
   platform    TEXT NOT NULL DEFAULT '',
   project     TEXT NOT NULL DEFAULT '',
+  execution_mode TEXT NOT NULL DEFAULT 'agent',
+  tunnel_port INTEGER NOT NULL DEFAULT 0,
+  last_tunnel_at TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
 
@@ -211,6 +214,9 @@ CREATE TABLE IF NOT EXISTS instances (
   hostname    TEXT NOT NULL DEFAULT '',
   platform    TEXT NOT NULL DEFAULT '',
   project     TEXT NOT NULL DEFAULT '',
+  execution_mode TEXT NOT NULL DEFAULT 'agent',
+  tunnel_port INTEGER NOT NULL DEFAULT 0,
+  last_tunnel_at TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
 
@@ -463,6 +469,9 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS ignore_paths TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'agent'`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tunnel_port INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
@@ -535,6 +544,9 @@ func migrate(db *sql.DB) error {
 		{"applications", "ignore_paths", "ALTER TABLE applications ADD COLUMN ignore_paths TEXT NOT NULL DEFAULT ''"},
 		{"applications", "project", "ALTER TABLE applications ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 		{"instances", "project", "ALTER TABLE instances ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
+		{"instances", "execution_mode", "ALTER TABLE instances ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent'"},
+		{"instances", "tunnel_port", "ALTER TABLE instances ADD COLUMN tunnel_port INTEGER NOT NULL DEFAULT 0"},
+		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
@@ -602,19 +614,21 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, execution_mode, tunnel_port, last_tunnel_at, created_at`
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
-		inst              model.Instance
-		lastSeen, created string
+		inst                          model.Instance
+		lastSeen, lastTunnel, created string
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
-		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &created)
+		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project,
+		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &created)
 	if err != nil {
 		return inst, err
 	}
 	inst.LastSeen = parseTime(lastSeen)
+	inst.LastTunnelAt = parseTime(lastTunnel)
 	inst.CreatedAt = parseTime(created)
 	return inst, nil
 }
@@ -648,6 +662,25 @@ func (s *sqlstore) CountInstances(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// ListTunnelInstances returns every agentless (reverse SSH) instance so a
+// runner can discover the loopback ports it should reach.
+func (s *sqlstore) ListTunnelInstances(ctx context.Context) ([]model.Instance, error) {
+	rows, err := s.query(ctx, `SELECT `+instanceCols+` FROM instances WHERE execution_mode=? ORDER BY name`, model.ModeTunnel)
+	if err != nil {
+		return nil, wrap(err, "list tunnel instances")
+	}
+	defer rows.Close()
+	out := []model.Instance{}
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, wrap(err, "scan tunnel instance")
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqlstore) GetInstance(ctx context.Context, id string) (model.Instance, error) {
 	row := s.queryRow(ctx, `SELECT `+instanceCols+` FROM instances WHERE id=?`, id)
 	inst, err := scanInstance(row)
@@ -668,9 +701,12 @@ func (s *sqlstore) GetInstanceByToken(ctx context.Context, tokenHash string) (mo
 
 func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error) {
 	in.CreatedAt = nowCtx(ctx)
+	if in.ExecutionMode == "" {
+		in.ExecutionMode = model.ModeAgent
+	}
 	res, err := s.exec(ctx,
-		`INSERT INTO instances (id, name, token_hash, state, project, created_at) VALUES (?,?,?,?,?,?)`,
-		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, tm(in.CreatedAt))
+		`INSERT INTO instances (id, name, token_hash, state, project, execution_mode, tunnel_port, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.ExecutionMode, in.TunnelPort, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create instance: %w", err)
 	}
@@ -680,8 +716,9 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 
 func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error {
 	_, err := s.exec(ctx,
-		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=? WHERE id=?`,
-		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project, in.ID)
+		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, execution_mode=?, tunnel_port=?, last_tunnel_at=? WHERE id=?`,
+		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project,
+		in.ExecutionMode, in.TunnelPort, tm(in.LastTunnelAt), in.ID)
 	if err != nil {
 		return fmt.Errorf("update instance: %w", err)
 	}

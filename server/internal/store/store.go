@@ -27,6 +27,7 @@ type Store interface {
 
 	// Instances
 	ListInstances(ctx context.Context, limit, offset int) ([]model.Instance, error)
+	ListTunnelInstances(ctx context.Context) ([]model.Instance, error)
 	CountInstances(ctx context.Context) (int, error)
 	// Scoped variants restrict by project names (RBAC visibility).
 	ListInstancesScoped(ctx context.Context, projects []string, limit, offset int) ([]model.Instance, error)

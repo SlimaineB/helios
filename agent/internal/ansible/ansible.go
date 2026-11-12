@@ -42,10 +42,22 @@ const (
 	StatusFailed = "failed"
 )
 
+// Target describes a remote host reached over SSH (agentless tunnel mode).
+// Nil/zero Port keeps the local connection used by the installed agent.
+type Target struct {
+	Host       string
+	Port       int
+	User       string
+	KeyFile    string
+	CommonArgs string
+}
+
 // Runner executes ansible-playbook against a local mirror.
 type Runner struct {
 	Bin     string
 	Timeout time.Duration
+	// Target switches from local execution to SSH against a tunneled host.
+	Target *Target
 	// ExtraEnv allows injecting vars for CI-ish runs (unused in check/apply inline).
 	ExtraEnv map[string]string
 }
@@ -74,6 +86,23 @@ func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON 
 	defer cancel()
 
 	args := []string{"-i", "localhost,", "--connection", "local"}
+	if r.Target != nil && r.Target.Port > 0 {
+		host := strings.TrimSpace(r.Target.Host)
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		args = []string{"-i", host + ",", "--connection", "ssh"}
+		if r.Target.User != "" {
+			args = append(args, "-u", r.Target.User)
+		}
+		if r.Target.KeyFile != "" {
+			args = append(args, "--private-key", r.Target.KeyFile)
+		}
+		args = append(args, "-e", fmt.Sprintf("ansible_port=%d", r.Target.Port))
+		if r.Target.CommonArgs != "" {
+			args = append(args, "--ssh-common-args", r.Target.CommonArgs)
+		}
+	}
 	if check {
 		args = append(args, "--check")
 	}

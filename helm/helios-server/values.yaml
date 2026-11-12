@@ -51,6 +51,18 @@ database:
 healing:
   maxDriftStreak: 3
 
+# Agentless (reverse SSH tunnel) mode. The runner API is disabled when no token
+# is configured. The gateway is the SSH destination shown to operators, for
+# example "helios-tunnel@bastion.example.com"; ports are allocated on the hub
+# loopback from this range for each tunnel instance.
+runner:
+  token: ""
+  # existingSecret: name of a Secret holding key `runner-token`.
+  existingSecret: ""
+  tunnelGateway: ""
+  tunnelPortMin: 22000
+  tunnelPortMax: 22999
+
 # HTTP Basic auth protecting the operator UI + API. When password is empty and
 # no existingSecret is set, the chart generates one and keeps it across upgrades.
 operatorAuth:

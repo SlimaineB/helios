@@ -90,6 +90,13 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/agent/checkin", s.agentAuth(s.handleCheckin))
 	m.HandleFunc("POST /api/v1/agent/status", s.agentAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/agent/commands/{cmdId}/result", s.agentAuth(s.handleCommandResult))
+
+	// Runner (bastion-side, shared bearer token). Reuses the agent handlers so
+	// tunnel instances get the same drift/autoheal/command semantics.
+	m.HandleFunc("GET /api/v1/runner/instances", s.runnerAuth(s.handleRunnerInstances))
+	m.HandleFunc("POST /api/v1/runner/instances/{id}/checkin", s.runnerInstanceAuth(s.handleCheckin))
+	m.HandleFunc("POST /api/v1/runner/instances/{id}/status", s.runnerInstanceAuth(s.handleStatus))
+	m.HandleFunc("POST /api/v1/runner/instances/{id}/commands/{cmdId}/result", s.runnerInstanceAuth(s.handleCommandResult))
 }
 
 // agentAuth authenticates the agent bearer token and resolves the instance.

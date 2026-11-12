@@ -133,6 +133,9 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                           <Link to={`/instances/${inst.id}`} className="instance-link">
                             <strong>{inst.name}</strong>
                           </Link>
+                          {inst.execution_mode === 'tunnel' && (
+                            <Badge state="tunnel" label="tunnel" small />
+                          )}
                           <span className="cell-sub">
                             <CopyButton value={String(inst.id)} size="small" title="Copy instance ID" />
                             <span className="mono">{inst.id}</span>
@@ -320,6 +323,7 @@ export default function Instances() {
   const [showReg, setShowReg] = useState(false)
   const [regName, setRegName] = useState('')
   const [regProject, setRegProject] = useState(DEFAULT_PROJECT)
+  const [regMode, setRegMode] = useState('agent')
   const [projects, setProjects] = useState([])
   const [regResult, setRegResult] = useState(null)
   const [regError, setRegError] = useState('')
@@ -385,10 +389,11 @@ export default function Instances() {
     e.preventDefault()
     setRegError('')
     try {
-      const res = await api.createInstance(regName.trim(), projectForApi(regProject))
+      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regMode)
       setRegResult(res)
       setRegName('')
       setRegProject(DEFAULT_PROJECT)
+      setRegMode('agent')
       toast.success('Instance registered')
       refresh()
     } catch (err) {
@@ -401,6 +406,7 @@ export default function Instances() {
     setRegResult(null)
     setRegName('')
     setRegError('')
+    setRegMode('agent')
   }
 
   useEffect(() => {
@@ -417,6 +423,17 @@ export default function Instances() {
         `curl -fsSLO ${hubURL}/downloads/helios-agent-linux-\${arch}.tar.gz`,
         'tar -xzf "helios-agent-linux-${arch}.tar.gz"',
         `sudo ./install-agent.sh --server ${hubURL} --token '${regResult.token}'`,
+      ].join('\n')
+    : ''
+  const tunnelInstance = regResult?.instance?.execution_mode === 'tunnel' ? regResult.instance : null
+  const tunnelCommand = tunnelInstance?.tunnel_gateway && tunnelInstance?.tunnel_port
+    ? [
+        'ssh -N -T \\',
+        '  -o ExitOnForwardFailure=yes \\',
+        '  -o ServerAliveInterval=30 \\',
+        '  -o ServerAliveCountMax=3 \\',
+        `  -R 127.0.0.1:${tunnelInstance.tunnel_port}:127.0.0.1:22 \\`,
+        `  ${tunnelInstance.tunnel_gateway}`,
       ].join('\n')
     : ''
 
@@ -628,21 +645,39 @@ export default function Instances() {
       </div>
 
       {showReg && (
-        <Modal title="Register a new agent" onClose={closeReg}>
+        <Modal title="Register an instance" onClose={closeReg}>
           {regResult ? (
             <div className="form-card">
-              <p><strong>{regResult.instance.name}</strong> registered. The bootstrap token is only shown once — put it in the agent&apos;s config:</p>
-              <pre className="token-pre">
-                server: {`${location.origin || location.protocol + '//' + location.host}`}
-                {'\n'}
-                token: {regResult.token}
-                {'\n'}
-                instance_id: {regResult.instance.id}
-              </pre>
-              {installCommand && (
+              {tunnelInstance ? (
                 <>
-                  <p><strong>Install from this hub</strong> <CopyButton value={installCommand} title="Copy install command" /></p>
-                  <pre className="token-pre">{installCommand}</pre>
+                  <p><strong>{regResult.instance.name}</strong> registered as an <strong>agentless (tunnel)</strong> instance. On the managed host, open a persistent reverse SSH tunnel:</p>
+                  {tunnelCommand ? (
+                    <>
+                      <p><strong>Reverse tunnel</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
+                      <pre className="token-pre">{tunnelCommand}</pre>
+                      <p className="sub">Run it as a systemd service (or under your process manager) with a dedicated SSH key that only allows port forwarding. The hub will dial 127.0.0.1:{tunnelInstance.tunnel_port} on its side.</p>
+                    </>
+                  ) : (
+                    <p className="error">Tunnel gateway is not configured on the hub. Set HELIOS_TUNNEL_GATEWAY (for example helios-tunnel@bastion.example.com) and reload the server.</p>
+                  )}
+                  <p className="sub">No Helios agent runs on this host; the hub runner executes Ansible through the tunnel.</p>
+                </>
+              ) : (
+                <>
+                  <p><strong>{regResult.instance.name}</strong> registered. The bootstrap token is only shown once — put it in the agent&apos;s config:</p>
+                  <pre className="token-pre">
+                    server: {`${location.origin || location.protocol + '//' + location.host}`}
+                    {'\n'}
+                    token: {regResult.token}
+                    {'\n'}
+                    instance_id: {regResult.instance.id}
+                  </pre>
+                  {installCommand && (
+                    <>
+                      <p><strong>Install from this hub</strong> <CopyButton value={installCommand} title="Copy install command" /></p>
+                      <pre className="token-pre">{installCommand}</pre>
+                    </>
+                  )}
                 </>
               )}
               <div className="form-actions">
@@ -654,6 +689,7 @@ export default function Instances() {
             <form className="form-card" onSubmit={addInstance}>
               <label>Instance name<input autoFocus value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="e.g. web-prod-01" /></label>
               <label>Project<select required value={regProject} onChange={(e) => setRegProject(e.target.value)}><option value={DEFAULT_PROJECT}>default (global)</option>{regProject !== DEFAULT_PROJECT && !projects.some((p) => p.name === regProject) && <option value={regProject}>{regProject}</option>}{projects.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}</select><span className="sub">Required · scopes RBAC and the repository allowlist.</span></label>
+              <label>Registration mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="tunnel">Agentless · reverse SSH tunnel</option></select><span className="sub">Agentless lets an outbound-only host be managed by the hub runner through a reverse tunnel.</span></label>
               {regError && <div className="error">{regError}</div>}
               <div className="form-actions">
                 <button type="button" className="ghost" onClick={closeReg}>Cancel</button>

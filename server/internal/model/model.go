@@ -27,6 +27,15 @@ const (
 	CmdFailed  = "failed"
 )
 
+// Instance execution modes.
+const (
+	// ModeAgent runs the Helios agent on the managed host (default).
+	ModeAgent = "agent"
+	// ModeTunnel keeps the managed host agentless: it only opens an outbound
+	// reverse SSH tunnel, and a runner on the bastion executes Ansible.
+	ModeTunnel = "tunnel"
+)
+
 type Instance struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
@@ -38,8 +47,18 @@ type Instance struct {
 	Hostname   string    `json:"hostname,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
 	// Project scopes this instance (empty = global/default project).
-	Project   string    `json:"project"`
-	CreatedAt time.Time `json:"created_at"`
+	Project string `json:"project"`
+	// ExecutionMode is "agent" (default) or "tunnel" (agentless, reverse SSH).
+	ExecutionMode string `json:"execution_mode"`
+	// TunnelPort is the loopback port the target should forward to its sshd
+	// (tunnel mode only). The runner connects to 127.0.0.1:<port>.
+	TunnelPort int `json:"tunnel_port,omitempty"`
+	// LastTunnelAt is the last time the runner successfully reached the tunnel.
+	LastTunnelAt time.Time `json:"last_tunnel_at,omitempty"`
+	// TunnelGateway is the SSH destination shown in the bootstrap command. It
+	// is derived from server configuration and never persisted.
+	TunnelGateway string    `json:"tunnel_gateway,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type Application struct {

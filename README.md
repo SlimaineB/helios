@@ -54,6 +54,11 @@ If a playbook must create system users, install packages, or write outside the
 agent state dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
+**Outbound-only servers?** Register the instance as *Agentless · reverse SSH
+tunnel* instead. The host opens a reverse SSH tunnel to a bastion where a Helios
+runner executes Ansible; no agent is installed. See
+[Agentless mode](docs/INSTALL.md#agentless-mode--reverse-ssh-tunnel).
+
 ### 3. Add an application
 
 In the UI, open **Applications → New application**. Enter the Git repository

@@ -6,26 +6,42 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// Client talks to the central server API on behalf of the agent.
+// Client talks to the central server API on behalf of the agent or a runner.
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	base       string
+	token      string
+	prefix     string
+	tunnelAddr string
+	http       *http.Client
 }
 
 func New(base, token string, insecure bool) *Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig.InsecureSkipVerify = insecure // #nosec G402 — opt-in for private labs
 	return &Client{
-		base:  strings.TrimRight(base, "/"),
-		token: token,
-		http:  &http.Client{Transport: tr, Timeout: 10 * time.Minute},
+		base:   strings.TrimRight(base, "/"),
+		token:  token,
+		prefix: "/api/v1/agent",
+		http:   &http.Client{Transport: tr, Timeout: 10 * time.Minute},
 	}
+}
+
+// NewRunner returns a client that speaks the runner API for one tunnel
+// instance. Before each checkin it verifies the reverse tunnel is reachable on
+// the bastion loopback, so a down tunnel is treated as an offline instance.
+func NewRunner(base, token, instanceID string, tunnelPort int, insecure bool) *Client {
+	c := New(base, token, insecure)
+	c.prefix = "/api/v1/runner/instances/" + instanceID
+	if tunnelPort > 0 {
+		c.tunnelAddr = fmt.Sprintf("127.0.0.1:%d", tunnelPort)
+	}
+	return c
 }
 
 // Application mirrors the server model (only fields the agent needs).
@@ -97,9 +113,38 @@ func (c *Client) Health(ctx context.Context) error {
 }
 
 func (c *Client) Checkin(ctx context.Context, in CheckinIn) (CheckinOK, error) {
+	if c.tunnelAddr != "" {
+		conn, err := net.DialTimeout("tcp", c.tunnelAddr, 3*time.Second)
+		if err != nil {
+			return CheckinOK{}, fmt.Errorf("reverse tunnel unreachable at %s: %w", c.tunnelAddr, err)
+		}
+		_ = conn.Close()
+	}
 	var out CheckinOK
-	err := c.do(ctx, http.MethodPost, "/api/v1/agent/checkin", in, &out)
+	err := c.do(ctx, http.MethodPost, c.prefix+"/checkin", in, &out)
 	return out, err
+}
+
+// RunnerInstance is one tunnel instance discovered by a runner.
+type RunnerInstance struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Project       string `json:"project"`
+	ExecutionMode string `json:"execution_mode"`
+	TunnelPort    int    `json:"tunnel_port"`
+}
+
+type runnerInstancesOK struct {
+	Instances []RunnerInstance `json:"instances"`
+}
+
+// ListTunnelInstances returns every agentless instance and its allocated port.
+func (c *Client) ListTunnelInstances(ctx context.Context) ([]RunnerInstance, error) {
+	var out runnerInstancesOK
+	if err := c.do(ctx, http.MethodGet, "/api/v1/runner/instances", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Instances, nil
 }
 
 // StatusReport is the outcome of a check/apply run.
@@ -137,7 +182,7 @@ type Resource struct {
 }
 
 func (c *Client) ReportStatus(ctx context.Context, s StatusReport) error {
-	return c.do(ctx, http.MethodPost, "/api/v1/agent/status", s, nil)
+	return c.do(ctx, http.MethodPost, c.prefix+"/status", s, nil)
 }
 
 type CommandResult struct {
@@ -147,7 +192,7 @@ type CommandResult struct {
 }
 
 func (c *Client) ReportCommandResult(ctx context.Context, cmdID int64, r CommandResult) error {
-	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/agent/commands/%d/result", cmdID), r, nil)
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("%s/commands/%d/result", c.prefix, cmdID), r, nil)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

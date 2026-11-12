@@ -36,14 +36,31 @@ type Agent struct {
 
 func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 	host, _ := os.Hostname()
+	hostname, platform := host, runtimePlatform()
+	if cfg.Hostname != "" {
+		hostname = cfg.Hostname
+	}
+	if cfg.Platform != "" {
+		platform = cfg.Platform
+	}
+	var target *ansible.Target
+	if cfg.TargetPort > 0 {
+		target = &ansible.Target{
+			Host:       cfg.TargetHost,
+			Port:       cfg.TargetPort,
+			User:       cfg.SSHUser,
+			KeyFile:    cfg.SSHKey,
+			CommonArgs: cfg.SSHCommonArgs,
+		}
+	}
 	return &Agent{
 		cfg:      cfg,
 		client:   c,
-		runner:   &ansible.Runner{Bin: cfg.AnsibleBin},
+		runner:   &ansible.Runner{Bin: cfg.AnsibleBin, Target: target},
 		log:      log,
-		hostname: host,
+		hostname: hostname,
 		version:  "0.1.1",
-		platform: runtimePlatform(),
+		platform: platform,
 		states:   map[int64]*appState{},
 	}
 }
@@ -137,7 +154,11 @@ func (a *Agent) pass(ctx context.Context) {
 		Platform:   a.platform,
 	})
 	if err != nil {
-		a.log.Error("checkin failed; skipping all apps and commands", "error", err)
+		if a.cfg.TargetPort > 0 {
+			a.log.Warn("tunnel checkin failed; waiting for tunnel", "error", err)
+		} else {
+			a.log.Error("checkin failed; skipping all apps and commands", "error", err)
+		}
 		return
 	}
 

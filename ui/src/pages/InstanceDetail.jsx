@@ -58,6 +58,17 @@ export default function InstanceDetail() {
   }, [refresh, modalOpen])
 
   const online = inst?.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
+  const isTunnel = inst?.execution_mode === 'tunnel'
+  const tunnelCommand = isTunnel && inst?.tunnel_gateway && inst?.tunnel_port
+    ? [
+        'ssh -N -T \\',
+        '  -o ExitOnForwardFailure=yes \\',
+        '  -o ServerAliveInterval=30 \\',
+        '  -o ServerAliveCountMax=3 \\',
+        `  -R 127.0.0.1:${inst.tunnel_port}:127.0.0.1:22 \\`,
+        `  ${inst.tunnel_gateway}`,
+      ].join('\n')
+    : ''
 
   const toggleAutoHeal = async (app) => {
     try {
@@ -154,6 +165,7 @@ export default function InstanceDetail() {
       <Link to="/instances" className="back-link">← Instances</Link>
       <h1>
         {inst.name} <Badge state={inst.state} label={inst.state} />
+        {isTunnel && <Badge state="tunnel" label="agentless" small />}
         <span className={`dot ${online ? 'online' : 'offline'}`} />
       </h1>
       <div className="meta">
@@ -161,8 +173,32 @@ export default function InstanceDetail() {
         <div><b>Hostname</b> {inst.hostname || '—'}</div>
         <div><b>Platform</b> {inst.platform || '—'}</div>
         <div><b>Version</b> {inst.version || '—'}</div>
+        <div><b>Mode</b> {isTunnel ? 'agentless · reverse SSH tunnel' : 'agent'}</div>
+        {isTunnel && <div><b>Tunnel port</b> <span className="mono">{inst.tunnel_port || '—'}</span></div>}
+        {isTunnel && <div><b>Last tunnel</b> {inst.last_tunnel_at ? new Date(inst.last_tunnel_at).toLocaleString() : 'never'}</div>}
         <div><b>Last seen</b> {inst.last_seen ? new Date(inst.last_seen).toLocaleString() : 'never'}</div>
       </div>
+
+      {isTunnel && (
+        <div className="card">
+          <div className="card-head">
+            <strong>Reverse SSH tunnel</strong>
+            <Badge state="tunnel" label="agentless" small />
+          </div>
+          <p className="sub">
+            This host has no Helios agent. Keep an outbound reverse tunnel open; the hub runner executes Ansible through it.
+          </p>
+          {tunnelCommand ? (
+            <>
+              <p><strong>Keep this tunnel running on the host</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
+              <pre className="token-pre">{tunnelCommand}</pre>
+              <p className="sub">Use a dedicated SSH key restricted to port forwarding. The hub connects to 127.0.0.1:{inst.tunnel_port}.</p>
+            </>
+          ) : (
+            <p className="error">Tunnel gateway is not configured on the hub (HELIOS_TUNNEL_GATEWAY).</p>
+          )}
+        </div>
+      )}
 
       <h2>Applications</h2>
       {inst.apps.length === 0 && <SkeletonEmpty lines={2} />}

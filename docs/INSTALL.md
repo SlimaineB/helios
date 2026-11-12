@@ -371,6 +371,91 @@ mirror and one Ansible process per check.
 
 ---
 
+## Agentless mode — reverse SSH tunnel
+
+Use this mode for hosts that only allow **outbound** connections (no inbound
+SSH from the hub). The managed host keeps a reverse tunnel open to a bastion;
+a Helios **runner** on that bastion executes the same Ansible checks/applies
+through the tunnel. No Helios agent runs on the managed host, but it still needs
+`python3` for Ansible (install `ansible-core` only on the runner).
+
+Traffic path: `runner (bastion) → ssh → 127.0.0.1:<port> (tunnel) → sshd on managed host`.
+
+### 1. Configure the hub
+
+```sh
+HELIOS_RUNNER_TOKEN=<long-random-shared-secret>
+HELIOS_TUNNEL_GATEWAY=helios-tunnel@bastion.example.com
+HELIOS_TUNNEL_PORT_MIN=22000
+HELIOS_TUNNEL_PORT_MAX=22999
+```
+
+With Helm, set `runner.token`, `runner.tunnelGateway`, `runner.tunnelPortMin`
+and `runner.tunnelPortMax` (or `runner.existingSecret` with key `runner-token`).
+An empty runner token disables the runner API (`503`).
+
+### 2. Prepare the bastion
+
+Create a dedicated tunnel account; its only job is accepting remote forwards:
+
+```sshdconfig
+# /etc/ssh/sshd_config on the bastion
+GatewayPorts no
+AllowTcpForwarding remote
+```
+
+Authorize each managed host's tunnel key with one exact listen port (repeat per
+instance, replacing `22000` with the port shown in the UI):
+
+```text
+restrict,port-forwarding,permitlisten="127.0.0.1:22000" ssh-ed25519 AAAA... tunnel@web-prod-01
+```
+
+Install the runner and its SSH identity used toward managed hosts (get
+`helios-runner` from the release artifacts, or build it from `agent/` with
+`go build ./cmd/runner`). The bastion needs `git`, `ansible-core`,
+`ansible.posix` and `openssh-client`; the managed hosts need only `python3`.
+
+```sh
+sudo useradd --system --home /var/lib/helios/runner --shell /usr/sbin/nologin helios-runner
+sudo install -m 0755 helios-runner /usr/local/bin/helios-runner
+sudo install -m 0644 deploy/helios-runner.service /etc/systemd/system/helios-runner.service
+sudo install -d -m 0750 -o helios-runner -g helios-runner /etc/helios
+sudo install -m 0600 -o helios-runner -g helios-runner ./runner_id /etc/helios/runner_id
+sudo install -m 0640 -o root -g helios-runner deploy/runner.env.example /etc/helios/runner.env
+sudo editor /etc/helios/runner.env   # HELIOS_SERVER, HELIOS_RUNNER_TOKEN, SSH user/key
+sudo systemctl daemon-reload
+sudo systemctl enable --now helios-runner
+```
+
+The runner discovers tunnel instances from the hub and starts one agent loop
+per instance. It only marks an instance online when the loopback port accepts a
+TCP connection.
+
+### 3. Register the instance and open the tunnel
+
+In **Instances → Register**, choose **Agentless · reverse SSH tunnel**. Copy the
+generated command to the managed host and run it under systemd (or your process
+manager):
+
+```sh
+ssh -N -T \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:22000:127.0.0.1:22 \
+  helios-tunnel@bastion.example.com
+```
+
+The instance becomes online on the next runner poll. From then on, checks,
+applies, drift state and commands are identical to the agent mode.
+
+> The tunnel key is powerful: it can forward to the host's sshd. Use a
+> dedicated key per host, `restrict` + `permitlisten` above, and never reuse an
+> operator key. Keep the runner token secret and serve the hub over HTTPS.
+
+---
+
 ## Post-install checklist
 
 - [ ] Change the default `admin` password (or disable basic auth and use OIDC).
@@ -379,6 +464,7 @@ mirror and one Ansible process per check.
 - [ ] Back up the database volume before the first upgrade.
 - [ ] Restrict the hub port/API to your network.
 - [ ] Install agents on the managed hosts; assign apps and run a first check.
+- [ ] For outbound-only hosts, configure the runner and tunnel gateway (see Agentless mode).
 - [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
 - [ ] Read the [convergence pitfalls](DEVELOPMENT.md#convergence-pitfalls) before writing playbooks.
 
@@ -390,6 +476,10 @@ mirror and one Ansible process per check.
   for playbooks that create system users, install packages, or write outside the
   agent state dir/home. Treat the hub and instance tokens as highly privileged.
 - The agent is **fail-closed**: it refuses applies if the hub is unreachable.
+- In agentless mode the bastion runner holds SSH keys for managed hosts and the
+  shared runner token can enumerate/act on every tunnel instance. Run it on a
+  dedicated bastion, restrict `HELIOS_RUNNER_TOKEN`, and keep tunnel keys
+  forwarding-only with per-instance `permitlisten`.
 - Secret application variables are redacted by the API, but Ansible output can
   still contain values from your playbooks. Use lookups (SSM/Vault) for real
   secrets and avoid `--diff`/debug output that prints them.

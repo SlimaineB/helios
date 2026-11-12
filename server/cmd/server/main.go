@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,17 +29,21 @@ import (
 
 func main() {
 	var (
-		addr      = flag.String("addr", ":8080", "listen address")
-		dbPath    = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
-		uiDir     = flag.String("ui", "", "path to built UI static files (optional)")
-		baseURL   = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
-		tlsCert   = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
-		tlsKey    = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
-		rbacFile  = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
-		downloads = flag.String("downloads", envutil.Get("HELIOS_DOWNLOADS_DIR"), "directory of agent tarballs served under /downloads (optional)")
-		sessTTL   = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
+		addr          = flag.String("addr", ":8080", "listen address")
+		dbPath        = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
+		uiDir         = flag.String("ui", "", "path to built UI static files (optional)")
+		baseURL       = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
+		tlsCert       = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
+		tlsKey        = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
+		rbacFile      = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
+		downloads     = flag.String("downloads", envutil.Get("HELIOS_DOWNLOADS_DIR"), "directory of agent tarballs served under /downloads (optional)")
+		runnerToken   = flag.String("runner-token", envutil.Get("HELIOS_RUNNER_TOKEN"), "shared bearer token for bastion runners (empty disables agentless mode)")
+		tunnelGateway = flag.String("tunnel-gateway", envutil.Get("HELIOS_TUNNEL_GATEWAY"), "SSH destination shown for tunnel instances, e.g. helios-tunnel@bastion.example.com")
+		sessTTL       = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
 	)
 	flag.Parse()
+	tunnelPortMin := envInt("HELIOS_TUNNEL_PORT_MIN", 22000)
+	tunnelPortMax := envInt("HELIOS_TUNNEL_PORT_MAX", 22999)
 
 	if dsn := envutil.Get("HELIOS_DB"); dsn != "" {
 		*dbPath = dsn
@@ -119,6 +125,11 @@ func main() {
 	srv := api.New(st, log, oa, secure)
 	srv.SetNotifier(notify.FromEnv(log))
 	srv.SetDownloadsDir(*downloads)
+	srv.SetRunnerToken(*runnerToken)
+	srv.SetTunnelConfig(*tunnelGateway, tunnelPortMin, tunnelPortMax)
+	if *runnerToken != "" {
+		log.Info("runner API enabled for agentless tunnel instances", "gateway", *tunnelGateway, "port_range", fmt.Sprintf("%d-%d", tunnelPortMin, tunnelPortMax))
+	}
 	gitopsState := envutil.Or("HELIOS_GITOPS_STATE_DIR", "/tmp/helios-gitops")
 	recon := reconciler.New(st, log, gitopsState)
 	srv.SetReconciler(recon)
@@ -174,6 +185,15 @@ func main() {
 			log.Error("graceful shutdown timed out; cancelling background work", "error", err)
 		}
 	}
+}
+
+func envInt(name string, def int) int {
+	if v := envutil.Get(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func splitList(s string) []string {
