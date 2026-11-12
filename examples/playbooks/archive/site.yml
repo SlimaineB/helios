@@ -13,25 +13,12 @@
   tasks:
     - name: Ensure runtime directory
       ansible.builtin.file:
-        path: /opt/helios-demo3/app
+        path: /opt/helios-demo4/app
         state: directory
         mode: "0755"
 
     - name: Check whether the bundle is already installed
       ansible.builtin.stat:
-        path: /opt/helios-demo/app/VERSION
+        path: /opt/helios-demo4/app/VERSION
       register: marker
 
-    - name: Download bundle
-      ansible.builtin.get_url:
-        url: http://localhost:8000/static/hello.tar.gz
-        dest: /opt/helios-demo/bundle.tar.gz
-        mode: "0644"
-      when: not marker.stat.exists and not ansible_check_mode
-
-    - name: Extract bundle into /opt/helios-demo/app
-      ansible.builtin.unarchive:
-        src: /opt/helios-demo/bundle.tar.gz
-        dest: /opt/helios-demo/app
-        remote_src: true
-      when: not marker.stat.exists and not ansible_check_mode
