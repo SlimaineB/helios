@@ -4,6 +4,8 @@ import { api } from '../api/client.js'
 import Modal from './Modal.jsx'
 import Pager from './Pager.jsx'
 import Badge from './Badge.jsx'
+import LogsModal from './LogsModal.jsx'
+import DiffModal from './DiffModal.jsx'
 import { SkeletonTable } from './Skeleton.jsx'
 
 const PAGE = 25
@@ -17,6 +19,8 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [logRun, setLogRun] = useState(null)
+  const [diffRun, setDiffRun] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -33,11 +37,14 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
     return () => { cancelled = true }
   }, [app.id, offset])
 
+  if (logRun) return <LogsModal runId={logRun} onClose={() => setLogRun(null)} />
+  if (diffRun) return <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />
+
   return (
     <Modal title={`History · ${app.name}`} onClose={onClose} wide>
       {error && <div className="error">{error}</div>}
       {loading ? (
-        <SkeletonTable rows={6} columns={5} />
+        <SkeletonTable rows={6} columns={6} />
       ) : rows.length === 0 ? (
         <div className="empty">
           <p className="muted">No runs yet. History appears after the first check or apply.</p>
@@ -53,6 +60,7 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
                   <th style={{ width: '180px' }}>Instance</th>
                   <th style={{ width: '130px' }}>Action</th>
                   <th style={{ width: '100px' }}>Status</th>
+                  <th style={{ width: '190px' }}>Inspect</th>
                 </tr>
               </thead>
               <tbody>
@@ -78,6 +86,18 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
                     </td>
                     <td>
                       <Badge state={r.status === 'failed' ? 'failed' : r.status} label={r.status} small />
+                    </td>
+                    <td>
+                      <div className="app-actions">
+                        {r.mode === 'check' && r.status === 'drift' && (
+                          <button className="small warn" title="Review this drift diff" onClick={() => setDiffRun(r.id)}>
+                            Review drift
+                          </button>
+                        )}
+                        <button className="small" title="View the full run log" onClick={() => setLogRun(r.id)}>
+                          View logs
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

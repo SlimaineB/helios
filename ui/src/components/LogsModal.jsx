@@ -68,7 +68,7 @@ export default function LogsModal({ runId, onClose, initialView = 'text' }) {
     fmt === 'resources' ? (
       renderResources()
     ) : fmt === 'diff' && !(body && body.trim()) ? (
-      <div className="muted pad">No diff — this run would change nothing.</div>
+      <div className="muted pad">No diff available for this run.</div>
     ) : (
       <pre className="runlog">{body || '(empty output)'}</pre>
     )
