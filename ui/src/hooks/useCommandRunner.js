@@ -6,7 +6,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const TIMEOUT_MS = 120000
 const POLL_MS = 2500
 
-// useCommandRunner sends Sync/Check commands and follows them in the background.
+// useCommandRunner sends Apply/Check commands and follows them in the background.
 // It dedupes concurrent clicks per assignment and exposes a pending map so the
 // UI can show an inline spinner and disable the action buttons.
 export function useCommandRunner(onDone) {
@@ -25,13 +25,14 @@ export function useCommandRunner(onDone) {
     setPending((p) => ({ ...p, [key]: { action, startedAt: Date.now() } }))
 
     const mode = action === 'apply' ? 'apply' : 'check'
-    const label = action === 'apply' ? 'Sync' : 'Check'
+    const label = action === 'apply' ? 'Apply' : 'Check'
     try {
       const before = await api.runs(instId, `?app_id=${appId}&mode=${mode}&limit=1`)
       const baseline = before.items?.[0]?.id || 0
 
       if (action === 'apply') await api.sync(instId, appId)
       else await api.check(instId, appId)
+      toast.info(`${label} queued — waiting for the agent`, 3000)
 
       const deadline = Date.now() + TIMEOUT_MS
       while (alive.current && Date.now() < deadline) {

@@ -62,7 +62,8 @@ export default function Applications() {
   const [repoFilter, setRepoFilter] = useState(searchParams.get('repo') || '')
   const [view, setView] = useState(() => {
     const saved = localStorage.getItem('helios_apps_view')
-    return saved === 'cards' || saved === 'table' ? saved : 'topology'
+    if (saved === 'topology' || saved === 'cards' || saved === 'table') return saved
+    return 'cards'
   })
   const focusAppId = useMemo(() => {
     const raw = Number(searchParams.get('app'))
@@ -363,7 +364,7 @@ export default function Applications() {
         <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{apps.length}</span><span className="stat-label">Applications</span></div>
         <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{totals.assigned}</span><span className="stat-label">Assignments</span></div>
         <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{totals.drifting}</span><span className="stat-label">In drift</span></div>
-        <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{totals.unhealthy}</span><span className="stat-label">Unhealthy</span></div>
+        <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{totals.unhealthy}</span><span className="stat-label">Failed apps</span></div>
         <div className="stats-note">Pull-based drift detection and self-healing</div>
       </div>
 
@@ -522,12 +523,12 @@ export default function Applications() {
                 <input {...f('path')} />
               </label>
             </div>
-            <label className="row">
+            <label className="row" title="Automatically apply when a check detects drift">
               <input type="checkbox" checked={form.autoheal} onChange={(e) => setForm((p) => ({ ...p, autoheal: e.target.checked }))} />{' '}
-              Auto-heal drift (apply on detection)
+              Auto-apply on drift (apply on detection)
             </label>
-            <label>
-              Sync interval (seconds)
+            <label title="How often to check this application for drift">
+              Check interval (seconds)
               <input type="number" min="0" step="10" value={form.sync_interval} onChange={(e) => setForm((p) => ({ ...p, sync_interval: Number(e.target.value) || 0 }))} />
               <span className="sub">0 = inherit the agent poll interval (otherwise min 10s)</span>
             </label>
@@ -610,7 +611,7 @@ export default function Applications() {
                         <span className="cell-sub">
                           <CopyButton value={String(a.id)} size="small" title="Copy app ID" />
                           <span className="mono">id {a.id}</span>
-                          {a.autoheal && <span className="project-badge">auto-heal</span>}
+                          {a.autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
                         </span>
                         <button
                           type="button"
@@ -648,18 +649,24 @@ export default function Applications() {
                         const unhealthy = s.error + s.stuck
                         const health = unhealthy > 0 ? 'failed' : s.instances === 0 ? 'unknown' : s.drift > 0 ? 'drift' : 'ok'
                         const label = unhealthy > 0
-                          ? `${unhealthy} unhealthy`
+                          ? `${unhealthy} failed`
                           : s.instances === 0
                             ? 'Unassigned'
                             : s.drift > 0
                               ? `${s.drift} in drift`
-                              : 'Healthy'
+                              : 'Synced'
                         return <HealthBadge state={health} label={label} size={13} small />
                       })()}
                     </td>
                     <td>
                       <div className="app-actions">
-                        <Link className="btn small" to={`/instances?app=${a.id}`}>Instances</Link>
+                        <Link
+                          className={`btn small${s.drift > 0 ? ' warn' : ''}`}
+                          to={`/instances?app=${a.id}`}
+                          title={s.drift > 0 ? 'Review instances with drift' : 'View instances running this application'}
+                        >
+                          {s.drift > 0 ? 'Review drift' : 'Instances'}
+                        </Link>
                         <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => openEdit(a)}>Edit</button>
                         <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => setVarsApp(a)}>Vars</button>
                         <button className="btn danger small" disabled={!can('applications', 'delete')} onClick={() => confirmDelete(a)}>Delete</button>

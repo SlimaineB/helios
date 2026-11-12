@@ -125,7 +125,7 @@ export const api = {
 }
 
 export function stateLabel(state) {
-  return { ok: 'Synced', drift: 'Drift', error: 'Error', unknown: 'Unknown' }[state] || state
+  return { ok: 'Synced', drift: 'Drift', error: 'Failed', unknown: 'Unknown' }[state] || state
 }
 // Projects are mandatory in the UI (like ArgoCD). The implicit global/default
 // project is stored as "" by the API, so the forms use a non-empty sentinel.

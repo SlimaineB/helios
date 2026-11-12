@@ -91,6 +91,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/agent/apps/{appId}/snapshot", s.agentAuth(s.handleAgentSnapshot))
 	m.HandleFunc("POST /api/v1/agent/status", s.agentAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/agent/commands/{cmdId}/result", s.agentAuth(s.handleCommandResult))
+	m.HandleFunc("GET /api/v1/agent/tunnel", s.agentAuth(s.handleAgentTunnelConfig))
+	m.HandleFunc("POST /api/v1/agent/tunnel/health", s.agentAuth(s.handleAgentTunnelHealth))
 
 	// Runner (bastion-side, shared bearer token). Reuses the agent handlers so
 	// tunnel instances get the same drift/autoheal/command semantics.

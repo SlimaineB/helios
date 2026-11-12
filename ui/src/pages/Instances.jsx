@@ -167,6 +167,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
 
                     {iOpen && apps.map((app) => {
                       const pending = pendingFor(inst.id, app.application.id)
+                      const drifting = appState(app) === 'drift'
                       return (
                       <tr className="tree-app" key={`${inst.id}-${app.application.id}`}>
                         <td />
@@ -179,7 +180,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                         <td>
                           <div className="cell-title">
                             <div className="app-name">
-                              <Link className="entity-link" to={`/instances?app=${app.application.id}`}>
+                              <Link className="entity-link" to={`/?app=${app.application.id}`} title="Open application">
                                 {app.application.name}
                               </Link>
                               {app.stuck && <Badge state="stuck" label="stuck" small />}
@@ -222,13 +223,13 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                                 className="btn warn small"
                                 disabled={!can('instances', 'update') || app.autoheal}
                                 onClick={() => onAction(inst.id, app.application.id, 'rearm')}
-                                title="Re-enable autoheal once the playbook is fixed"
+                                title="Resume auto-apply once the playbook is fixed"
                               >
-                                Rearm
+                                Resume auto-apply
                               </button>
                             ) : (
                               <>
-                                <label className="switch" title="Auto-heal / re-apply on drift detection">
+                                <label className="switch" title="Auto-apply on drift">
                                   <input
                                     type="checkbox"
                                     checked={app.autoheal}
@@ -238,7 +239,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                                   <span className="slider" />
                                 </label>
                                 <span className={`sub ${app.autoheal ? '' : 'muted'}`}>
-                                  {app.autoheal ? (app.autoheal_set ? 'on (override)' : 'on') : 'off'}
+                                  {app.autoheal ? (app.autoheal_set ? 'on (host override)' : 'on') : 'off'}
                                 </span>
                               </>
                             )}
@@ -249,7 +250,7 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                               onClick={() => onAction(inst.id, app.application.id, 'apply')}
                             >
                               {pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}
-                              Sync
+                              Apply now
                             </button>
                             <button
                               className="btn ghost small"
@@ -258,23 +259,25 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                               onClick={() => onAction(inst.id, app.application.id, 'check')}
                             >
                               {pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}
-                              Check
+                              Check now
                             </button>
                             {app.latest_check?.id && (
                               <>
+                                {drifting && (
+                                  <button
+                                    className="btn small warn"
+                                    title="Review the latest drift diff"
+                                    onClick={() => onDiff(app.latest_check.id)}
+                                  >
+                                    Review drift
+                                  </button>
+                                )}
                                 <button
                                   className="btn ghost small"
-                                  title="Pre-apply diff"
-                                  onClick={() => onDiff(app.latest_check.id)}
-                                >
-                                  Diff
-                                </button>
-                                <button
-                                  className="btn ghost small"
-                                  title="Full run log"
+                                  title="View the full latest run log"
                                   onClick={() => onLogs(app.latest_check.id)}
                                 >
-                                  Logs
+                                  View logs
                                 </button>
                               </>
                             )}
@@ -344,7 +347,8 @@ export default function Instances() {
   const [collapsed, setCollapsed] = useState(() => new Set())
   const [view, setView] = useState(() => {
     const saved = localStorage.getItem('helios_instances_view')
-    return saved === 'list' || saved === 'cards' ? saved : 'topology'
+    if (saved === 'topology' || saved === 'list' || saved === 'cards') return saved
+    return 'cards'
   })
 
   const [search, setSearch] = useState('')
@@ -435,6 +439,15 @@ export default function Instances() {
         `curl -fsSLO ${hubURL}/downloads/helios-agent-linux-\${arch}.tar.gz`,
         'tar -xzf "helios-agent-linux-${arch}.tar.gz"',
         `sudo ./install-agent.sh --server ${hubURL} --token '${regResult.token}'`,
+      ].join('\n')
+    : ''
+  const tunnelInstallCommand = regResult?.token && hasHubDownload
+    ? [
+        'arch=$(uname -m)',
+        'case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac',
+        `curl -fsSLO ${hubURL}/downloads/helios-agent-linux-\${arch}.tar.gz`,
+        'tar -xzf "helios-agent-linux-${arch}.tar.gz"',
+        `sudo ./install-agent.sh --server ${hubURL} --token '${regResult.token}' --mode tunnel`,
       ].join('\n')
     : ''
   const tunnelInstance = regResult?.instance?.execution_mode === 'tunnel' ? regResult.instance : null
@@ -593,7 +606,7 @@ export default function Instances() {
         <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{stats.drift}</span><span className="stat-label">Drifted apps</span></div>
         <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{stats.offline}</span><span className="stat-label">Offline</span></div>
         <div className="stats-note">
-          {stats.bastion ? `${stats.bastion} agentless via bastion · ` : ''}
+          {stats.bastion ? `${stats.bastion} tunnel via bastion · ` : ''}
           App states from latest checks · poll every 10s
         </div>
       </div>
@@ -615,7 +628,7 @@ export default function Instances() {
           <option value="">All states</option>
           <option value="ok">Synced</option>
           <option value="drift">Drift</option>
-          <option value="error">Error</option>
+          <option value="error">Failed</option>
           <option value="unknown">Unknown</option>
         </select>
         <select value={projectFilter} onChange={(e) => applyProjectFilter(e.target.value)} aria-label="Project">
@@ -628,7 +641,7 @@ export default function Instances() {
         <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} aria-label="Execution mode">
           <option value="">All modes</option>
           <option value="agent">Agent</option>
-          <option value="tunnel">Agentless · bastion</option>
+          <option value="tunnel">Tunnel · bastion</option>
         </select>
         <select value={appFilter} onChange={(e) => applyAppFilter(e.target.value)} aria-label="Application">
           <option value="">All applications</option>
@@ -658,7 +671,7 @@ export default function Instances() {
           <span>Showing</span>
           {modeFilter && (
             <span className="filter-chip">
-              Mode: {modeFilter === 'tunnel' ? 'agentless · bastion' : 'agent'}
+              Mode: {modeFilter === 'tunnel' ? 'tunnel · bastion' : 'agent'}
             </span>
           )}
           {appFilter && (
@@ -719,18 +732,25 @@ export default function Instances() {
             <div className="form-card">
               {tunnelInstance ? (
                 <>
-                  <p><strong>{regResult.instance.name}</strong> registered as an <strong>agentless (tunnel)</strong> instance. On the managed host, open a persistent reverse SSH tunnel:</p>
+                  <p><strong>{regResult.instance.name}</strong> registered as a <strong>tunnel</strong> instance. A lightweight tunnel agent can keep the reverse SSH tunnel alive and report health; Ansible is not installed on the host.</p>
                   <TunnelDiagram port={tunnelInstance.tunnel_port} gateway={tunnelInstance.tunnel_gateway} />
+                  {tunnelInstallCommand && (
+                    <>
+                      <p><strong>Install the tunnel agent</strong> <CopyButton value={tunnelInstallCommand} title="Copy tunnel agent install command" /></p>
+                      <pre className="token-pre">{tunnelInstallCommand}</pre>
+                      <p className="sub">The installer creates <code>/etc/helios/tunnel_id</code> and prints its public key. Authorize that key on the bastion for the tunnel user; the agent reconnects automatically.</p>
+                    </>
+                  )}
                   {tunnelCommand ? (
                     <>
-                      <p><strong>Reverse tunnel</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
+                      <p><strong>Fallback: manual reverse tunnel</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
                       <pre className="token-pre">{tunnelCommand}</pre>
-                      <p className="sub">Run it as a systemd service (or under your process manager) with a dedicated SSH key that only allows port forwarding. The bastion runner dials 127.0.0.1:{tunnelInstance.tunnel_port}; the hub only stores control-plane state.</p>
+                      <p className="sub">Run it as a systemd service with a dedicated SSH key that only allows port forwarding. The bastion runner dials 127.0.0.1:{tunnelInstance.tunnel_port}; the hub only stores control-plane state.</p>
                     </>
                   ) : (
                     <p className="error">Tunnel gateway is not configured on the hub. Set HELIOS_TUNNEL_GATEWAY (for example helios-tunnel@bastion.example.com) and reload the server.</p>
                   )}
-                  <p className="sub">No Helios agent runs on this host; the hub runner executes Ansible through the tunnel.</p>
+                  <p className="sub">The runner on the bastion executes Ansible through the tunnel.</p>
                 </>
               ) : (
                 <>
@@ -759,7 +779,7 @@ export default function Instances() {
             <form className="form-card" onSubmit={addInstance}>
               <label>Instance name<input autoFocus value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="e.g. web-prod-01" /></label>
               <label>Project<select required value={regProject} onChange={(e) => setRegProject(e.target.value)}><option value={DEFAULT_PROJECT}>default (global)</option>{regProject !== DEFAULT_PROJECT && !projects.some((p) => p.name === regProject) && <option value={regProject}>{regProject}</option>}{projects.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}</select><span className="sub">Required · scopes RBAC and the repository allowlist.</span></label>
-              <label>Registration mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="tunnel">Agentless · reverse SSH tunnel</option></select><span className="sub">Agentless lets an outbound-only host be managed by the hub runner through a reverse tunnel.</span></label>
+              <label>Registration mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="tunnel">Tunnel · reverse SSH (optional lightweight agent)</option></select><span className="sub">Tunnel mode lets an outbound-only host be managed by the hub runner; the tunnel can be kept open by a lightweight agent.</span></label>
               {regError && <div className="error">{regError}</div>}
               <div className="form-actions">
                 <button type="button" className="ghost" onClick={closeReg}>Cancel</button>

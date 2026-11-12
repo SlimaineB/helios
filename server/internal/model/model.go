@@ -48,12 +48,13 @@ type Instance struct {
 	Platform   string    `json:"platform,omitempty"`
 	// Project scopes this instance (empty = global/default project).
 	Project string `json:"project"`
-	// ExecutionMode is "agent" (default) or "tunnel" (agentless, reverse SSH).
+	// ExecutionMode is "agent" (default) or "tunnel" (reverse SSH; the tunnel may
+	// be maintained by a lightweight Helios agent or manually).
 	ExecutionMode string `json:"execution_mode"`
 	// TunnelPort is the loopback port the target should forward to its sshd
 	// (tunnel mode only). The runner connects to 127.0.0.1:<port>.
 	TunnelPort int `json:"tunnel_port,omitempty"`
-	// LastTunnelAt is the last time the runner successfully reached the tunnel.
+	// LastTunnelAt is the last time the runner or tunnel agent confirmed the tunnel.
 	LastTunnelAt time.Time `json:"last_tunnel_at,omitempty"`
 	// TunnelGateway is the SSH destination shown in the bootstrap command. It
 	// is derived from server configuration and never persisted.

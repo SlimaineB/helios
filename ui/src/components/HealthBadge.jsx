@@ -1,9 +1,9 @@
 import { HeartPulse, HeartCrack, TriangleAlert, CircleHelp } from 'lucide-react'
 
 const META = {
-  ok: { Icon: HeartPulse, text: 'Healthy' },
+  ok: { Icon: HeartPulse, text: 'Synced' },
   drift: { Icon: TriangleAlert, text: 'Drift' },
-  failed: { Icon: HeartCrack, text: 'Unhealthy' },
+  failed: { Icon: HeartCrack, text: 'Failed' },
   unknown: { Icon: CircleHelp, text: 'Unassigned' },
 }
 

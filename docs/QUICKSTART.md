@@ -69,10 +69,11 @@ systemctl status helios-agent
 journalctl -u helios-agent -f
 ```
 
-> **Outbound-only host?** When registering, choose **Agentless · reverse SSH
+> **Outbound-only host?** When registering, choose **Tunnel · reverse SSH
 > tunnel** instead. The host opens a reverse tunnel to a bastion; a Helios
-> runner there executes Ansible. See
-> [Agentless mode](INSTALL.md#agentless-mode--reverse-ssh-tunnel).
+> runner there executes Ansible. A lightweight tunnel agent can keep it open
+> without installing Ansible. See
+> [Tunnel mode](INSTALL.md#tunnel-mode--reverse-ssh).
 
 ## 3. Add an application
 

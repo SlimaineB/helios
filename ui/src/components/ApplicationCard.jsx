@@ -13,12 +13,12 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0 ? 'failed' : s.instances === 0 ? 'unknown' : s.drift > 0 ? 'drift' : 'ok'
   const healthLabel = unhealthy > 0
-    ? `${unhealthy} unhealthy`
+    ? `${unhealthy} failed`
     : s.instances === 0
       ? 'Unassigned'
       : s.drift > 0
         ? `${s.drift} in drift`
-        : 'Healthy'
+        : 'Synced'
 
   return (
     <article id={`app-${app.id}`} className={`app-card health-${health}${focused ? ' is-focused' : ''}`}>
@@ -36,7 +36,7 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
             <span className="cell-sub">
               <CopyButton value={String(app.id)} size="small" title="Copy app ID" />
               <span className="mono">id {app.id}</span>
-              {app.autoheal && <span className="project-badge">auto-heal</span>}
+              {app.autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
             </span>
           </div>
         </div>
@@ -87,7 +87,7 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
             </div>
           </div>
           <div className="detail">
-            <label>Sync interval</label>
+            <label>Check interval</label>
             <span className="value">{app.sync_interval ? `${app.sync_interval}s` : 'inherit (0)'}</span>
           </div>
         </div>
@@ -95,7 +95,13 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
 
       <footer className="card-foot">
         <div className="actions">
-          <Link className="btn small" to={`/instances?app=${app.id}`}>Instances</Link>
+          <Link
+            className={`btn small${s.drift > 0 ? ' warn' : ''}`}
+            to={`/instances?app=${app.id}`}
+            title={s.drift > 0 ? 'Review instances with drift' : 'View instances running this application'}
+          >
+            {s.drift > 0 ? 'Review drift' : 'Instances'}
+          </Link>
           <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => onEdit(app)}>Edit</button>
           <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => onVars(app)}>Vars</button>
           <button className="btn danger small" disabled={!can('applications', 'delete')} onClick={() => onDelete(app)}>Delete</button>

@@ -29,7 +29,7 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
   the hub and read access to Git.
-- **Agentless mode** — outbound-only hosts can stay agent-free: a runner on a
+- **Tunnel mode** — outbound-only hosts can use a lightweight tunnel agent or stay agent-free: a runner on a
   bastion executes Ansible through a reverse SSH tunnel opened by the host.
 
 ## Architecture
@@ -38,7 +38,7 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
 |-----------|------|
 | **Hub** | Go API + React dashboard + SQLite/PostgreSQL. Stores desired state, runs, commands and audit history. |
 | **Agent** | One static Go binary per managed host. Polls the hub, clones the playbooks, runs Ansible, reports results. |
-| **Bastion runner** | Optional runner for agentless hosts. Polls the hub and executes Ansible through a reverse SSH tunnel. |
+| **Bastion runner** | Optional runner for tunnel hosts. Polls the hub and executes Ansible through a reverse SSH tunnel. |
 | **Git** | Source of truth for playbooks and variables. |
 | **Managed hosts** | Machines reconciled by the agents, or reached through the bastion runner. |
 

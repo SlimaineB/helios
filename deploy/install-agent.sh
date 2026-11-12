@@ -13,6 +13,11 @@
 #     [--autoheal 0|1] \
 #     [--max-concurrent 4] \
 #     [--poll-interval 5m] \
+#     [--mode agent|tunnel] \
+#     [--tunnel-ssh-key /etc/helios/tunnel_id] \
+#     [--tunnel-health-interval 30s] \
+#     [--tunnel-gateway user@bastion] \
+#     [--tunnel-port 22000] \
 #     [--state-dir /var/lib/helios]
 #
 # --download-url: release tarball from CI (extracts the right arch binary);
@@ -34,6 +39,12 @@ POLL_INTERVAL=5m
 BINARY=""
 ANSIBLE_BIN=""
 SKIP_PACKAGES=0
+MODE=agent
+TUNNEL_SSH_KEY=/etc/helios/tunnel_id
+TUNNEL_HEALTH_INTERVAL=30s
+TUNNEL_GATEWAY=""
+TUNNEL_PORT=""
+TUNNEL_LOCAL_TARGET=127.0.0.1:22
 DOWNLOAD_URL="${HELIOS_DOWNLOAD_URL:-${ANSIBLEHUB_DOWNLOAD_URL:-${ANH_DOWNLOAD_URL:-${AHUB_DOWNLOAD_URL:-}}}}"
 BINARY_URL="${HELIOS_BINARY_URL:-${ANSIBLEHUB_BINARY_URL:-${ANH_BINARY_URL:-${AHUB_BINARY_URL:-}}}}"
 
@@ -48,6 +59,12 @@ Usage: install-agent.sh --server URL --token TOKEN [options]
   --autoheal 0|1           apply on drift (default: 1)
   --max-concurrent N       parallel apps per pass (default: 4)
   --poll-interval DURATION heartbeat/check cadence (default: 5m)
+  --mode MODE              agent (default) or tunnel (no Ansible on host)
+  --tunnel-ssh-key PATH    bastion key for tunnel mode (default: /etc/helios/tunnel_id)
+  --tunnel-health-interval DURATION tunnel liveness report cadence (default: 30s)
+  --tunnel-gateway DEST    override hub gateway, e.g. helios-tunnel@bastion
+  --tunnel-port N          override the hub-allocated loopback port
+  --tunnel-local-target ADDR local sshd address (default: 127.0.0.1:22)
   --binary PATH            local helios-agent binary
   --ansible-bin PATH       ansible-playbook to use (default: from PATH)
   --download-url URL       release tarball with the linux binary
@@ -66,6 +83,12 @@ while [ $# -gt 0 ]; do
         --autoheal) AUTOHEAL=$2; shift 2 ;;
         --max-concurrent) MAX_CONCURRENT_APPS=$2; shift 2 ;;
         --poll-interval) POLL_INTERVAL=$2; shift 2 ;;
+        --mode) MODE=$2; shift 2 ;;
+        --tunnel-ssh-key) TUNNEL_SSH_KEY=$2; shift 2 ;;
+        --tunnel-health-interval) TUNNEL_HEALTH_INTERVAL=$2; shift 2 ;;
+        --tunnel-gateway) TUNNEL_GATEWAY=$2; shift 2 ;;
+        --tunnel-port) TUNNEL_PORT=$2; shift 2 ;;
+        --tunnel-local-target) TUNNEL_LOCAL_TARGET=$2; shift 2 ;;
         --binary) BINARY=$2; shift 2 ;;
         --ansible-bin) ANSIBLE_BIN=$2; shift 2 ;;
         --download-url) DOWNLOAD_URL=$2; shift 2 ;;
@@ -79,6 +102,17 @@ done
 case "$MAX_CONCURRENT_APPS" in ''|*[!0-9]*) usage ;; esac
 [ "$MAX_CONCURRENT_APPS" -ge 1 ] || usage
 [ -n "$POLL_INTERVAL" ] || usage
+case "$MODE" in agent|tunnel) ;; *) echo "mode must be agent or tunnel" >&2; usage ;; esac
+if [ "$MODE" = tunnel ]; then
+    [ -n "$TUNNEL_SSH_KEY" ] || usage
+    [ -n "$TUNNEL_HEALTH_INTERVAL" ] || usage
+    [ -n "$TUNNEL_LOCAL_TARGET" ] || usage
+    case "$TUNNEL_PORT" in
+        '') ;;
+        *[!0-9]*) echo "tunnel port must be numeric" >&2; usage ;;
+        *) [ "$TUNNEL_PORT" -ge 1 ] && [ "$TUNNEL_PORT" -le 65535 ] || usage ;;
+    esac
+fi
 [ -z "$BINARY" ] || [ -f "$BINARY" ] || { echo "binary not found: $BINARY" >&2; exit 1; }
 [ -z "$ANSIBLE_BIN" ] || [ -x "$ANSIBLE_BIN" ] || { echo "ansible binary not executable: $ANSIBLE_BIN" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || { echo "run me as root (or via sudo)" >&2; exit 1; }
@@ -151,6 +185,28 @@ install_binary() {
     exit 1
 }
 
+ensure_user() {
+    id -u helios-agent >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin helios-agent
+}
+
+prepare_tunnel_key() {
+    keydir=$(dirname "$TUNNEL_SSH_KEY")
+    mkdir -p "$keydir"
+    if [ ! -f "$TUNNEL_SSH_KEY" ]; then
+        command -v ssh-keygen >/dev/null || {
+            echo "ssh-keygen is required to create $TUNNEL_SSH_KEY" >&2
+            exit 1
+        }
+        ssh-keygen -q -t ed25519 -N '' -C "helios-tunnel@$(hostname)" -f "$TUNNEL_SSH_KEY"
+    fi
+    chown helios-agent:helios-agent "$TUNNEL_SSH_KEY"
+    chmod 600 "$TUNNEL_SSH_KEY"
+    if [ -f "${TUNNEL_SSH_KEY}.pub" ]; then
+        chown helios-agent:helios-agent "${TUNNEL_SSH_KEY}.pub"
+        chmod 644 "${TUNNEL_SSH_KEY}.pub"
+    fi
+}
+
 write_config() {
     mkdir -p /etc/helios
     # AUTOHEAL is accepted as 0|1 (and true|false); the config is YAML bool.
@@ -167,7 +223,17 @@ state_dir: ${STATE_DIR}
 poll_interval: ${POLL_INTERVAL}
 max_concurrent_apps: ${MAX_CONCURRENT_APPS}
 autoheal: ${AH_BOOL}
+mode: ${MODE}
 EOF
+    if [ "$MODE" = tunnel ]; then
+        cat >> /etc/helios/agent.yaml <<EOF
+tunnel_ssh_key: ${TUNNEL_SSH_KEY}
+tunnel_local_target: ${TUNNEL_LOCAL_TARGET}
+tunnel_health_interval: ${TUNNEL_HEALTH_INTERVAL}
+EOF
+        [ -z "$TUNNEL_GATEWAY" ] || printf 'tunnel_gateway: %s\n' "$TUNNEL_GATEWAY" >> /etc/helios/agent.yaml
+        [ -z "$TUNNEL_PORT" ] || printf 'tunnel_port: %s\n' "$TUNNEL_PORT" >> /etc/helios/agent.yaml
+    fi
     if [ -n "$ANSIBLE_BIN" ]; then
         printf 'ansible_bin: %s\n' "$ANSIBLE_BIN" >> /etc/helios/agent.yaml
     fi
@@ -175,7 +241,6 @@ EOF
 }
 
 install_unit() {
-    id -u helios-agent >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin helios-agent
     mkdir -p "$STATE_DIR"
     chown -R helios-agent:helios-agent "$STATE_DIR"
     chmod 750 "$STATE_DIR"
@@ -188,19 +253,43 @@ install_unit() {
 }
 
 if [ "$SKIP_PACKAGES" -eq 1 ]; then
-    command -v git >/dev/null || {
-        echo "git is required; install it before using --skip-packages" >&2
-        exit 1
-    }
-    if [ -z "$ANSIBLE_BIN" ] && ! command -v ansible-playbook >/dev/null; then
-        echo "ansible-playbook is required; use --ansible-bin with --skip-packages" >&2
-        exit 1
+    if [ "$MODE" = tunnel ]; then
+        command -v ssh >/dev/null || {
+            echo "ssh is required; install an OpenSSH client before using --skip-packages" >&2
+            exit 1
+        }
+    else
+        command -v git >/dev/null || {
+            echo "git is required; install it before using --skip-packages" >&2
+            exit 1
+        }
+        if [ -z "$ANSIBLE_BIN" ] && ! command -v ansible-playbook >/dev/null; then
+            echo "ansible-playbook is required; use --ansible-bin with --skip-packages" >&2
+            exit 1
+        fi
     fi
 else
-    install_pkgs git curl ca-certificates tar
-    install_ansible
+    install_pkgs curl ca-certificates tar
+    if [ "$MODE" = tunnel ]; then
+        case "$pm" in
+            apt) install_pkgs openssh-client ;;
+            dnf|yum) install_pkgs openssh-clients ;;
+            zypper) install_pkgs openssh ;;
+        esac
+    else
+        install_pkgs git
+        install_ansible
+    fi
 fi
 install_binary
 ln -sf /usr/local/bin/helios-agent /usr/local/bin/ansiblehub-agent
+ensure_user
+[ "$MODE" != tunnel ] || prepare_tunnel_key
 write_config
 install_unit
+if [ "$MODE" = tunnel ] && [ -f "${TUNNEL_SSH_KEY}.pub" ]; then
+    echo
+    echo "Authorize this public key on the bastion for the tunnel user:"
+    cat "${TUNNEL_SSH_KEY}.pub"
+    echo
+fi

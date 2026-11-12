@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client.js'
 import Badge from './Badge.jsx'
+import { useDialog } from '../hooks/useDialog.js'
 
 export default function LogsModal({ runId, onClose, initialView = 'text' }) {
   const [state, setState] = useState({ loading: true, output: '', error: '', meta: null })
   const [fmt, setFmt] = useState(initialView)
+  const dialogRef = useDialog(true, onClose)
 
   useEffect(() => {
     setFmt(initialView)
@@ -73,7 +75,14 @@ export default function LogsModal({ runId, onClose, initialView = 'text' }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Run log #${runId}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <strong>Run log #{runId}</strong>
           {meta && (
@@ -102,7 +111,13 @@ export default function LogsModal({ runId, onClose, initialView = 'text' }) {
                 ))}
             </span>
           )}
-          <button className="ghost small" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={onClose}
+            style={{ marginLeft: 'auto' }}
+            aria-label="Close run log"
+          >
             ✕
           </button>
         </div>

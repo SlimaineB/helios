@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client.js'
 import Badge from './Badge.jsx'
+import { useDialog } from '../hooks/useDialog.js'
 
 export default function DiffModal({ runId, onClose }) {
   const [state, setState] = useState({ loading: true, sections: [], error: '', meta: null })
+  const dialogRef = useDialog(true, onClose)
 
   useEffect(() => {
     let alive = true
@@ -24,7 +26,14 @@ export default function DiffModal({ runId, onClose }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="modal modal-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Diff · run #${runId}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <strong>Diff · run #{runId}</strong>
           {meta && (
@@ -36,7 +45,13 @@ export default function DiffModal({ runId, onClose }) {
               </span>
             </span>
           )}
-          <button className="ghost small" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={onClose}
+            style={{ marginLeft: 'auto' }}
+            aria-label="Close diff"
+          >
             ✕
           </button>
         </div>
@@ -44,7 +59,7 @@ export default function DiffModal({ runId, onClose }) {
           {state.loading && <div className="muted pad diff-loading"><span className="spinner" aria-hidden="true" /> Loading diff…</div>}
           {state.error && <div className="error pad">{state.error}</div>}
           {!state.loading && !state.error && sections.length === 0 && (
-            <div className="muted pad">No diff — this run would change nothing.</div>
+            <div className="muted pad">No diff available for this run.</div>
           )}
           {!state.loading &&
             !state.error &&

@@ -87,6 +87,36 @@ type CheckinOK struct {
 	RepoCache    bool          `json:"repo_cache"`
 }
 
+// TunnelConfig is the hub-assigned reverse tunnel endpoint.
+type TunnelConfig struct {
+	InstanceID string `json:"instance_id"`
+	Name       string `json:"name"`
+	Gateway    string `json:"gateway"`
+	Port       int    `json:"port"`
+}
+
+// TunnelHealth is the tunnel agent liveness report.
+type TunnelHealth struct {
+	Connected bool   `json:"connected"`
+	Hostname  string `json:"hostname,omitempty"`
+	Platform  string `json:"platform,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// TunnelConfig fetches the gateway and allocated loopback port for this
+// instance. The server derives both from the instance token.
+func (c *Client) TunnelConfig(ctx context.Context) (TunnelConfig, error) {
+	var out TunnelConfig
+	err := c.do(ctx, http.MethodGet, c.prefix+"/tunnel", nil, &out)
+	return out, err
+}
+
+// ReportTunnelHealth records whether the reverse tunnel is currently up.
+func (c *Client) ReportTunnelHealth(ctx context.Context, health TunnelHealth) error {
+	return c.do(ctx, http.MethodPost, c.prefix+"/tunnel/health", health, nil)
+}
+
 // ErrSnapshotUnsupported means the server cannot cache this revision (for
 // example a semver range). Agents should fall back to their git implementation.
 var ErrSnapshotUnsupported = errors.New("revision not supported by repo cache")

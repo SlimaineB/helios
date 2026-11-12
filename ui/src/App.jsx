@@ -11,10 +11,11 @@ import ConfigRepos from './pages/ConfigRepos.jsx'
 import { api, setBasic, clearBasic } from './api/client.js'
 import ToastContainer from './components/Toast.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
+import Glossary from './components/Glossary.jsx'
 import Sidebar, { SidebarProvider } from './components/Sidebar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import HeliosMark from './components/HeliosMark.jsx'
-import { Menu } from 'lucide-react'
+import { CircleHelp, Menu } from 'lucide-react'
 
 const Auth = createContext(null)
 export const useAuth = () => useContext(Auth)
@@ -23,6 +24,7 @@ export default function App() {
   const [state, setState] = useState(null)
   const [realm, setRealm] = useState({ oidc: false, basic_admin: false })
   const [cmdOpen, setCmdOpen] = useState(false)
+  const [glossaryOpen, setGlossaryOpen] = useState(false)
   const navigate = useNavigate()
 
   const loadMe = async (setBasicCreds) => {
@@ -95,6 +97,7 @@ export default function App() {
         <Auth.Provider value={{ me: state.me, can }}>
           <ToastContainer />
           <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} can={can} navigate={navigate} />
+          {glossaryOpen && <Glossary onClose={() => setGlossaryOpen(false)} />}
           <Sidebar can={can} />
           <main className="content">
             <header className="topbar">
@@ -104,6 +107,16 @@ export default function App() {
                 <Menu size={20} />
               </button>
               <div className="user">
+                <button
+                  type="button"
+                  className="ghost small topbar-help"
+                  onClick={() => setGlossaryOpen(true)}
+                  title="Open the glossary and workflow help"
+                  aria-label="Open glossary and help"
+                >
+                  <CircleHelp size={16} />
+                  <span className="topbar-help-label">Help</span>
+                </button>
                 <span className="user-chip" title={state.me?.email || ''}>
                   {state.me?.name || 'operator'}
                 </span>

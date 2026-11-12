@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/slim/helios/agent/internal/agentversion"
 	"github.com/slim/helios/agent/internal/ansible"
 	"github.com/slim/helios/agent/internal/client"
 	"github.com/slim/helios/agent/internal/config"
@@ -62,7 +63,7 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 		runner:   &ansible.Runner{Bin: cfg.AnsibleBin, Target: target},
 		log:      log,
 		hostname: hostname,
-		version:  "0.1.1",
+		version:  agentversion.Version,
 		platform: platform,
 		states:   map[int64]*appState{},
 	}

@@ -50,7 +50,7 @@ Usage: install-server.sh --binary PATH --ui DIR --operator-password SECRET [opti
   --tls-key FILE           private key for --tls-cert
   --agent-tarball FILE     publish an agent tarball from the hub (repeatable)
   --downloads-dir DIR      hub download directory (default: /usr/share/helios/downloads)
-  --runner-token TOKEN     shared bastion runner token (enables agentless mode)
+  --runner-token TOKEN     shared bastion runner token (enables tunnel mode)
   --tunnel-gateway SSH     SSH destination shown for tunnel instances
   --tunnel-port-min N      first hub loopback port (default: 22000)
   --tunnel-port-max N      last hub loopback port (default: 22999)

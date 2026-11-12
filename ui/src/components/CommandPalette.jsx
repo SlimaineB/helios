@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
+import { useDialog } from '../hooks/useDialog.js'
 
 const SHORTCUTS = [
   { keys: '⌘K', label: 'Command palette' },
@@ -12,6 +13,7 @@ const NAV = [
   { id: 'projects', label: 'Projects', path: '/projects', perm: 'projects.get' },
   { id: 'sync-windows', label: 'Sync windows', path: '/sync-windows', perm: 'windows.get' },
   { id: 'repositories', label: 'Repositories', path: '/repositories', perm: 'repositories.get' },
+  { id: 'gitops', label: 'GitOps', path: '/gitops', perm: 'configrepos.get' },
   { id: 'audit', label: 'Audit log', path: '/audit', perm: 'audit.get' },
 ]
 
@@ -19,7 +21,7 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const inputRef = useRef(null)
-  const itemsRef = useRef([])
+  const dialogRef = useDialog(open, onClose)
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim()
@@ -36,28 +38,21 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
   }, [query, can])
 
   useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden'
-      setQuery('')
-      setSelected(0)
-      setTimeout(() => inputRef.current?.focus(), 10)
-    } else {
-      document.body.style.overflow = ''
-    }
-    return () => { document.body.style.overflow = '' }
+    if (!open) return
+    setQuery('')
+    setSelected(0)
   }, [open])
 
   useEffect(() => {
     const handler = (e) => {
       if (!open) return
-      if (e.key === 'Escape') onClose()
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, filtered.length - 1)) }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((s) => Math.max(s - 1, 0)) }
       if (e.key === 'Enter') { e.preventDefault(); handleSelect(filtered[selected]) }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, filtered, selected, onClose])
+  }, [open, filtered, selected])
 
   const handleSelect = (item) => {
     if (!item) return
@@ -71,7 +66,15 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal command-palette" style={{ width: 'min(560px, 90vw)', height: 'auto', maxHeight: '70vh' }} role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="modal command-palette"
+        style={{ width: 'min(560px, 90vw)', height: 'auto', maxHeight: '70vh' }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head" style={{ padding: '10px 14px', justifyContent: 'space-between' }}>
           <div className="seg">
             <span style={{ padding: '3px 10px', color: 'var(--muted)', fontSize: '12px' }}>⌘K</span>

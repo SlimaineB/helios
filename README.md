@@ -54,11 +54,13 @@ If a playbook must create system users, install packages, or write outside the
 agent state dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
-**Outbound-only servers?** Register the instance as *Agentless · reverse SSH
+**Outbound-only servers?** Register the instance as *Tunnel · reverse SSH
 tunnel* instead. The host opens a reverse SSH tunnel to a bastion where a Helios
-runner executes Ansible; no agent is installed. The UI shows the mode, filters
-instances by mode, and marks bastion-backed nodes in the topology. See
-[Agentless mode](docs/INSTALL.md#agentless-mode--reverse-ssh-tunnel).
+runner executes Ansible. A lightweight tunnel agent can keep the tunnel open
+without installing Ansible, or you can run `ssh` manually. The UI shows the
+mode, filters instances by mode, and marks bastion-backed nodes in the topology.
+See
+[Tunnel mode](docs/INSTALL.md#tunnel-mode--reverse-ssh).
 
 **Large fleet?** Enable the hub's [repo snapshot cache](docs/INSTALL.md#repo-snapshot-cache)
 so agents download one immutable tarball per commit instead of cloning the same
@@ -348,6 +350,8 @@ GET    /metrics                        # Prometheus text (public, IDs only)
 POST   /api/v1/agent/checkin                          (Bearer) heartbeat → apps + commands
 POST   /api/v1/agent/status                           (Bearer) run result
 POST   /api/v1/agent/commands/{cmdId}/result          (Bearer) command completion
+GET    /api/v1/agent/tunnel                           (Bearer) tunnel gateway + allocated port
+POST   /api/v1/agent/tunnel/health                    (Bearer) tunnel liveness
 
 # Application variables (defaults ≈ group_vars) & per-host overrides (≈ host_vars)
 GET    /api/v1/applications/{appId}/variables         # list — secrets redacted to "********"

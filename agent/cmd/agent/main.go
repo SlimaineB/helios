@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/slim/helios/agent/internal/agentversion"
 	"github.com/slim/helios/agent/internal/client"
 	"github.com/slim/helios/agent/internal/config"
 	"github.com/slim/helios/agent/internal/loop"
+	"github.com/slim/helios/agent/internal/tunnel"
 )
 
 const (
@@ -53,11 +56,19 @@ func main() {
 	}
 
 	cl := client.New(cfg.Server, cfg.Token, cfg.InsecureSkipVerify)
-	ag := loop.New(cfg, cl, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.IsTunnel() {
+		if err := tunnel.New(cfg, cl, log, agentversion.Version).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("tunnel agent stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	ag := loop.New(cfg, cl, log)
 	if err := ag.ResolveInstanceID(ctx); err != nil {
 		log.Error("instance id resolution failed", "error", err)
 		os.Exit(1)

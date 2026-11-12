@@ -20,7 +20,7 @@ const appState = (assignment) => {
 const STATE_LABEL = {
   ok: 'Synced',
   drift: 'Drift',
-  error: 'Error',
+  error: 'Failed',
   stuck: 'Stuck',
   unknown: 'No check',
 }
@@ -53,12 +53,12 @@ export default function ApplicationDetail({
         ? 'drift'
         : 'ok'
   const healthLabel = unhealthy > 0
-    ? `${unhealthy} unhealthy`
+    ? `${unhealthy} failed`
     : s.instances === 0
       ? 'Unassigned'
       : s.drift > 0
         ? `${s.drift} in drift`
-        : 'Healthy'
+        : 'Synced'
 
   const repoLabel = repo?.name && repo.name !== app.repo_url
     ? repo.name
@@ -99,7 +99,7 @@ export default function ApplicationDetail({
             <span className="project-badge">{projectLabel(app.project)}</span>
             <CopyButton value={String(app.id)} size="small" title="Copy application ID" />
             <span className="mono">id {app.id}</span>
-            {app.autoheal && <span className="project-badge">auto-heal</span>}
+            {app.autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
           </div>
         </div>
         <HealthBadge state={health} label={healthLabel} size={16} />
@@ -131,11 +131,11 @@ export default function ApplicationDetail({
           <div className="value mono">{app.path || '—'}</div>
         </div>
         <div className="detail">
-          <label>Sync interval</label>
+          <label>Check interval</label>
           <div className="value">{app.sync_interval ? `${app.sync_interval}s` : 'inherit (0)'}</div>
         </div>
         <div className="detail">
-          <label>Auto-heal</label>
+          <label>Auto-apply on drift</label>
           <div className="value">{app.autoheal ? 'on' : 'off'}</div>
         </div>
         <div className="detail">
@@ -219,7 +219,13 @@ export default function ApplicationDetail({
                     <td className="muted">{fmt(assignment.last_check_at || assignment.latest_check?.finished_at)}</td>
                     <td>
                       <div className="app-actions">
-                        <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
+                        <Link
+                          className={`btn small${state === 'drift' ? ' warn' : ' ghost'}`}
+                          to={`/instances/${inst.id}`}
+                          title={state === 'drift' ? 'Review drift on this instance' : 'Open instance details'}
+                        >
+                          {state === 'drift' ? 'Review drift' : 'Open'}
+                        </Link>
                         {onUnassign && (
                           <button
                             type="button"

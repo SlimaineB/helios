@@ -1,5 +1,5 @@
 [Unit]
-Description=Helios agent (ansible-pull drift controller)
+Description=Helios agent (Ansible drift controller or reverse SSH tunnel)
 After=network-online.target
 Wants=network-online.target
 
@@ -12,10 +12,11 @@ Environment=HOME=/var/lib/helios
 Environment=LC_ALL=C.UTF-8
 Restart=always
 RestartSec=10
-# Default: non-root. Playbooks run as this user, so they can manage files the
-# user owns and the state dir. Grant root (User=root in a systemd override)
-# only for playbooks that create system users, install packages, or write
-# outside $StateDir/$HOME.
+# Default: non-root. In agent mode playbooks run as this user, so they can
+# manage files the user owns and the state dir. In tunnel mode the process only
+# needs its key/state files. Grant root (User=root in a systemd override) only
+# for playbooks that create system users, install packages, or write outside
+# $StateDir/$HOME.
 
 [Install]
 WantedBy=multi-user.target

@@ -36,7 +36,7 @@ const TONE_VAR = {
 const APP_STATE_LABEL = {
   ok: 'Synced',
   drift: 'Drift',
-  error: 'Error',
+  error: 'Failed',
   stuck: 'Stuck',
   unknown: 'No check',
 }
@@ -207,7 +207,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
         <div className="topology-legend">
           <span><span className="legend-dot ok" />Synced</span>
           <span><span className="legend-dot drift" />Drift</span>
-          <span><span className="legend-dot error" />Error</span>
+          <span><span className="legend-dot error" />Failed</span>
           <span><span className="legend-dot stuck" />Stuck</span>
           <span><span className="legend-dot unknown" />No check</span>
           <span className="legend-divider" />
@@ -305,8 +305,8 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                   onFocus={() => setFocus({ kind: 'agent', instanceId: group.inst.id })}
                   onBlur={() => setFocus(null)}
                   onClick={() => navigate(`/instances/${group.inst.id}`)}
-                  title={`${group.inst.name} · ${group.inst.execution_mode === 'tunnel' ? `agentless via ${group.inst.tunnel_gateway || 'bastion'}` : 'agent'} · ${stateLabel(aState)} · ${plural(group.allApps.length, 'application')}`}
-                  aria-label={`Open ${group.inst.execution_mode === 'tunnel' ? 'agentless instance via bastion' : 'agent'} ${group.inst.name}`}
+                  title={`${group.inst.name} · ${group.inst.execution_mode === 'tunnel' ? `tunnel via ${group.inst.tunnel_gateway || 'bastion'}` : 'agent'} · ${stateLabel(aState)} · ${plural(group.allApps.length, 'application')}`}
+                  aria-label={`Open ${group.inst.execution_mode === 'tunnel' ? 'tunnel instance via bastion' : 'agent'} ${group.inst.name}`}
                 >
                   <span className={`topology-agent-icon ${aState}`}>
                     {group.inst.execution_mode === 'tunnel' ? <Network size={18} /> : <Server size={18} />}

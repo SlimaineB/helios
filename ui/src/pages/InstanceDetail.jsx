@@ -74,7 +74,7 @@ export default function InstanceDetail() {
   const toggleAutoHeal = async (app) => {
     try {
       await api.setAutoHeal(id, app.application.id, !app.autoheal)
-      toast.success('Auto-heal updated')
+      toast.success('Auto-apply updated')
       refresh()
     } catch (e) {
       toast.error(e.message)
@@ -106,7 +106,7 @@ export default function InstanceDetail() {
   const rearm = async (app) => {
     try {
       await api.setAutoHeal(id, app.application.id, true)
-      toast.success('Auto-heal re-armed')
+      toast.success('Auto-apply resumed')
       refresh()
     } catch (e) {
       toast.error(e.message)
@@ -166,7 +166,7 @@ export default function InstanceDetail() {
       <Link to="/instances" className="back-link">← Instances</Link>
       <h1>
         {inst.name} <Badge state={inst.state} label={inst.state} />
-        {isTunnel && <Badge state="tunnel" label="agentless" small />}
+        {isTunnel && <Badge state="tunnel" label="tunnel" small />}
         <span className={`dot ${online ? 'online' : 'offline'}`} />
       </h1>
       <div className="meta">
@@ -174,7 +174,7 @@ export default function InstanceDetail() {
         <div><b>Hostname</b> {inst.hostname || '—'}</div>
         <div><b>Platform</b> {inst.platform || '—'}</div>
         <div><b>Version</b> {inst.version || '—'}</div>
-        <div><b>Mode</b> {isTunnel ? 'agentless · reverse SSH tunnel' : 'agent'}</div>
+        <div><b>Mode</b> {isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div>
         {isTunnel && <div><b>Bastion</b> <span className="mono">{inst.tunnel_gateway || '—'}</span></div>}
         {isTunnel && <div><b>Tunnel port</b> <span className="mono">{inst.tunnel_port || '—'}</span></div>}
         {isTunnel && <div><b>Last tunnel</b> {inst.last_tunnel_at ? new Date(inst.last_tunnel_at).toLocaleString() : 'never'}</div>}
@@ -185,10 +185,10 @@ export default function InstanceDetail() {
         <div className="card">
           <div className="card-head">
             <strong>Reverse SSH tunnel</strong>
-            <Badge state="tunnel" label="agentless" small />
+            <Badge state="tunnel" label="tunnel" small />
           </div>
           <p className="sub">
-            This host has no Helios agent. Keep an outbound reverse tunnel open; the runner on the bastion executes Ansible through it.
+            A lightweight Helios tunnel agent can keep this reverse tunnel open and report health without Ansible. You can also run the SSH command manually; the runner on the bastion executes Ansible through the tunnel.
           </p>
           <TunnelDiagram port={inst.tunnel_port} gateway={inst.tunnel_gateway} />
           {tunnelCommand ? (
@@ -212,17 +212,17 @@ export default function InstanceDetail() {
           <div className="card-head">
             <strong>{a.application.name}</strong>
             {a.stuck && <Badge state="stuck" label="stuck" small />}
-            {a.frozen && <Badge state="failed" label="sync frozen" small />}
+            {a.frozen && <Badge state="failed" label="auto-apply paused" small />}
             <StatusIcon state={a.latest_check?.status || 'unknown'} size={16} />
             <Badge state={a.latest_check?.status || 'unknown'} label={a.latest_check?.status || 'no check yet'} small />
             {a.stuck ? (
-              <button className="small warn" title="re-enable autoheal once the playbook is fixed" disabled={!can('instances', 'update')} onClick={() => rearm(a)}>Rearm</button>
+              <button className="small warn" title="Resume auto-apply once the playbook is fixed" disabled={!can('instances', 'update')} onClick={() => rearm(a)}>Resume auto-apply</button>
             ) : (
-              <label className="switch" title="auto heal / re-apply on drift detection">
+              <label className="switch" title="Auto-apply on drift">
                 <input type="checkbox" checked={a.autoheal} disabled={!can('instances', 'update')} onChange={() => toggleAutoHeal(a)} /><span className="slider" />
               </label>
             )}
-            <span className="sub">{a.autoheal ? (a.autoheal_set ? 'auto-sync on (override)' : 'auto-sync on') : 'auto-sync off'}</span>
+            <span className="sub">{a.autoheal ? (a.autoheal_set ? 'auto-apply on (host override)' : 'auto-apply on') : 'auto-apply off'}</span>
             {a.target_revision && (
               <>
                 <Badge state="pinned" label={`pinned @${a.target_revision.slice(0, 9)}`} small />
@@ -232,8 +232,8 @@ export default function InstanceDetail() {
             <span className="mono muted"><CopyButton value={a.application.repo_url} label="" size="small" title="Copy repo URL" />{a.application.repo_url}</span>
             <span className="actions">
               <button className="small" disabled={!can('instances', 'update')} onClick={() => setVarsApp(a.application)}>Host vars</button>{' '}
-              <button className="small warn" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'apply'} onClick={() => commands.run(inst.id, a.application.id, 'apply')}>{pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}Sync</button>{' '}
-              <button className="small" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check</button>{' '}
+              <button className="small warn" title="Apply the desired configuration now" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'apply'} onClick={() => commands.run(inst.id, a.application.id, 'apply')}>{pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}Apply now</button>{' '}
+              <button className="small" title="Check for drift without changing the host" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check now</button>{' '}
               <button className="small danger" disabled={!can('instances', 'update')} onClick={() => confirmUnassign(a)} title="Remove this application from this instance only">Unassign</button>
             </span>
           </div>
@@ -249,6 +249,24 @@ export default function InstanceDetail() {
                 </div>
               )}
               {a.latest_check.output_tail && <details><summary>latest output</summary><pre className="output">{a.latest_check.output_tail}</pre></details>}
+              <div className="app-actions">
+                {a.latest_check.status === 'drift' && (
+                  <button
+                    className="btn small warn"
+                    title="Review the latest drift diff"
+                    onClick={() => setDiffRun(a.latest_check.id)}
+                  >
+                    Review drift
+                  </button>
+                )}
+                <button
+                  className="btn ghost small"
+                  title="View the full latest run log"
+                  onClick={() => setLogRun({ runId: a.latest_check.id, view: 'text' })}
+                >
+                  View logs
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -262,16 +280,16 @@ export default function InstanceDetail() {
           {runs.map((r) => (
             <tr key={r.id}>
               <td className="mono"><CopyButton value={String(r.id)} label="" size="small" title="Copy run ID" />{r.id}</td>
-              <td>{r.mode}</td>
+              <td>{r.mode === 'apply' ? 'Apply' : 'Check'}</td>
               <td><Badge state={r.status} label={r.status} small /></td>
               <td>{r.trigger}</td>
               <td className="commit-cell" title={r.commit_msg}><span className="mono"><CopyButton value={r.commit_after || ''} label="" size="small" title="Copy commit" />{r.commit_after?.slice(0, 9) || '—'}</span> {r.commit_msg && <span className="sub">{r.commit_msg}</span>}</td>
               <td className="mono">{Object.entries(r.summary || {}).map(([k, v]) => `${k}:${v}`).join(' ')}</td>
               <td className="muted">{new Date(r.finished_at).toLocaleString()}</td>
               <td>
-                {r.mode === 'check' && <><button className="small" title="view the pre-apply diff" onClick={() => setDiffRun(r.id)}>Diff</button>{' '}</>}
+                {r.mode === 'check' && r.status === 'drift' && <><button className="small warn" title="Review this drift diff" onClick={() => setDiffRun(r.id)}>Review drift</button>{' '}</>}
                 {r.commit_after && <><button className="small warn" disabled={!can('instances', 'update')} title="pin this assignment to this commit and re-apply" onClick={() => confirmRollback(r)}>Rollback</button>{' '}</>}
-                <button className="small" onClick={() => setLogRun({ runId: r.id, view: 'text' })}>Logs</button>
+                <button className="small" title="View the full run log" onClick={() => setLogRun({ runId: r.id, view: 'text' })}>View logs</button>
               </td>
             </tr>
           ))}

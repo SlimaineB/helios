@@ -66,7 +66,9 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
       </header>
 
       <div className="card-body">
-        {apps.map((app, idx) => (
+        {apps.map((app, idx) => {
+          const drifting = app?.latest_check?.status === 'drift'
+          return (
           <div key={`${instance.id}-${app?.application.id || 'none'}`} className="app-row">
             {idx === 0 && (
               <div className="instance-info">
@@ -88,7 +90,9 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
                 <>
                   <div className="app-header">
                     <div className="app-main">
-                      <span className="app-name">{app.application.name}</span>
+                      <Link className="entity-link app-name" to={`/?app=${app.application.id}`} title="Open application">
+                        {app.application.name}
+                      </Link>
                       {app.stuck && <Badge state="stuck" label="stuck" small />}
                     </div>
                     <div className="app-state">
@@ -119,13 +123,13 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
                         className="btn warn small"
                         disabled={!can('instances', 'update') || app.autoheal}
                         onClick={() => onAction(instance.id, app.application.id, 'rearm')}
-                        title="Re-enable autoheal once the playbook is fixed"
+                        title="Resume auto-apply once the playbook is fixed"
                       >
-                        Rearm
+                        Resume auto-apply
                       </button>
                     ) : (
                       <>
-                        <label className="switch" title="Auto-heal / re-apply on drift detection">
+                        <label className="switch" title="Auto-apply on drift">
                           <input
                             type="checkbox"
                             checked={app.autoheal}
@@ -135,16 +139,38 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
                           <span className="slider" />
                         </label>
                         <span className={`sub ${app.autoheal ? '' : 'muted'}`}>
-                          {app.autoheal ? (app.autoheal_set ? 'on (override)' : 'on') : 'off'}
+                          {app.autoheal ? (app.autoheal_set ? 'on (host override)' : 'on') : 'off'}
                         </span>
                       </>
                     )}
-                    <button className="btn small" disabled={!can('commands', 'create')} onClick={() => onAction(instance.id, app.application.id, 'apply')}>Sync</button>
-                    <button className="btn ghost small" disabled={!can('commands', 'create')} onClick={() => onAction(instance.id, app.application.id, 'check')}>Check</button>
+                    <button
+                      className="btn small"
+                      disabled={!can('commands', 'create')}
+                      title="Apply the desired configuration now"
+                      onClick={() => onAction(instance.id, app.application.id, 'apply')}
+                    >
+                      Apply now
+                    </button>
+                    <button
+                      className="btn ghost small"
+                      disabled={!can('commands', 'create')}
+                      title="Check for drift without changing the host"
+                      onClick={() => onAction(instance.id, app.application.id, 'check')}
+                    >
+                      Check now
+                    </button>
                     {app.latest_check?.id && (
                       <>
-                        <button className="btn ghost small" title="Pre-apply diff" onClick={() => onDiff(app.latest_check.id)}>Diff</button>
-                        <button className="btn ghost small" title="Full run log" onClick={() => onLogs(app.latest_check.id)}>Logs</button>
+                        {drifting && (
+                          <button
+                            className="btn small warn"
+                            title="Review the latest drift diff"
+                            onClick={() => onDiff(app.latest_check.id)}
+                          >
+                            Review drift
+                          </button>
+                        )}
+                        <button className="btn ghost small" title="View the full latest run log" onClick={() => onLogs(app.latest_check.id)}>View logs</button>
                       </>
                     )}
                     <button className="btn ghost small" disabled={!can('instances', 'update')} onClick={() => onVars({ inst: instance, app })}>Vars</button>
@@ -153,7 +179,8 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
               )}
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
     </article>
   )

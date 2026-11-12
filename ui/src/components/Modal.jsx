@@ -1,8 +1,13 @@
+import { useDialog } from '../hooks/useDialog.js'
+
 // Modal is a generic popup shell: backdrop + centered panel with a header.
 export default function Modal({ title, onClose, children, wide }) {
+  const dialogRef = useDialog(true, onClose)
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className={'modal' + (wide ? ' modal-wide' : '')}
         role="dialog"
         aria-modal="true"
@@ -11,7 +16,13 @@ export default function Modal({ title, onClose, children, wide }) {
       >
         <div className="modal-head">
           <strong>{title}</strong>
-          <button className="ghost small" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="ghost small"
+            onClick={onClose}
+            style={{ marginLeft: 'auto' }}
+            aria-label="Close dialog"
+          >
             ✕
           </button>
         </div>

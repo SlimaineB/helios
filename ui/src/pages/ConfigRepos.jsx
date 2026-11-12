@@ -205,7 +205,7 @@ spec:
                     {repo.enabled ? 'enabled' : 'disabled'}
                   </span>
                   <button className="ghost small" onClick={() => syncNow(repo)} disabled={syncing === repo.id}>
-                    {syncing === repo.id ? 'Syncing…' : 'Sync now'}
+                    {syncing === repo.id ? 'Reconciling…' : 'Reconcile now'}
                   </button>
                   <button className="ghost small" onClick={() => openEdit(repo)} disabled={!can('configrepos', 'update')}>Edit</button>
                   <button className="ghost small danger" onClick={() => confirmDelete(repo)} disabled={!can('configrepos', 'delete')}>Delete</button>

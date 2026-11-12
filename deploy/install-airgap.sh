@@ -53,6 +53,18 @@ done
 [ -n "$COMPONENT" ] || usage
 [ "$(id -u)" -eq 0 ] || die "run as root (or via sudo)"
 
+AGENT_MODE=agent
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "--mode" ]; then
+        AGENT_MODE=$arg
+    fi
+    case "$arg" in
+        --mode=tunnel) AGENT_MODE=tunnel ;;
+    esac
+    prev=$arg
+done
+
 case "$(uname -m)" in
     x86_64|amd64) ARCH=amd64 ;;
     aarch64|arm64) ARCH=arm64 ;;
@@ -117,12 +129,16 @@ install_os_packages() {
     if [ -f "${BUNDLE_DIR}/packages/Packages" ]; then
         if [ "$COMPONENT" = server ]; then
             install_debs ca-certificates curl
+        elif [ "$AGENT_MODE" = tunnel ]; then
+            install_debs ca-certificates tar curl openssh-client
         else
             install_debs git python3 ca-certificates tar curl openssh-client
         fi
     elif [ -d "${BUNDLE_DIR}/packages/repodata" ]; then
         if [ "$COMPONENT" = server ]; then
             install_rpms ca-certificates
+        elif [ "$AGENT_MODE" = tunnel ]; then
+            install_rpms ca-certificates tar curl openssh-clients
         else
             install_rpms git python3 ca-certificates tar openssh-clients
         fi
@@ -178,10 +194,16 @@ else
     AGENT_BIN="$TMP/helios-agent"
     [ -f "$AGENT_BIN" ] || AGENT_BIN="$TMP/helios-agent-linux-${ARCH}"
     [ -f "$AGENT_BIN" ] || die "agent binary missing from tarball"
-    install_ansible
-    sh "${BUNDLE_DIR}/install/install-agent.sh" \
-        --skip-packages \
-        --ansible-bin /opt/helios/ansible/bin/ansible-playbook \
-        --binary "$AGENT_BIN" "$@"
-    configure_agent_offline
+    if [ "$AGENT_MODE" = tunnel ]; then
+        sh "${BUNDLE_DIR}/install/install-agent.sh" \
+            --skip-packages \
+            --binary "$AGENT_BIN" "$@"
+    else
+        install_ansible
+        sh "${BUNDLE_DIR}/install/install-agent.sh" \
+            --skip-packages \
+            --ansible-bin /opt/helios/ansible/bin/ansible-playbook \
+            --binary "$AGENT_BIN" "$@"
+        configure_agent_offline
+    fi
 fi

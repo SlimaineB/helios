@@ -102,7 +102,7 @@ export default function Sidebar({ can }) {
           </ul>
         </nav>
       </aside>
-      {isMobile && <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} aria-hidden="true" />}
+      {mobileOpen && <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} aria-hidden="true" />}
     </>
   )
 }

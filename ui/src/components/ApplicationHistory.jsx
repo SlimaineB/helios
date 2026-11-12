@@ -40,7 +40,7 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
         <SkeletonTable rows={6} columns={5} />
       ) : rows.length === 0 ? (
         <div className="empty">
-          <p className="muted">No runs yet. History appears after the first check or sync.</p>
+          <p className="muted">No runs yet. History appears after the first check or apply.</p>
         </div>
       ) : (
         <>
@@ -72,7 +72,7 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
                     </td>
                     <td>
                       <div className="cell-title">
-                        <span>{r.mode === 'apply' ? 'Sync' : 'Check'}</span>
+                        <span>{r.mode === 'apply' ? 'Apply' : 'Check'}</span>
                         {r.trigger && <span className="cell-sub">{r.trigger}</span>}
                       </div>
                     </td>

@@ -1,34 +1,20 @@
-import { useEffect, useRef } from 'react'
+import { useDialog } from '../hooks/useDialog.js'
 
 export default function ConfirmDialog({ open, title, message, onConfirm, onCancel, variant = 'warn' }) {
-  const overlayRef = useRef(null)
-  const firstFocusRef = useRef(null)
-
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden'
-      setTimeout(() => firstFocusRef.current?.focus(), 50)
-    } else {
-      document.body.style.overflow = ''
-    }
-    return () => { document.body.style.overflow = '' }
-  }, [open])
-
-  const handleKey = (e) => {
-    if (!open) return
-    if (e.key === 'Escape') onCancel()
-    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') onConfirm()
-  }
-  useEffect(() => {
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [open, onConfirm, onCancel])
+  const dialogRef = useDialog(open, onCancel)
 
   if (!open) return null
 
   return (
-    <div className="modal-backdrop" onClick={onCancel} ref={overlayRef}>
-      <div className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div
+        ref={dialogRef}
+        className="modal confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <span className={`confirm-icon ${variant}`}>
             {variant === 'danger' && '⚠'}
@@ -41,8 +27,8 @@ export default function ConfirmDialog({ open, title, message, onConfirm, onCance
           <p>{message}</p>
         </div>
         <div className="modal-foot" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-          <button className="btn ghost" onClick={onCancel}>Cancel</button>
-          <button className={`btn ${variant === 'danger' ? 'error' : variant === 'warn' ? 'warn' : ''}`} ref={firstFocusRef} onClick={onConfirm}>
+          <button type="button" className="btn ghost" onClick={onCancel}>Cancel</button>
+          <button type="button" className={`btn ${variant === 'danger' ? 'error' : variant === 'warn' ? 'warn' : ''}`} onClick={onConfirm}>
             Confirm
           </button>
         </div>
