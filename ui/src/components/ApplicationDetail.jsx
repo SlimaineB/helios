@@ -45,13 +45,14 @@ export default function ApplicationDetail({
   const [assignTo, setAssignTo] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [toggling, setToggling] = useState(false)
+  const [autoheal, setAutoheal] = useState(app.autoheal)
 
   const toggleAppAutoHeal = async () => {
     if (!can('applications', 'update') || toggling) return
     setToggling(true)
     try {
-      await api.setAppAutoHeal(app.id, !app.autoheal)
-      setApp((p) => ({ ...p, autoheal: !p.autoheal }))
+      await api.setAppAutoHeal(app.id, !autoheal)
+      setAutoheal(!autoheal)
     } catch (e) {
       toast.error(e.message || 'Failed to update auto-apply')
     } finally {
@@ -114,7 +115,7 @@ export default function ApplicationDetail({
             <span className="project-badge">{projectLabel(app.project)}</span>
             <CopyButton value={String(app.id)} size="small" title="Copy application ID" />
             <span className="mono">id {app.id}</span>
-            {app.autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
+            {autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
           </div>
         </div>
         <HealthBadge state={health} label={healthLabel} size={16} />

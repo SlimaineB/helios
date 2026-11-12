@@ -51,6 +51,7 @@ type Store interface {
 	CreateApplication(ctx context.Context, in model.Application) (model.Application, error)
 	UpdateApplication(ctx context.Context, in model.Application) error
 	DeleteApplication(ctx context.Context, id int64) error
+	SetApplicationAutoHeal(ctx context.Context, id int64, enabled bool) error
 
 	// Repositories (git connections registry)
 	ListRepositories(ctx context.Context) ([]model.Repository, error)
