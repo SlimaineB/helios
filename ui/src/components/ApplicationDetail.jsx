@@ -153,15 +153,15 @@ export default function ApplicationDetail({
         <div className="detail">
           <label>Auto-apply on drift</label>
           <div className="value switch">
-            <label className="switch" title={`Auto-apply on drift is ${app.autoheal ? 'enabled' : 'disabled'}`}>
+            <label className="switch" title={`Auto-apply on drift is ${autoheal ? 'enabled' : 'disabled'}`}>
               <input
                 type="checkbox"
-                checked={app.autoheal}
+                checked={autoheal}
                 disabled={!can('applications', 'update')}
                 onChange={() => toggleAppAutoHeal()}
               /><span className="slider" />
             </label>
-            <span className="sub muted">{app.autoheal ? 'on' : 'off'}</span>
+            <span className="sub muted">{autoheal ? 'on' : 'off'}</span>
           </div>
         </div>
         <div className="detail">
