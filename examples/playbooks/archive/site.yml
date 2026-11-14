@@ -13,7 +13,7 @@
   tasks:
     - name: Ensure runtime directory
       ansible.builtin.file:
-        path: /opt/helios-demo12/app
+        path: /opt/helios-demo13/app
         state: directory
         mode: "0755"
 
