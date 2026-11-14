@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronDown, ChevronRight, LayoutGrid, List, Network } from 'lucide-react'
-import { api, stateLabel, DEFAULT_PROJECT, projectForApi, projectLabel } from '../api/client.js'
+import { api, stateLabel, instanceOnline, DEFAULT_PROJECT, projectForApi, projectLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
 import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import LogsModal from '../components/LogsModal.jsx'
@@ -23,8 +23,7 @@ const PAGE_SIZE = 20
 const FETCH_ALL = 500
 const MAX_INSTANCES = 10000
 
-const online = (inst) =>
-  inst.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
+const online = (inst) => instanceOnline(inst)
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
 

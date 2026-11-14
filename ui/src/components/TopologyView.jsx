@@ -1,9 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ChevronUp, Network, Server } from 'lucide-react'
-import { projectLabel, stateLabel } from '../api/client.js'
+import { projectLabel, stateLabel, instanceOnline } from '../api/client.js'
 
-const ONLINE_WINDOW = 7 * 60 * 1000
 const MAX_APPS = 6
 
 const L = {
@@ -41,10 +40,10 @@ const APP_STATE_LABEL = {
   unknown: 'No check',
 }
 
-const isOnline = (inst) =>
-  !!inst?.last_seen && Date.now() - new Date(inst.last_seen).getTime() < ONLINE_WINDOW
+const isOnline = (inst) => instanceOnline(inst)
 
 const agentState = (inst) => {
+  if (!isOnline(inst)) return 'offline'
   const s = inst?.state
   return s === 'ok' || s === 'drift' || s === 'error' ? s : 'unknown'
 }

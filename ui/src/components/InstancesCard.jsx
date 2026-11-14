@@ -2,12 +2,11 @@ import CopyButton from './CopyButton.jsx'
 import Badge from './Badge.jsx'
 import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from './AutoHealChip.jsx'
 import { Link } from 'react-router-dom'
-import { api, stateLabel } from '../api/client.js'
+import { api, stateLabel, instanceOnline } from '../api/client.js'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
-const online = (inst) =>
-  inst.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
+const online = (inst) => instanceOnline(inst)
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
 

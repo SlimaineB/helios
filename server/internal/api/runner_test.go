@@ -168,3 +168,76 @@ func TestTunnelCheckinSetsLastTunnelAt(t *testing.T) {
 		t.Fatalf("hostname/platform = %q/%q", got.Hostname, got.Platform)
 	}
 }
+
+func TestOfflineGrace(t *testing.T) {
+	cases := []struct {
+		poll int64
+		want time.Duration
+	}{
+		{0, defaultOfflineGrace}, // older agent: conservative default
+		{1, minOfflineGrace},     // floor for very fast polls
+		{5, minOfflineGrace},     // demo agents
+		{60, 3 * time.Minute},    // three missed beats
+		{3600, maxOfflineGrace},  // cap for very slow polls
+	}
+	for _, c := range cases {
+		if got := offlineGrace(model.Instance{PollInterval: c.poll}); got != c.want {
+			t.Errorf("offlineGrace(%d) = %v, want %v", c.poll, got, c.want)
+		}
+	}
+}
+
+func TestDecorateInstanceMarksSilentAgentOffline(t *testing.T) {
+	s := &Server{}
+	now := time.Now()
+
+	fresh := s.decorateInstance(model.Instance{
+		LastSeen: now.Add(-10 * time.Second), PollInterval: 60, State: model.StateOK,
+	})
+	if !fresh.Online || fresh.State != model.StateOK {
+		t.Fatalf("fresh agent online=%v state=%q, want online ok", fresh.Online, fresh.State)
+	}
+
+	stale := s.decorateInstance(model.Instance{
+		LastSeen: now.Add(-4 * time.Minute), PollInterval: 60, State: model.StateOK,
+	})
+	if stale.Online || stale.State != model.StateOffline {
+		t.Fatalf("stale agent online=%v state=%q, want offline", stale.Online, stale.State)
+	}
+
+	never := s.decorateInstance(model.Instance{State: model.StateUnknown})
+	if never.Online || never.State != model.StateUnknown {
+		t.Fatalf("never-seen agent online=%v state=%q, want unknown", never.Online, never.State)
+	}
+}
+
+func TestHeartbeatUpdatesLivenessWithoutState(t *testing.T) {
+	s, st := newTestServer(t)
+	inst := createInstance(t, st, "hb-1", model.ModeAgent, 0)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/heartbeat",
+		strings.NewReader(`{"instance_id":"hb-1","version":"9.9","hostname":"hb","platform":"linux","poll_interval":7}`))
+	req = req.WithContext(context.WithValue(req.Context(), ctxInstance, inst))
+	rec := httptest.NewRecorder()
+	s.handleHeartbeat(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := st.GetInstance(context.Background(), "hb-1")
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if got.Version != "9.9" || got.Hostname != "hb" || got.Platform != "linux" {
+		t.Fatalf("liveness metadata = %q/%q/%q", got.Version, got.Hostname, got.Platform)
+	}
+	if got.PollInterval != 7 {
+		t.Fatalf("poll_interval = %d, want 7", got.PollInterval)
+	}
+	if got.LastSeen.IsZero() {
+		t.Fatal("last_seen was not set")
+	}
+	if got.State != model.StateUnknown {
+		t.Fatalf("heartbeat changed state to %q", got.State)
+	}
+}

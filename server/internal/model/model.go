@@ -8,6 +8,10 @@ const (
 	StateOK      = "ok"
 	StateDrift   = "drift"
 	StateError   = "error"
+	// StateOffline is derived at read time: the agent has not checked in for
+	// longer than its poll interval allows. Stored state is left untouched so
+	// the last known result is preserved.
+	StateOffline = "offline"
 )
 
 // Run status values.
@@ -44,8 +48,13 @@ type Instance struct {
 	State      string    `json:"state"`
 	LastCommit string    `json:"last_commit,omitempty"`
 	LastSeen   time.Time `json:"last_seen"`
-	Hostname   string    `json:"hostname,omitempty"`
-	Platform   string    `json:"platform,omitempty"`
+	// PollInterval is the agent heartbeat period in seconds, as reported on
+	// each checkin. It drives staleness detection; 0 means an older agent that
+	// did not report it (a conservative default grace is used).
+	PollInterval int64  `json:"poll_interval,omitempty"`
+	Online       bool   `json:"online"`
+	Hostname     string `json:"hostname,omitempty"`
+	Platform     string `json:"platform,omitempty"`
 	// Project scopes this instance (empty = global/default project).
 	Project string `json:"project"`
 	// AutoHeal is the host-level auto-apply switch. When false, no application

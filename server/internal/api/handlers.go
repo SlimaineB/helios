@@ -1288,12 +1288,47 @@ type checkinPayload struct {
 	Version    string `json:"version"`
 	Hostname   string `json:"hostname"`
 	Platform   string `json:"platform"`
+	// PollInterval is the agent heartbeat period in seconds (0 for older
+	// agents that predate this field).
+	PollInterval int64 `json:"poll_interval"`
 }
 
 type checkinResponse struct {
 	Applications []model.Application `json:"applications"`
 	Commands     []model.Command     `json:"commands"`
 	RepoCache    bool                `json:"repo_cache"`
+}
+
+// heartbeatPayload is a liveness-only ping. It must not claim commands or
+// return assignments: the agent sends it from a dedicated goroutine while a
+// long check may still be running.
+type heartbeatPayload struct {
+	// InstanceID is accepted (and ignored) because the agent reuses its
+	// checkin payload for the lightweight heartbeat.
+	InstanceID   string `json:"instance_id"`
+	Version      string `json:"version"`
+	Hostname     string `json:"hostname"`
+	Platform     string `json:"platform"`
+	PollInterval int64  `json:"poll_interval"`
+}
+
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	var body heartbeatPayload
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	inst := r.Context().Value(ctxInstance).(model.Instance)
+	poll := int64(0)
+	if body.PollInterval > 0 && body.PollInterval <= 86400 {
+		poll = body.PollInterval
+	}
+	if err := s.store.TouchInstance(r.Context(), inst.ID, body.Version, body.Hostname, body.Platform,
+		poll, time.Now().UTC(), inst.ExecutionMode == model.ModeTunnel); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
@@ -1307,15 +1342,18 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		// Agent re-registered under a different helper ID: keep canonical server ID.
 		s.log.Warn("agent instance_id mismatch, using canonical", "reported", body.InstanceID, "canonical", inst.ID)
 	}
-	// Heartbeat: update liveness metadata.
+	// Heartbeat: update liveness metadata without rewriting state, so a
+	// concurrent lightweight heartbeat and a full checkin cannot clobber each
+	// other's columns.
+	poll := int64(0)
+	if body.PollInterval > 0 && body.PollInterval <= 86400 {
+		poll = body.PollInterval
+	}
 	inst.Version = body.Version
 	inst.Hostname = body.Hostname
 	inst.Platform = body.Platform
-	inst.LastSeen = time.Now().UTC()
-	if inst.ExecutionMode == model.ModeTunnel {
-		inst.LastTunnelAt = inst.LastSeen
-	}
-	if err := s.store.UpdateInstance(r.Context(), inst); err != nil {
+	if err := s.store.TouchInstance(r.Context(), inst.ID, body.Version, body.Hostname, body.Platform,
+		poll, time.Now().UTC(), inst.ExecutionMode == model.ModeTunnel); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -1582,6 +1620,5 @@ func (s *Server) refreshInstanceState(ctx context.Context, inst model.Instance) 
 		state = model.StateUnknown
 	}
 	inst.State = state
-	inst.LastSeen = time.Now().UTC()
-	return s.store.UpdateInstance(ctx, inst)
+	return s.store.UpdateInstanceState(ctx, inst.ID, state, inst.LastCommit)
 }

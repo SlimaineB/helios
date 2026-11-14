@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api } from '../api/client.js'
+import { api, instanceOnline, stateLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
 import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import StatusIcon from '../components/StatusIcon.jsx'
@@ -75,7 +75,7 @@ export default function InstanceDetail() {
     setRunsOff(0)
   }, [appFilter])
 
-  const online = inst?.last_seen && Date.now() - new Date(inst.last_seen).getTime() < 7 * 60 * 1000
+  const online = instanceOnline(inst)
   const isTunnel = inst?.execution_mode === 'tunnel'
   const tunnelCommand = isTunnel && inst?.tunnel_gateway && inst?.tunnel_port
     ? [
@@ -178,7 +178,7 @@ export default function InstanceDetail() {
   if (loading) {
     return (
       <section>
-        <h1>{inst.name} <Badge state={inst.state} label={inst.state} /></h1>
+        <h1>{inst.name} <Badge state={inst.state} label={stateLabel(inst.state)} /></h1>
         <div className="meta"><SkeletonTable rows={5} columns={1} /></div>
         <h2>Applications</h2>
         <SkeletonCard />
@@ -192,7 +192,7 @@ export default function InstanceDetail() {
     <section>
       <Link to="/instances" className="back-link">← Instances</Link>
       <h1>
-        {inst.name} <Badge state={inst.state} label={inst.state} />
+        {inst.name} <Badge state={inst.state} label={stateLabel(inst.state)} />
         {isTunnel && <Badge state="tunnel" label="tunnel" small />}
         <span className={`dot ${online ? 'online' : 'offline'}`} />
       </h1>

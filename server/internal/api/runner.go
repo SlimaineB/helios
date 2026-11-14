@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/slim/helios/server/internal/auth"
 	"github.com/slim/helios/server/internal/model"
@@ -71,9 +72,42 @@ func (s *Server) handleRunnerInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 // decorateInstance adds non-persisted, server-derived fields for the UI.
+// Staleness detection. An agent checks in once per poll interval, so allow
+// three missed beats (with a floor for very fast agents and a cap for slow
+// ones). Agents that predate poll_interval reporting keep the historical
+// seven-minute grace, which covers the default five-minute poll.
+const (
+	defaultOfflineGrace = 7 * time.Minute
+	minOfflineGrace     = 30 * time.Second
+	maxOfflineGrace     = 15 * time.Minute
+)
+
+func offlineGrace(inst model.Instance) time.Duration {
+	if inst.PollInterval <= 0 {
+		return defaultOfflineGrace
+	}
+	grace := time.Duration(inst.PollInterval) * time.Second * 3
+	if grace < minOfflineGrace {
+		grace = minOfflineGrace
+	}
+	if grace > maxOfflineGrace {
+		grace = maxOfflineGrace
+	}
+	return grace
+}
+
 func (s *Server) decorateInstance(inst model.Instance) model.Instance {
 	if inst.ExecutionMode == model.ModeTunnel {
 		inst.TunnelGateway = s.tunnelGateway
+	}
+	// Never-seen instances stay "unknown"; only hosts that did check in and
+	// then went silent are marked offline, so the last result is not shown as
+	// current forever.
+	if !inst.LastSeen.IsZero() {
+		inst.Online = time.Since(inst.LastSeen) <= offlineGrace(inst)
+		if !inst.Online {
+			inst.State = model.StateOffline
+		}
 	}
 	return inst
 }

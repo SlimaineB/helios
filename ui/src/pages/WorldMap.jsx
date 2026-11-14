@@ -4,7 +4,7 @@ import {
   Globe2, Search, ZoomIn, ZoomOut, Maximize2, LocateFixed,
   RefreshCw, Server, PowerOff, X, CircleDot,
 } from 'lucide-react'
-import { api } from '../api/client.js'
+import { api, instanceOnline } from '../api/client.js'
 import { toast } from '../components/Toast.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import world from '../assets/world-land.json'
@@ -113,6 +113,7 @@ function detectLocation(inst) {
 }
 
 const hostState = (inst) => {
+  if (!instanceOnline(inst)) return 'offline'
   const sts = (inst.apps || []).map((a) => a.latest_check?.status).filter(Boolean)
   if (sts.includes('failed')) return 'error'
   if (sts.includes('drift')) return 'drift'
@@ -120,8 +121,10 @@ const hostState = (inst) => {
   return 'unknown'
 }
 
-const STATE_LABEL = { ok: 'Healthy', drift: 'Drift', error: 'Failed', unknown: 'No check' }
-const STATE_ORDER = { error: 0, drift: 1, unknown: 2, ok: 3 }
+const STATE_LABEL = {
+  ok: 'Healthy', drift: 'Drift', error: 'Failed', offline: 'Offline', unknown: 'No check',
+}
+const STATE_ORDER = { error: 0, drift: 1, offline: 2, unknown: 2, ok: 3 }
 
 function layoutMarkers(instances) {
   const groups = new Map()
@@ -408,6 +411,7 @@ export default function WorldMap() {
             <span><i className="dot ok" /> Healthy</span>
             <span><i className="dot drift" /> Drift</span>
             <span><i className="dot error" /> Failed</span>
+            <span><i className="dot offline" /> Offline</span>
             <span><i className="dot unknown" /> No check</span>
             <span className="wm-legend-off"><i className="ring" /> auto-apply off</span>
           </div>
@@ -451,8 +455,12 @@ export default function WorldMap() {
                       <span className="wm-item-name">{m.inst.name}</span>
                       <span className="wm-item-sub">{m.loc.label} · {m.inst.project || 'global'}</span>
                     </span>
-                    <span className={`wm-badge ${st}`}>{STATE_LABEL[st]}</span>
-                    {m.inst.autoheal === false && <PowerOff size={13} className="wm-off" title="Host auto-apply off" />}
+                    <span className="wm-item-end">
+                      <span className="wm-off-slot">
+                        {m.inst.autoheal === false && <PowerOff size={13} className="wm-off" title="Host auto-apply off" />}
+                      </span>
+                      <span className={`wm-badge ${st}`}>{STATE_LABEL[st]}</span>
+                    </span>
                   </button>
                 </li>
               )

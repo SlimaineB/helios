@@ -102,6 +102,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		"server", a.cfg.Server, "instance_id", a.instanceID,
 		"poll", a.pollInterval().String(), "autoheal", a.cfg.AutoHeal)
 
+	go a.heartbeat(ctx)
 	for {
 		a.pass(ctx) // errors are logged inside
 		timer := time.NewTimer(a.nextWake())
@@ -150,13 +151,39 @@ func intervalFor(app client.Application, poll time.Duration) time.Duration {
 }
 
 // pass is a single reconciliation: heartbeat + drift checks + command processing.
+func (a *Agent) checkinPayload() client.CheckinIn {
+	pollSecs := int64(a.pollInterval() / time.Second)
+	if pollSecs < 1 {
+		pollSecs = 1
+	}
+	return client.CheckinIn{
+		InstanceID:   a.instanceID,
+		Version:      a.version,
+		Hostname:     a.hostname,
+		Platform:     a.platform,
+		PollInterval: pollSecs,
+	}
+}
+
+// heartbeat runs independently from the check loop. Checks can block for
+// minutes (a slow playbook), so liveness must not depend on pass() returning.
+func (a *Agent) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(a.pollInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.client.Heartbeat(ctx, a.checkinPayload()); err != nil {
+				a.log.Debug("heartbeat failed", "error", err)
+			}
+		}
+	}
+}
+
 func (a *Agent) pass(ctx context.Context) {
-	checkin, err := a.client.Checkin(ctx, client.CheckinIn{
-		InstanceID: a.instanceID,
-		Version:    a.version,
-		Hostname:   a.hostname,
-		Platform:   a.platform,
-	})
+	checkin, err := a.client.Checkin(ctx, a.checkinPayload())
 	if err != nil {
 		if a.cfg.TargetPort > 0 {
 			a.log.Warn("tunnel checkin failed; waiting for tunnel", "error", err)

@@ -130,7 +130,27 @@ export const api = {
 }
 
 export function stateLabel(state) {
-  return { ok: 'Synced', drift: 'Drift', error: 'Failed', unknown: 'Unknown' }[state] || state
+  return {
+    ok: 'Synced',
+    drift: 'Drift',
+    error: 'Failed',
+    offline: 'Offline',
+    unknown: 'Unknown',
+  }[state] || state
+}
+
+// Detect a silent agent. The server sends `online` (and an `offline` state)
+// computed from the poll interval the agent reports; fall back to the same
+// formula for older servers that do not expose it.
+export function instanceOnline(inst, now = Date.now()) {
+  if (!inst) return false
+  if (typeof inst.online === 'boolean') return inst.online
+  if (!inst.last_seen) return false
+  const poll = Number(inst.poll_interval) || 0
+  const grace = poll > 0
+    ? Math.min(Math.max(poll * 3000, 30000), 15 * 60 * 1000)
+    : 7 * 60 * 1000
+  return now - new Date(inst.last_seen).getTime() <= grace
 }
 // Projects are mandatory in the UI (like ArgoCD). The implicit global/default
 // project is stored as "" by the API, so the forms use a non-empty sentinel.

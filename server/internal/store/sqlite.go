@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS instances (
   tunnel_port INTEGER NOT NULL DEFAULT 0,
   last_tunnel_at TEXT NOT NULL DEFAULT '',
   autoheal    INTEGER NOT NULL DEFAULT 1,
+  poll_interval INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL
 );
 
@@ -223,6 +224,7 @@ CREATE TABLE IF NOT EXISTS instances (
   tunnel_port INTEGER NOT NULL DEFAULT 0,
   last_tunnel_at TEXT NOT NULL DEFAULT '',
   autoheal    INTEGER NOT NULL DEFAULT 1,
+  poll_interval INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL
 );
 
@@ -530,6 +532,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tunnel_port INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS autoheal INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS poll_interval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
@@ -669,6 +672,7 @@ func migrate(db *sql.DB) error {
 		{"instances", "tunnel_port", "ALTER TABLE instances ADD COLUMN tunnel_port INTEGER NOT NULL DEFAULT 0"},
 		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
 		{"instances", "autoheal", "ALTER TABLE instances ADD COLUMN autoheal INTEGER NOT NULL DEFAULT 1"},
+		{"instances", "poll_interval", "ALTER TABLE instances ADD COLUMN poll_interval INTEGER NOT NULL DEFAULT 0"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
@@ -736,7 +740,7 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, execution_mode, tunnel_port, last_tunnel_at, autoheal, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, execution_mode, tunnel_port, last_tunnel_at, autoheal, poll_interval, created_at`
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
@@ -746,7 +750,7 @@ func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
 		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project,
-		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &created)
+		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &inst.PollInterval, &created)
 	if err != nil {
 		return inst, err
 	}
@@ -840,11 +844,43 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 
 func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error {
 	_, err := s.exec(ctx,
-		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, execution_mode=?, tunnel_port=?, last_tunnel_at=? WHERE id=?`,
+		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, execution_mode=?, tunnel_port=?, last_tunnel_at=?, poll_interval=? WHERE id=?`,
 		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project,
-		in.ExecutionMode, in.TunnelPort, tm(in.LastTunnelAt), in.ID)
+		in.ExecutionMode, in.TunnelPort, tm(in.LastTunnelAt), in.PollInterval, in.ID)
 	if err != nil {
 		return fmt.Errorf("update instance: %w", err)
+	}
+	return nil
+}
+
+// TouchInstance updates liveness fields without rewriting state or commit
+// metadata. pollInterval <= 0 keeps the previously reported value (older agents
+// do not send it).
+func (s *sqlstore) TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time, tunnel bool) error {
+	sets := []string{"version=?", "hostname=?", "platform=?", "last_seen=?"}
+	args := []any{version, hostname, platform, tm(now)}
+	if pollInterval > 0 {
+		sets = append(sets, "poll_interval=?")
+		args = append(args, pollInterval)
+	}
+	if tunnel {
+		sets = append(sets, "last_tunnel_at=?")
+		args = append(args, tm(now))
+	}
+	args = append(args, id)
+	q := `UPDATE instances SET ` + strings.Join(sets, ", ") + ` WHERE id=?`
+	if _, err := s.exec(ctx, q, args...); err != nil {
+		return fmt.Errorf("touch instance: %w", err)
+	}
+	return nil
+}
+
+// UpdateInstanceState is the narrow update used by refreshInstanceState so a
+// run report never rewrites the heartbeat timestamp.
+func (s *sqlstore) UpdateInstanceState(ctx context.Context, id, state, lastCommit string) error {
+	_, err := s.exec(ctx, `UPDATE instances SET state=?, last_commit=? WHERE id=?`, state, lastCommit, id)
+	if err != nil {
+		return fmt.Errorf("update instance state: %w", err)
 	}
 	return nil
 }

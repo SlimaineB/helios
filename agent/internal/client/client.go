@@ -181,6 +181,9 @@ type CheckinIn struct {
 	Version    string `json:"version"`
 	Hostname   string `json:"hostname"`
 	Platform   string `json:"platform"`
+	// PollInterval is the heartbeat period in seconds. The server uses it to
+	// detect a dead agent instead of waiting for a fixed, conservative timeout.
+	PollInterval int64 `json:"poll_interval,omitempty"`
 }
 
 // Health verifies the control plane (and its database) is reachable. The agent
@@ -204,17 +207,37 @@ func (c *Client) Health(ctx context.Context) error {
 	return nil
 }
 
+// ensureTunnel makes sure the bastion can reach the target sshd before a
+// runner client reports liveness: a dead tunnel must look offline.
+func (c *Client) ensureTunnel() error {
+	if c.tunnelAddr == "" {
+		return nil
+	}
+	conn, err := net.DialTimeout("tcp", c.tunnelAddr, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("reverse tunnel unreachable at %s: %w", c.tunnelAddr, err)
+	}
+	_ = conn.Close()
+	return nil
+}
+
 func (c *Client) Checkin(ctx context.Context, in CheckinIn) (CheckinOK, error) {
-	if c.tunnelAddr != "" {
-		conn, err := net.DialTimeout("tcp", c.tunnelAddr, 3*time.Second)
-		if err != nil {
-			return CheckinOK{}, fmt.Errorf("reverse tunnel unreachable at %s: %w", c.tunnelAddr, err)
-		}
-		_ = conn.Close()
+	if err := c.ensureTunnel(); err != nil {
+		return CheckinOK{}, err
 	}
 	var out CheckinOK
 	err := c.do(ctx, http.MethodPost, c.prefix+"/checkin", in, &out)
 	return out, err
+}
+
+// Heartbeat refreshes liveness without fetching applications or claiming
+// commands. It runs on its own goroutine so a long Ansible run cannot starve
+// the heartbeat.
+func (c *Client) Heartbeat(ctx context.Context, in CheckinIn) error {
+	if err := c.ensureTunnel(); err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, c.prefix+"/heartbeat", in, nil)
 }
 
 // RunnerInstance is one tunnel instance discovered by a runner.

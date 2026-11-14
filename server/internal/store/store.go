@@ -41,6 +41,11 @@ type Store interface {
 	GetInstanceByToken(ctx context.Context, tokenHash string) (model.Instance, error)
 	CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error)
 	UpdateInstance(ctx context.Context, in model.Instance) error
+	// TouchInstance updates only heartbeat metadata, so concurrent checkins and
+	// state refreshes cannot clobber each other's columns.
+	TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time, tunnel bool) error
+	// UpdateInstanceState updates the aggregated drift state only.
+	UpdateInstanceState(ctx context.Context, id, state, lastCommit string) error
 	DeleteInstance(ctx context.Context, id string) error
 	SetInstanceAutoHeal(ctx context.Context, id string, enabled bool) error
 

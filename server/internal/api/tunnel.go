@@ -57,19 +57,20 @@ func (s *Server) handleAgentTunnelHealth(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if body.Connected {
-		now := time.Now().UTC()
-		inst.LastSeen = now
-		inst.LastTunnelAt = now
+		hostname := inst.Hostname
 		if body.Hostname != "" {
-			inst.Hostname = body.Hostname
+			hostname = body.Hostname
 		}
+		platform := inst.Platform
 		if body.Platform != "" {
-			inst.Platform = body.Platform
+			platform = body.Platform
 		}
+		version := inst.Version
 		if body.Version != "" {
-			inst.Version = body.Version
+			version = body.Version
 		}
-		if err := s.store.UpdateInstance(r.Context(), inst); err != nil {
+		if err := s.store.TouchInstance(r.Context(), inst.ID, version, hostname, platform,
+			0, time.Now().UTC(), true); err != nil {
 			s.internalError(w, r, err)
 			return
 		}

@@ -502,7 +502,7 @@ label.row.small { font-size: 12px; }
 .state-badge.ok { color: #067a5e; background: var(--ok-soft); border-color: #b7ebdd; }
 .state-badge.drift { color: #8a5a00; background: var(--drift-soft); border-color: #f0d9a8; }
 .state-badge.failed, .state-badge.error { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
-.state-badge.unknown { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
+.state-badge.unknown, .state-badge.offline { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
 .state-badge.enabled { color: #067a5e; background: var(--ok-soft); border-color: #b7ebdd; }
 .state-badge.disabled { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
 
@@ -2125,7 +2125,7 @@ input:focus, select:focus, textarea:focus {
 .dot.ok { background: var(--ok); }
 .dot.drift { background: var(--drift); }
 .dot.error { background: var(--err); }
-.dot.unknown { background: var(--muted-2); }
+.dot.unknown, .dot.offline { background: var(--muted-2); }
 
 .world-map-page { display: flex; flex-direction: column; gap: 14px; }
 .wm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
@@ -2179,7 +2179,7 @@ input:focus, select:focus, textarea:focus {
 .wm-marker.ok { color: var(--ok); }
 .wm-marker.drift { color: var(--drift); }
 .wm-marker.error { color: var(--err); }
-.wm-marker.unknown { color: #9aa7b8; }
+.wm-marker.unknown, .wm-marker.offline { color: #9aa7b8; }
 .wm-marker.drift .wm-halo, .wm-marker.error .wm-halo { animation: wm-pulse 2.4s ease-in-out infinite; }
 @keyframes wm-pulse {
   0%, 100% { transform: scale(.65); opacity: .16; }
@@ -2208,7 +2208,7 @@ input:focus, select:focus, textarea:focus {
 .wm-legend .dot.ok { background: var(--ok); }
 .wm-legend .dot.drift { background: var(--drift); }
 .wm-legend .dot.error { background: var(--err); }
-.wm-legend .dot.unknown { background: #9aa7b8; }
+.wm-legend .dot.unknown, .wm-legend .dot.offline { background: #9aa7b8; }
 .wm-legend .ring { width: 9px; height: 9px; border-radius: 50%; border: 1.5px dashed #f3a5ad; }
 
 .wm-tooltip {
@@ -2229,7 +2229,7 @@ input:focus, select:focus, textarea:focus {
 .wm-tooltip-state.ok { color: #5fe0bd; }
 .wm-tooltip-state.drift { color: #f2c46a; }
 .wm-tooltip-state.error { color: #ff8f9b; }
-.wm-tooltip-state.unknown { color: #a9b7c8; }
+.wm-tooltip-state.unknown, .wm-tooltip-state.offline { color: #a9b7c8; }
 .wm-tooltip-row { font-size: 11px; color: #a9c1dd; }
 
 .wm-empty {
@@ -2260,7 +2260,9 @@ input:focus, select:focus, textarea:focus {
 .wm-badge.ok { color: #067a5e; background: var(--ok-soft); border-color: #b7ebdd; }
 .wm-badge.drift { color: #8a5a00; background: var(--drift-soft); border-color: #f0d9a8; }
 .wm-badge.error { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
-.wm-badge.unknown { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
+.wm-badge.unknown, .wm-badge.offline { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
+.wm-item-end { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.wm-off-slot { width: 13px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .wm-off { color: #b4232f; flex: none; }
 .wm-list-empty { padding: 10px; font-size: 12px; }
 .wm-hint { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
