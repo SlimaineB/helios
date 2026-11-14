@@ -11,7 +11,7 @@ const online = (inst) =>
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
 
-export default function InstancesCard({ instance, onAction, onHostAutoHeal, onDiff, onLogs, onVars }) {
+export default function InstancesCard({ instance, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars }) {
   const { can } = useAuth()
   const isOnline = online(instance)
   const apps = instance.apps.length ? instance.apps : [null]
@@ -152,15 +152,29 @@ export default function InstancesCard({ instance, onAction, onHostAutoHeal, onDi
                       </button>
                     ) : (
                       <>
-                        <label className="switch" title={ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
-                          <input
-                            type="checkbox"
-                            checked={app.autoheal}
-                            disabled={!can('instances', 'update') || ah.locked}
-                            onChange={() => onAction(instance.id, app.application.id, 'toggle-autoheal')}
-                          />
-                          <span className="slider" />
-                        </label>
+                        {ah.locked ? (
+                          <button
+                            type="button"
+                            className="btn small"
+                            disabled={ah.hostLocked ? !can('instances', 'update') : !can('applications', 'update')}
+                            title={ah.reason}
+                            onClick={() => (ah.hostLocked
+                              ? onHostAutoHeal?.(instance, true)
+                              : onAppAutoHeal?.(app.application.id))}
+                          >
+                            {ah.hostLocked ? 'Enable host' : 'Enable app'}
+                          </button>
+                        ) : (
+                          <label className="switch" title="Auto-apply on drift for this application on this host">
+                            <input
+                              type="checkbox"
+                              checked={app.autoheal}
+                              disabled={!can('instances', 'update')}
+                              onChange={() => onAction(instance.id, app.application.id, 'toggle-autoheal')}
+                            />
+                            <span className="slider" />
+                          </label>
+                        )}
                         <span className={`sub ${app.autoheal ? '' : 'muted'}`}>{ah.label}</span>
                       </>
                     )}

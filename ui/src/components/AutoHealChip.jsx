@@ -12,10 +12,10 @@ export function appAutoHealMeta(inst, app) {
     return { label: override ? 'on (host override)' : 'on', reason: '', locked: false }
   }
   if (!hostOn) {
-    return { label: 'off (host disabled)', reason: 'Host auto-apply is disabled', locked: true }
+    return { label: 'off (host disabled)', reason: 'Host auto-apply is disabled. Enable the host switch first.', locked: true, hostLocked: true }
   }
   if (!appOn) {
-    return { label: 'off (app disabled)', reason: 'Application auto-apply is disabled for all hosts', locked: true }
+    return { label: 'off (app disabled)', reason: 'Application auto-apply is disabled for all hosts. Enable it for the application to unlock this host.', locked: true, appLocked: true }
   }
   return { label: override ? 'off (host override)' : 'off', reason: '', locked: false }
 }

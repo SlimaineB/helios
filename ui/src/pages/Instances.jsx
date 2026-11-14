@@ -59,7 +59,7 @@ function appMatches(inst, app, { appFilter, stateFilter, q }) {
   return true
 }
 
-function InstancesTree({ instances, onAction, onHostAutoHeal, onDiff, onLogs, onVars, onUnassign, can, collapsed, toggle, pendingFor, appFilter, search, stateFilter }) {
+function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, onUnassign, can, collapsed, toggle, pendingFor, appFilter, search, stateFilter }) {
   const q = search.trim().toLowerCase()
   const appsFor = (inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))
 
@@ -258,15 +258,29 @@ function InstancesTree({ instances, onAction, onHostAutoHeal, onDiff, onLogs, on
                               </button>
                             ) : (
                               <>
-                                <label className="switch" title={ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
-                                  <input
-                                    type="checkbox"
-                                    checked={app.autoheal}
-                                    disabled={!can('instances', 'update') || ah.locked}
-                                    onChange={() => onAction(inst.id, app.application.id, 'toggle-autoheal')}
-                                  />
-                                  <span className="slider" />
-                                </label>
+                                {ah.locked ? (
+                                  <button
+                                    type="button"
+                                    className="btn small"
+                                    disabled={ah.hostLocked ? !can('instances', 'update') : !can('applications', 'update')}
+                                    title={ah.reason}
+                                    onClick={() => (ah.hostLocked
+                                      ? onHostAutoHeal(inst, true)
+                                      : onAppAutoHeal(app.application.id))}
+                                  >
+                                    {ah.hostLocked ? 'Enable host' : 'Enable app'}
+                                  </button>
+                                ) : (
+                                  <label className="switch" title="Auto-apply on drift for this application on this host">
+                                    <input
+                                      type="checkbox"
+                                      checked={app.autoheal}
+                                      disabled={!can('instances', 'update')}
+                                      onChange={() => onAction(inst.id, app.application.id, 'toggle-autoheal')}
+                                    />
+                                    <span className="slider" />
+                                  </label>
+                                )}
                                 <span className={`sub ${app.autoheal ? '' : 'muted'}`}>{ah.label}</span>
                               </>
                             )}
@@ -518,6 +532,16 @@ export default function Instances() {
     try {
       await api.setInstanceAutoHeal(inst.id, enabled)
       toast.success(enabled ? 'Host auto-apply enabled' : 'Host auto-apply disabled')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const enableAppAutoHeal = async (appId) => {
+    try {
+      await api.setAppAutoHeal(appId, true)
+      toast.success('Application auto-apply enabled')
       refresh()
     } catch (e) {
       toast.error(e.message)
@@ -846,6 +870,7 @@ export default function Instances() {
               instance={inst}
               onAction={act}
               onHostAutoHeal={toggleHostAutoHeal}
+              onAppAutoHeal={enableAppAutoHeal}
               onDiff={(runId) => setDiffModal(runId)}
               onLogs={(runId) => setRunModal({ runId, view: 'text' })}
               onVars={setVarsApp}
@@ -857,6 +882,7 @@ export default function Instances() {
           instances={pageItems}
           onAction={act}
           onHostAutoHeal={toggleHostAutoHeal}
+          onAppAutoHeal={enableAppAutoHeal}
           onDiff={(runId) => setDiffModal(runId)}
           onLogs={(runId) => setRunModal({ runId, view: 'text' })}
           onVars={setVarsApp}
