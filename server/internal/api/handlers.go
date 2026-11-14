@@ -1300,7 +1300,8 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		}
 		app.AutoHeal = effectiveAutoHeal(inst.AutoHeal, app, a)
 		// Rollback/pinned revision wins over the application branch. The agent
-		// stays unaware: it just sees a different target revision.
+		// receives it as the target revision and tells a commit SHA from a
+		// branch/tag so a pinned rollback can still clone and check out.
 		if a.TargetRevision != "" {
 			app.Branch = a.TargetRevision
 		}

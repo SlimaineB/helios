@@ -168,11 +168,17 @@ func (a *Agent) pass(ctx context.Context) {
 
 	a.repoCache = checkin.RepoCache
 	starts := time.Now()
-	a.processApps(ctx, checkin.Applications)
-	// Drop local state for apps no longer assigned before running commands so
-	// an old queued command cannot still apply a removed application.
+	// Register assignments and drop state for apps no longer assigned before
+	// anything runs, so an old queued command cannot apply a removed app.
+	for _, app := range checkin.Applications {
+		a.stateFor(app)
+	}
 	a.pruneStates(checkin.Applications)
+	// Commands are operator-initiated: run them before the periodic checks so a
+	// slow or unreachable repo cannot delay a "Check now"/"Apply now" by a full
+	// pass. Checks then use the commit the command just fetched.
 	a.processCommands(ctx, checkin.Commands)
+	a.processApps(ctx, checkin.Applications)
 	a.log.Info("pass complete", "apps", len(checkin.Applications), "commands", len(checkin.Commands),
 		"workers", a.maxConcurrent(), "took", time.Since(starts).Round(time.Millisecond).String())
 }
@@ -194,8 +200,14 @@ func (a *Agent) maxConcurrent() int {
 // host CPU (not the control plane) is the bottleneck.
 func (a *Agent) processApps(ctx context.Context, apps []client.Application) {
 	runPool(a.maxConcurrent(), apps, func(app client.Application) {
+		started := time.Now().UTC()
 		if err := a.processApp(ctx, app); err != nil {
 			a.log.Error("app processing failed", "app", app.Name, "error", err)
+			// Surface the failure to the control plane. Without this report the
+			// last successful check stays "ok" forever and a broken repo, pin
+			// or playbook path looks healthy while it silently stops syncing.
+			a.report(ctx, app, "check", ansible.Result{Status: ansible.StatusFailed, Err: err.Error()},
+				"", "", "poll", started, err)
 		}
 	})
 }
@@ -390,22 +402,28 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 		return fmt.Errorf("no assigned application for app_id %d", cmd.AppID)
 	}
 	app := st.app
+	started := time.Now().UTC()
 	repo := &gitops.Repo{Dir: st.RepoDir()}
 	_, after, msg, err := a.syncRepo(ctx, app, st)
 	if err != nil {
+		a.report(ctx, app, cmd.Action, ansible.Result{Status: ansible.StatusFailed, Err: err.Error()},
+			"", "", "command", started, err)
 		return err
 	}
 	playbook, err := repo.PlaybookPath(app.Path)
 	if err != nil {
+		a.report(ctx, app, cmd.Action, ansible.Result{Status: ansible.StatusFailed, Err: err.Error()},
+			after, msg, "command", started, err)
 		return err
 	}
-	started := time.Now().UTC()
 
 	var res ansible.Result
 	if cmd.Action == "apply" {
 		// Safety: refuse to deploy if the control plane went away after the
 		// command was claimed.
 		if err := a.client.Health(ctx); err != nil {
+			a.report(ctx, app, cmd.Action, ansible.Result{Status: ansible.StatusFailed, Err: err.Error()},
+				after, msg, "command", started, err)
 			return fmt.Errorf("control plane unreachable, refusing to apply: %w", err)
 		}
 		res, err = a.runner.Apply(ctx, repo, playbook, app.Vars)
@@ -436,6 +454,11 @@ func (a *Agent) report(ctx context.Context, app client.Application, mode string,
 		res.Status = ansible.StatusFailed
 		if res.Err == "" {
 			res.Err = runErr.Error()
+		}
+		// A sync/playbook failure has no Ansible stdout; make sure the operator
+		// still sees the reason instead of an empty "failed" run.
+		if res.OutputTail == "" {
+			res.OutputTail = res.Err
 		}
 	}
 	var changed []client.ChangedTask

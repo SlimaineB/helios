@@ -2,12 +2,14 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -179,5 +181,43 @@ func TestGroupCommandsPreservesPerAppOrder(t *testing.T) {
 	}
 	if got := len(groups[1]); got != 1 || groups[1][0].ID != 2 {
 		t.Fatalf("app 1 group = %+v, want ID [2]", groups[1])
+	}
+}
+
+func TestProcessAppsReportsFailedCheckWhenRepoSyncFails(t *testing.T) {
+	var got atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/checkin"):
+			_, _ = io.WriteString(w, `{"applications":[{"id":1,"name":"broken","repo_url":"file:///nonexistent-helios-test","branch":"main","path":"site.yml"}],"commands":[],"repo_cache":false}`)
+		case strings.HasSuffix(r.URL.Path, "/status"):
+			b, _ := io.ReadAll(r.Body)
+			got.Store(string(b))
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	a := testAgent(srv.URL)
+	a.cfg.StateDir = t.TempDir()
+	app := client.Application{ID: 1, Name: "broken", RepoURL: "file:///nonexistent-helios-test", Branch: "main", Path: "site.yml"}
+
+	a.processApps(context.Background(), []client.Application{app})
+
+	raw, _ := got.Load().(string)
+	if raw == "" {
+		t.Fatal("no status report was sent for the failed app")
+	}
+	var rep client.StatusReport
+	if err := json.Unmarshal([]byte(raw), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Status != "failed" || rep.Mode != "check" {
+		t.Fatalf("report = %s/%s, want failed/check", rep.Mode, rep.Status)
+	}
+	if !strings.Contains(rep.OutputTail, "git clone") {
+		t.Fatalf("output_tail = %q, want the git error", rep.OutputTail)
 	}
 }

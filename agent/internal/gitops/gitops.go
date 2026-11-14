@@ -19,9 +19,11 @@ type Repo struct {
 	Dir    string
 	URL    string
 	Target string // branch, tag, SHA or semver range
-	// fromTag marks Target as an already-resolved tag; cloned marks a mirror
-	// that was just created here (checkout refs differ from a fetch).
+	// fromTag marks Target as an already-resolved tag; fromSHA marks Target as
+	// a commit SHA (rollback pin). cloned marks a mirror that was just created
+	// here (checkout refs differ from a fetch).
 	fromTag bool
+	fromSHA bool
 	cloned  bool
 }
 
@@ -54,6 +56,8 @@ func OpenSync(ctx context.Context, dir, url, target string, c Creds) (before, af
 		}
 		r.Target = tag
 		r.fromTag = true
+	} else if isCommitSHA(target) {
+		r.fromSHA = true
 	}
 
 	before, _ = r.head(ctx)
@@ -169,9 +173,14 @@ func (r *Repo) clone(ctx context.Context, c Creds, env []string) error {
 	if err := os.MkdirAll(r.Dir, 0o755); err != nil {
 		return err
 	}
-	args := gitArgs(c.InsecureSkipVerify,
-		"git", "clone", "--no-single-branch", "--branch", r.Target, r.URL, r.Dir)
-	out, err := runGit(ctx, env, args...)
+	// A SHA is not a branch/tag: clone every branch (so the commit is
+	// reachable) and let checkout detach on the requested commit.
+	args := []string{"git", "clone", "--no-single-branch"}
+	if !r.fromSHA {
+		args = append(args, "--branch", r.Target)
+	}
+	args = append(args, r.URL, r.Dir)
+	out, err := runGit(ctx, env, gitArgs(c.InsecureSkipVerify, args...)...)
 	if err != nil {
 		return fmt.Errorf("git clone %s: %w: %s", r.URL, err, strings.TrimSpace(string(out)))
 	}
@@ -188,12 +197,17 @@ func (r *Repo) setOrigin(ctx context.Context, c Creds, env []string) error {
 
 func (r *Repo) fetch(ctx context.Context, c Creds, env []string) error {
 	var args []string
-	if r.fromTag {
+	switch {
+	case r.fromTag:
 		// Fetch the exact tag so refs/tags/<name> and its annotated object are
 		// materialized locally; dumb-HTTP servers expose it via info/refs.
 		args = gitArgs(c.InsecureSkipVerify,
 			"git", "-C", r.Dir, "fetch", "origin", "tag", r.Target)
-	} else {
+	case r.fromSHA:
+		// Fetch every branch: the pinned commit must be reachable, and servers
+		// commonly reject fetching an arbitrary SHA by name.
+		args = gitArgs(c.InsecureSkipVerify, "git", "-C", r.Dir, "fetch", "origin")
+	default:
 		args = gitArgs(c.InsecureSkipVerify, "git", "-C", r.Dir, "fetch", "origin", "--", r.Target)
 	}
 	out, err := runGit(ctx, env, args...)
@@ -209,6 +223,8 @@ func (r *Repo) fetch(ctx context.Context, c Creds, env []string) error {
 func (r *Repo) checkout(ctx context.Context, env []string) (string, error) {
 	ref := "FETCH_HEAD"
 	switch {
+	case r.fromSHA:
+		ref = r.Target
 	case r.fromTag:
 		ref = "refs/tags/" + r.Target
 	case r.cloned:
@@ -237,6 +253,25 @@ func runGit(ctx context.Context, env []string, args ...string) ([]byte, error) {
 	// CombinedOutput from blocking forever in that case.
 	cmd.WaitDelay = 10 * time.Second
 	return cmd.CombinedOutput()
+}
+
+// isCommitSHA reports whether s is a full or abbreviated commit SHA. Pinned
+// rollbacks arrive through the same envelope as branches, so callers must tell
+// them apart: a SHA cannot be passed to `git clone --branch`.
+func isCommitSHA(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Subject returns the one-line subject of a commit (powering the commit
