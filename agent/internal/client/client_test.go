@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestHealth(t *testing.T) {
@@ -69,5 +70,24 @@ func TestTunnelConfigAndHealth(t *testing.T) {
 		Connected: true, Hostname: "edge-01", Platform: "linux/amd64", Version: "0.1.1",
 	}); err != nil {
 		t.Fatalf("ReportTunnelHealth: %v", err)
+	}
+}
+
+func TestControlPlaneCallsAreBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "t", false)
+	c.requestTimeout = 20 * time.Millisecond
+
+	start := time.Now()
+	if err := c.ReportStatus(context.Background(), StatusReport{}); err == nil {
+		t.Fatal("expected timeout error from a hanging control-plane call")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("control-plane call took %v, want it bounded by requestTimeout", elapsed)
 	}
 }

@@ -33,6 +33,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(log)
 
 	path := *configPath
 	if path == defaultConfigPath {
@@ -74,7 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := ag.Run(ctx); err != nil {
+	if err := ag.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("agent stopped", "error", err)
 		os.Exit(1)
 	}

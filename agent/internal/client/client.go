@@ -14,23 +14,30 @@ import (
 	"time"
 )
 
+// controlPlaneTimeout bounds control-plane calls (checkin, status, command
+// results). Without it a blackholed hub could stall the agent loop for the
+// whole client timeout. Snapshot downloads keep the longer client timeout.
+const controlPlaneTimeout = 30 * time.Second
+
 // Client talks to the central server API on behalf of the agent or a runner.
 type Client struct {
-	base       string
-	token      string
-	prefix     string
-	tunnelAddr string
-	http       *http.Client
+	base           string
+	token          string
+	prefix         string
+	tunnelAddr     string
+	http           *http.Client
+	requestTimeout time.Duration
 }
 
 func New(base, token string, insecure bool) *Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig.InsecureSkipVerify = insecure // #nosec G402 — opt-in for private labs
 	return &Client{
-		base:   strings.TrimRight(base, "/"),
-		token:  token,
-		prefix: "/api/v1/agent",
-		http:   &http.Client{Transport: tr, Timeout: 10 * time.Minute},
+		base:           strings.TrimRight(base, "/"),
+		token:          token,
+		prefix:         "/api/v1/agent",
+		http:           &http.Client{Transport: tr, Timeout: 10 * time.Minute},
+		requestTimeout: controlPlaneTimeout,
 	}
 }
 
@@ -281,6 +288,11 @@ func (c *Client) ReportCommandResult(ctx context.Context, cmdID int64, r Command
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	if c.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+	}
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

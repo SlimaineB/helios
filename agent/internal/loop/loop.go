@@ -257,6 +257,14 @@ func runPool[T any](limit int, items []T, fn func(T)) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// A panic in one app/command must never take the whole agent down:
+			// systemd would restart it into the same crash. Recover, log, and
+			// let the other items and the next pass continue.
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("recovered panic in agent worker", "panic", r)
+				}
+			}()
 			fn(item)
 		}()
 	}

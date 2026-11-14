@@ -165,6 +165,20 @@ func TestRunPoolProcessesEveryItem(t *testing.T) {
 	}
 }
 
+func TestRunPoolRecoversPanics(t *testing.T) {
+	var processed int32
+	items := []int{1, 2, 3, 4}
+	runPool(1, items, func(i int) {
+		if i == 2 {
+			panic("boom")
+		}
+		atomic.AddInt32(&processed, 1)
+	})
+	if got := atomic.LoadInt32(&processed); got != 3 {
+		t.Fatalf("processed = %d, want 3 (panic must not stop the pool)", got)
+	}
+}
+
 func TestGroupCommandsPreservesPerAppOrder(t *testing.T) {
 	cmds := []client.Command{
 		{ID: 1, AppID: 2, Action: "apply"},
