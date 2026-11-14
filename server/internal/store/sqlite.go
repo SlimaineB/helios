@@ -16,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/slim/helios/server/internal/model"
+	"github.com/slim/helios/server/internal/secretbox"
 )
 
 const schema = `
@@ -392,11 +393,47 @@ CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 `
 
 type sqlstore struct {
-	db     *sql.DB
-	driver string // "sqlite" or "pgx"
+	db      *sql.DB
+	driver  string         // "sqlite" or "pgx"
+	secrets *secretbox.Box // nil = store secrets in plaintext (legacy/lab)
 
 	lockMu sync.Mutex
 	locks  map[string]*sync.Mutex
+}
+
+// Option configures Open.
+type Option func(*openConfig)
+
+type openConfig struct {
+	secretKey string
+}
+
+// WithSecretKey enables AES-GCM encryption of credentials and secret variables
+// at rest. Without it, values are stored in plaintext for backwards
+// compatibility.
+func WithSecretKey(key string) Option {
+	return func(c *openConfig) { c.secretKey = key }
+}
+
+// seal encrypts v when a key is configured; empty values pass through.
+func (s *sqlstore) seal(v string) (string, error) {
+	if s.secrets == nil || v == "" {
+		return v, nil
+	}
+	return s.secrets.Encrypt(v)
+}
+
+// unseal decrypts v when a key is configured. Plaintext legacy rows are
+// returned unchanged. If ciphertext is found but no key is configured, it fails
+// instead of silently returning unusable data.
+func (s *sqlstore) unseal(v string) (string, error) {
+	if s.secrets == nil {
+		if secretbox.IsEncrypted(v) {
+			return "", errors.New("encrypted value found but HELIOS_SECRET_KEY is not set")
+		}
+		return v, nil
+	}
+	return s.secrets.Decrypt(v)
 }
 
 // Kind returns a human label for the backend a dsn selects (SQLite vs Postgres),
@@ -409,9 +446,21 @@ func Kind(dsn string) string {
 }
 
 // Open opens a store from either a SQLite file path or a Postgres URL.
-func Open(dsn string) (Store, error) {
+func Open(dsn string, opts ...Option) (Store, error) {
+	cfg := openConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	var box *secretbox.Box
+	if cfg.secretKey != "" {
+		b, err := secretbox.New(cfg.secretKey)
+		if err != nil {
+			return nil, fmt.Errorf("secret key: %w", err)
+		}
+		box = b
+	}
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		return openPostgres(dsn)
+		return openPostgres(dsn, box)
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -424,7 +473,7 @@ func Open(dsn string) (Store, error) {
 	if err := migrate(db); err != nil {
 		return nil, err
 	}
-	return &sqlstore{db: db, driver: "sqlite", locks: map[string]*sync.Mutex{}}, nil
+	return &sqlstore{db: db, driver: "sqlite", secrets: box, locks: map[string]*sync.Mutex{}}, nil
 }
 
 // pgSchemaLockID serializes schema creation/migration across replicas that
@@ -432,7 +481,7 @@ func Open(dsn string) (Store, error) {
 // safe under concurrent creation and can fail with duplicate pg_type rows.
 const pgSchemaLockID int64 = 0x68656c696f73
 
-func openPostgres(dsn string) (Store, error) {
+func openPostgres(dsn string, box *secretbox.Box) (Store, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
@@ -442,7 +491,7 @@ func openPostgres(dsn string) (Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &sqlstore{db: db, driver: "pgx", locks: map[string]*sync.Mutex{}}, nil
+	return &sqlstore{db: db, driver: "pgx", secrets: box, locks: map[string]*sync.Mutex{}}, nil
 }
 
 func initPostgresSchema(db *sql.DB) error {
@@ -930,7 +979,7 @@ func (s *sqlstore) DeleteApplication(ctx context.Context, id int64) error {
 
 const repoCols = `id, name, url, username, password, ssh_key, insecure_skip_verify, created_at`
 
-func scanRepo(row interface{ Scan(...any) error }) (model.Repository, error) {
+func (s *sqlstore) scanRepo(row interface{ Scan(...any) error }) (model.Repository, error) {
 	var (
 		r       model.Repository
 		created string
@@ -939,6 +988,12 @@ func scanRepo(row interface{ Scan(...any) error }) (model.Repository, error) {
 	err := row.Scan(&r.ID, &r.Name, &r.URL, &r.Username, &r.Password, &r.SSHKey, &insecure, &created)
 	if err != nil {
 		return r, err
+	}
+	if r.Password, err = s.unseal(r.Password); err != nil {
+		return r, fmt.Errorf("decrypt repository password: %w", err)
+	}
+	if r.SSHKey, err = s.unseal(r.SSHKey); err != nil {
+		return r, fmt.Errorf("decrypt repository ssh key: %w", err)
 	}
 	r.InsecureSkipVerify = insecure != 0
 	r.CreatedAt = parseTime(created)
@@ -953,7 +1008,7 @@ func (s *sqlstore) ListRepositories(ctx context.Context) ([]model.Repository, er
 	defer rows.Close()
 	out := []model.Repository{}
 	for rows.Next() {
-		r, err := scanRepo(rows)
+		r, err := s.scanRepo(rows)
 		if err != nil {
 			return nil, wrap(err, "scan repo")
 		}
@@ -964,7 +1019,7 @@ func (s *sqlstore) ListRepositories(ctx context.Context) ([]model.Repository, er
 
 func (s *sqlstore) GetRepository(ctx context.Context, id int64) (model.Repository, error) {
 	row := s.queryRow(ctx, `SELECT `+repoCols+` FROM repositories WHERE id=?`, id)
-	r, err := scanRepo(row)
+	r, err := s.scanRepo(row)
 	if err != nil {
 		return r, wrap(err, "get repo")
 	}
@@ -973,7 +1028,7 @@ func (s *sqlstore) GetRepository(ctx context.Context, id int64) (model.Repositor
 
 func (s *sqlstore) GetRepositoryByURL(ctx context.Context, url string) (model.Repository, error) {
 	row := s.queryRow(ctx, `SELECT `+repoCols+` FROM repositories WHERE url=?`, url)
-	r, err := scanRepo(row)
+	r, err := s.scanRepo(row)
 	if err != nil {
 		return r, wrap(err, "get repo by url")
 	}
@@ -986,9 +1041,17 @@ func (s *sqlstore) CreateRepository(ctx context.Context, in model.Repository) (m
 	if in.InsecureSkipVerify {
 		insecure = 1
 	}
+	password, err := s.seal(in.Password)
+	if err != nil {
+		return in, fmt.Errorf("encrypt repository password: %w", err)
+	}
+	sshKey, err := s.seal(in.SSHKey)
+	if err != nil {
+		return in, fmt.Errorf("encrypt repository ssh key: %w", err)
+	}
 	id, err := s.insertID(ctx,
 		`INSERT INTO repositories (name, url, username, password, ssh_key, insecure_skip_verify, created_at) VALUES (?,?,?,?,?,?,?)`,
-		in.Name, in.URL, in.Username, in.Password, in.SSHKey, insecure, tm(in.CreatedAt))
+		in.Name, in.URL, in.Username, password, sshKey, insecure, tm(in.CreatedAt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return in, ErrConflict
@@ -1004,9 +1067,17 @@ func (s *sqlstore) UpdateRepository(ctx context.Context, in model.Repository) er
 	if in.InsecureSkipVerify {
 		insecure = 1
 	}
-	_, err := s.exec(ctx,
+	password, err := s.seal(in.Password)
+	if err != nil {
+		return fmt.Errorf("encrypt repository password: %w", err)
+	}
+	sshKey, err := s.seal(in.SSHKey)
+	if err != nil {
+		return fmt.Errorf("encrypt repository ssh key: %w", err)
+	}
+	_, err = s.exec(ctx,
 		`UPDATE repositories SET name=?, url=?, username=?, password=?, ssh_key=?, insecure_skip_verify=? WHERE id=?`,
-		in.Name, in.URL, in.Username, in.Password, in.SSHKey, insecure, in.ID)
+		in.Name, in.URL, in.Username, password, sshKey, insecure, in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrConflict
@@ -1282,6 +1353,11 @@ func (s *sqlstore) listVariables(ctx context.Context, q string, args ...any) ([]
 			return nil, wrap(err, "scan variable")
 		}
 		v.IsSecret = flag != 0
+		if v.IsSecret {
+			if v.Value, err = s.unseal(v.Value); err != nil {
+				return nil, wrap(err, "decrypt variable")
+			}
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -1299,9 +1375,16 @@ func (s *sqlstore) replaceVariables(ctx context.Context, vars []model.Variable, 
 		return err
 	}
 	for _, v := range vars {
+		value := v.Value
+		if v.IsSecret {
+			var err error
+			if value, err = s.seal(value); err != nil {
+				return fmt.Errorf("encrypt variable %q: %w", v.Key, err)
+			}
+		}
 		args := make([]any, 0, len(scope)+3)
 		args = append(args, scope...)
-		args = append(args, v.Key, v.Value, boolInt(v.IsSecret))
+		args = append(args, v.Key, value, boolInt(v.IsSecret))
 		if _, err := tx.ExecContext(ctx, s.rebind(ins), args...); err != nil {
 			return err
 		}

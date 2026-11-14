@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +63,9 @@ func (p *principal) label() string {
 // session) and enforce the RBAC operation "resource.action".
 func (s *Server) op(operation string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.authBlocked(w, r) {
+			return
+		}
 		pr, ok := s.resolvePrincipal(r)
 		if !ok {
 			// No WWW-Authenticate header on purpose: it would raise the
@@ -81,7 +86,7 @@ func (s *Server) op(operation string, next http.HandlerFunc) http.HandlerFunc {
 				Method:   r.Method,
 				Path:     r.URL.Path,
 				Status:   sw.status,
-				RemoteIP: remoteIP(r),
+				RemoteIP: s.remoteIP(r),
 			}
 			go func() {
 				if err := s.store.AppendAudit(context.Background(), entry); err != nil {
@@ -110,7 +115,18 @@ func mutating(method string) bool {
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
 }
 
-func remoteIP(r *http.Request) string {
+func (s *Server) remoteIP(r *http.Request) string {
+	if s.trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			first, _, _ := strings.Cut(xff, ",")
+			if ip := strings.TrimSpace(first); ip != "" {
+				return ip
+			}
+		}
+		if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+			return ip
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -130,6 +146,7 @@ func (s *Server) resolvePrincipal(r *http.Request) (*principal, bool) {
 	if oa.Sessions != nil {
 		if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
 			if sess, ok := oa.Sessions.Get(r.Context(), c.Value); ok {
+				s.authSuccess(r)
 				roles := []string(nil)
 				if oa.RBAC != nil {
 					roles = oa.RBAC.RolesForGroups(sess.Groups)
@@ -142,14 +159,41 @@ func (s *Server) resolvePrincipal(r *http.Request) (*principal, bool) {
 		}
 	}
 	if oa.Basic != nil && oa.Basic(r.Header.Get("Authorization")) {
+		s.authSuccess(r)
 		name := oa.BasicUser
 		if name == "" {
 			name = "admin"
 		}
 		return &principal{Name: name, Roles: []string{"role:admin"}}, true
 	}
+	// Only count an actual credential attempt (a Basic header), not anonymous
+	// requests that simply lack authentication.
+	if oa.Basic != nil && r.Header.Get("Authorization") != "" {
+		s.authFailure(r)
+	}
 	return nil, false
 }
+
+// authBlocked answers 429 when the client has too many recent failures.
+func (s *Server) authBlocked(w http.ResponseWriter, r *http.Request) bool {
+	if s.authLimiter == nil {
+		return false
+	}
+	ip := s.remoteIP(r)
+	if s.authLimiter.Allow(ip) {
+		return false
+	}
+	secs := int(math.Ceil(s.authLimiter.RetryAfter(ip).Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeErr(w, http.StatusTooManyRequests, "too many authentication failures; retry later")
+	return true
+}
+
+func (s *Server) authFailure(r *http.Request) { s.authLimiter.Fail(s.remoteIP(r)) }
+func (s *Server) authSuccess(r *http.Request) { s.authLimiter.Reset(s.remoteIP(r)) }
 
 // handleRealm reports the auth surface for the UI (is there an SSO login?).
 func (s *Server) handleRealm(w http.ResponseWriter, r *http.Request) {
@@ -186,23 +230,30 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "OIDC login is not configured")
 		return
 	}
+	if s.authBlocked(w, r) {
+		return
+	}
 	code, state := r.URL.Query().Get("code"), r.URL.Query().Get("state")
 	c, err := r.Cookie(stateCookie)
 	if err != nil || state == "" || code == "" {
+		s.authFailure(r)
 		writeErr(w, http.StatusBadRequest, "missing oauth state or code")
 		return
 	}
 	sts := strings.SplitN(c.Value, ".", 3)
 	if len(sts) != 3 || sts[0] != state {
+		s.authFailure(r)
 		writeErr(w, http.StatusBadRequest, "oauth state mismatch")
 		return
 	}
 	pr, err := s.opAuth.OIDC.Exchange(r.Context(), code, sts[1], sts[2])
 	if err != nil {
+		s.authFailure(r)
 		s.log.Warn("oidc token exchange failed", "error", err)
 		writeErr(w, http.StatusBadRequest, "oidc login failed")
 		return
 	}
+	s.authSuccess(r)
 	tok, err := s.opAuth.Sessions.Create(r.Context(), pr.Sub, pr.Email, pr.Name, pr.Groups, nil)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -226,6 +277,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleMe reports the current operator identity + effective permissions.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	if s.authBlocked(w, r) {
+		return
+	}
 	pr, ok := s.resolvePrincipal(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "authentication required")

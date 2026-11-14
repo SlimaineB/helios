@@ -45,6 +45,7 @@ func main() {
 		repoCacheMax  = flag.Int64("repo-cache-max-mb", envInt64("HELIOS_REPO_CACHE_MAX_MB", 2048), "repo snapshot cache size cap in MiB (0 disables)")
 		repoResolve   = flag.Duration("repo-cache-resolve-ttl", envDuration("HELIOS_REPO_CACHE_RESOLVE_TTL", 30*time.Second), "reuse a branch resolution for this long (0 = fetch every request)")
 		sessTTL       = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
+		secretKey     = flag.String("secret-key", envutil.Get("HELIOS_SECRET_KEY"), "key for encrypting stored secrets at rest (32-byte hex/base64 or passphrase; empty = plaintext)")
 	)
 	flag.Parse()
 	tunnelPortMin := envInt("HELIOS_TUNNEL_PORT_MIN", 22000)
@@ -57,7 +58,13 @@ func main() {
 	log := slog.Default()
 	log.Info("helios server starting", "addr", *addr, "db", store.Kind(*dbPath))
 
-	st, err := store.Open(*dbPath)
+	if *secretKey == "" {
+		log.Warn("HELIOS_SECRET_KEY is not set: repository credentials and secret variables are stored in plaintext")
+	} else {
+		log.Info("encryption of stored secrets enabled")
+	}
+
+	st, err := store.Open(*dbPath, store.WithSecretKey(*secretKey))
 	if err != nil {
 		log.Error("failed to open store", "error", err)
 		os.Exit(1)

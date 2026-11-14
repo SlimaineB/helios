@@ -33,6 +33,7 @@ REPO_CACHE_DIR="${HELIOS_REPO_CACHE_DIR:-}"
 REPO_CACHE_TTL="${HELIOS_REPO_CACHE_TTL:-168h}"
 REPO_CACHE_MAX_MB="${HELIOS_REPO_CACHE_MAX_MB:-2048}"
 REPO_CACHE_RESOLVE_TTL="${HELIOS_REPO_CACHE_RESOLVE_TTL:-30s}"
+SECRET_KEY="${HELIOS_SECRET_KEY:-}"
 
 usage() {
     cat <<'EOF'
@@ -58,6 +59,7 @@ Usage: install-server.sh --binary PATH --ui DIR --operator-password SECRET [opti
   --repo-cache-ttl DUR     delete snapshots older than DUR (default: 168h)
   --repo-cache-max-mb N    snapshot cache size cap in MiB (default: 2048)
   --repo-cache-resolve-ttl DUR  branch resolution reuse (default: 30s)
+  --secret-key KEY         encrypt stored secrets at rest (or HELIOS_SECRET_KEY)
 EOF
     exit 1
 }
@@ -85,6 +87,7 @@ $2"; shift 2 ;;
         --repo-cache-ttl) REPO_CACHE_TTL=$2; shift 2 ;;
         --repo-cache-max-mb) REPO_CACHE_MAX_MB=$2; shift 2 ;;
         --repo-cache-resolve-ttl) REPO_CACHE_RESOLVE_TTL=$2; shift 2 ;;
+        --secret-key) SECRET_KEY=$2; shift 2 ;;
         *) echo "unknown option: $1" >&2; usage ;;
     esac
 done
@@ -107,6 +110,13 @@ case "$OP_PASS" in
 esac
 if [ ${#OP_PASS} -lt 12 ]; then
     echo "warning: operator password is shorter than 12 characters" >&2
+fi
+case "$SECRET_KEY" in
+    *'
+'*) echo "secret key must not contain a newline" >&2; exit 1 ;;
+esac
+if [ -z "$SECRET_KEY" ]; then
+    echo "warning: no --secret-key/HELIOS_SECRET_KEY set; stored secrets will be plaintext" >&2
 fi
 if [ -n "$TLS_CERT" ] || [ -n "$TLS_KEY" ]; then
     if [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
@@ -173,6 +183,7 @@ umask 077
     printf 'HELIOS_OPERATOR_USER=%s\n' "$OP_USER"
     printf 'HELIOS_OPERATOR_PASSWORD=%s\n' "$OP_PASS"
     printf 'HELIOS_BASE_URL=%s\n' "$BASE_URL"
+    if [ -n "$SECRET_KEY" ]; then printf 'HELIOS_SECRET_KEY=%s\n' "$SECRET_KEY"; fi
     if [ -n "$DB" ]; then printf 'HELIOS_DB=%s\n' "$DB"; fi
     if [ -n "$RBAC_ENV" ]; then printf 'HELIOS_RBAC_FILE=%s\n' "$RBAC_ENV"; fi
     if [ -n "$TLS_CERT_ENV" ]; then printf 'HELIOS_TLS_CERT=%s\n' "$TLS_CERT_ENV"; fi

@@ -20,6 +20,7 @@ import (
 	"github.com/slim/helios/server/internal/metrics"
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
+	"github.com/slim/helios/server/internal/ratelimit"
 	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/repocache"
 	"github.com/slim/helios/server/internal/store"
@@ -48,11 +49,16 @@ type Server struct {
 	tunnelPortMin   int
 	tunnelPortMax   int
 	repoCache       *repocache.Cache
-	bgCtx           context.Context
-	bgCancel        context.CancelFunc
-	bgMu            sync.Mutex
-	bgClosed        bool
-	bgWG            sync.WaitGroup
+	authLimiter     *ratelimit.Limiter
+	// trustProxy makes the server derive client IPs from X-Forwarded-For /
+	// X-Real-IP. Only enable it when a trusted reverse proxy always overwrites
+	// those headers, otherwise they can be spoofed to dodge rate limits.
+	trustProxy bool
+	bgCtx      context.Context
+	bgCancel   context.CancelFunc
+	bgMu       sync.Mutex
+	bgClosed   bool
+	bgWG       sync.WaitGroup
 }
 
 // SetNotifier enables webhook notifications (nil disables them).
@@ -124,8 +130,37 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 			s.maxHealStreak = n
 		}
 	}
+	s.authLimiter = ratelimit.New(authRateLimit(), authRateWindow())
+	v := envutil.Get("HELIOS_TRUST_PROXY")
+	s.trustProxy = boolStr(v) || v == "1"
 	s.routes()
 	return s
+}
+
+// authRateLimit returns the failed-auth attempts allowed per window and per
+// client IP. Zero disables throttling.
+func authRateLimit() int {
+	v := envutil.Get("HELIOS_AUTH_RATE_LIMIT")
+	if v == "" {
+		return 10
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 10
+	}
+	return n
+}
+
+func authRateWindow() time.Duration {
+	v := envutil.Get("HELIOS_AUTH_RATE_WINDOW")
+	if v == "" {
+		return time.Minute
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	return d
 }
 
 // maxRequestBody bounds every request body: agent checkins carry run logs and

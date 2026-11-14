@@ -28,6 +28,26 @@ SHA-256 hash of the browser token is stored. Login, logout and validation work
 on any server replica without sticky sessions; see
 [High availability](HA.md).
 
+## Brute-force protection
+
+Failed Basic and OIDC callback attempts are counted per client IP. After
+`HELIOS_AUTH_RATE_LIMIT` failures (default `10`) within
+`HELIOS_AUTH_RATE_WINDOW` (default `1m`), further authentication attempts from
+that IP return `429` with a `Retry-After` header until the window resets. A
+successful login clears the counter. Set `HELIOS_AUTH_RATE_LIMIT=0` to disable
+throttling.
+
+Counters are in-process: with several replicas each replica enforces its own
+limit, so an attacker gets at most `replicas × limit` attempts per window. Keep
+the hub behind a reverse proxy/load balancer that also rate-limits if you are
+exposed to the internet.
+
+When the hub sits behind a reverse proxy, set `HELIOS_TRUST_PROXY=1` so the
+per-IP limit and the audit log use the client address from `X-Forwarded-For` /
+`X-Real-IP` instead of the proxy's address. Only enable this when the proxy
+always overwrites those headers: otherwise a client can spoof them and evade
+the limit.
+
 ## Authorization
 
 `-rbac` / `HELIOS_RBAC_FILE` points to a YAML file of `p` (policy) and

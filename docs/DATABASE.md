@@ -407,15 +407,21 @@ their history is never cascaded away.
 ## Secrets and backups
 
 - Agent bootstrap tokens are not stored; only `instances.token_hash` is kept.
-- Repository `password` and `ssh_key` values are stored in plaintext. Config
-  repositories do not store credentials themselves; they reuse the matching
-  `repositories` row.
+- Repository `password` and `ssh_key` values, and `variables.value` /
+  `assignment_variables.value` rows with `is_secret = 1`, are encrypted with
+  **AES-256-GCM** when `HELIOS_SECRET_KEY` (or `-secret-key`) is set. Ciphertext
+  is prefixed with `enc:v1:`; the operator API still redacts secrets.
+  Config repositories do not store credentials themselves; they reuse the
+  matching `repositories` row.
+- **Without `HELIOS_SECRET_KEY`, secrets are stored in plaintext** (legacy/lab
+  behaviour) and the server logs a warning at startup. Existing plaintext rows
+  remain readable after you enable the key; new writes are encrypted. Changing
+  the key makes previously encrypted values unreadable, so back it up with the
+  database. Values are decrypted in memory and sent to agents over the network,
+  so keep the hub-to-agent link on a trusted network or TLS.
 - Operator session tokens are not stored; only their SHA-256 hashes are kept.
-- `variables.value` and `assignment_variables.value` are stored in plaintext,
-  including rows with `is_secret = 1`. The operator API redacts secret values,
-  but the database and backups do not encrypt them.
 - Protect the SQLite file or PostgreSQL credentials, and use filesystem/volume
-  or database encryption for production.
+  or database encryption for production in addition to the secret key.
 - Back up SQLite as a whole database file (stop the server or use a consistent
   snapshot), and PostgreSQL with `pg_dump`. See
   [Install](INSTALL.md#backup-upgrade-rollback) for Compose commands.

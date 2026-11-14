@@ -126,6 +126,10 @@ runs its SQLite/Postgres migrations automatically at startup.
 | `HELIOS_BASE_URL` | `http://localhost:8080` | Public URL (OIDC, secure cookies) |
 | `HELIOS_OPERATOR_USER` | `admin` | Local break-glass user |
 | `HELIOS_OPERATOR_PASSWORD` | **required** | Local password; choose a strong one |
+| `HELIOS_SECRET_KEY` | empty (plaintext) | Key for encrypting stored secrets; set a long random value in production |
+| `HELIOS_AUTH_RATE_LIMIT` | `10` | Failed auth attempts allowed per IP per window (`0` disables) |
+| `HELIOS_AUTH_RATE_WINDOW` | `1m` | Window for the auth failure counter |
+| `HELIOS_TRUST_PROXY` | empty | Set to `1` behind a trusted reverse proxy to use forwarded client IPs |
 | `HELIOS_IMAGE` | `ghcr.io/slimaineb/helios-server:latest` | Release image (override to pin a version) |
 | `HELIOS_POSTGRES_PASSWORD` | required with the overlay | Postgres password |
 | `HELIOS_REPO_CACHE_TTL` | `168h` | Snapshot age cap (`0` disables) |
@@ -192,6 +196,7 @@ Useful flags:
 --db postgres://user:pass@db/... use PostgreSQL instead of SQLite
 --operator-user admin            local user
 --operator-password <secret>     required (or HELIOS_OPERATOR_PASSWORD)
+--secret-key <key>               encrypt stored secrets at rest (or HELIOS_SECRET_KEY)
 --base-url https://hub.example.com
 --rbac /path/policies.yaml       copy an RBAC file to /etc/helios/rbac.yaml
 --tls-cert /path/fullchain.pem   serve HTTPS directly
