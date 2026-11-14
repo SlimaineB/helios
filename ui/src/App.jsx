@@ -8,6 +8,7 @@ import SyncWindows from './pages/SyncWindows.jsx'
 import Audit from './pages/Audit.jsx'
 import Projects from './pages/Projects.jsx'
 import ConfigRepos from './pages/ConfigRepos.jsx'
+import WorldMap from './pages/WorldMap.jsx'
 import { api, setBasic, clearBasic } from './api/client.js'
 import ToastContainer from './components/Toast.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
@@ -133,6 +134,7 @@ export default function App() {
                 <Route path="/" element={<Applications />} />
                 <Route path="/instances" element={<Instances />} />
                 <Route path="/instances/:id" element={<InstanceDetail />} />
+                <Route path="/map" element={<WorldMap />} />
                 <Route path="/topology" element={<Navigate to="/" replace />} />
                 <Route path="/applications" element={<Navigate to="/" replace />} />
                 <Route path="/projects" element={<Projects />} />
