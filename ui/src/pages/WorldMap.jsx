@@ -239,16 +239,21 @@ export default function WorldMap() {
     return { k, x: Math.min(0, Math.max(minX, v.x)), y: Math.min(0, Math.max(minY, v.y)) }
   }
 
-  const zoomBy = (factor, px = W / 2, py = H / 2) => {
+  const zoomBy = (factor, px, py) => {
     setView((v) => {
       const k = Math.min(8, Math.max(1, v.k * factor))
+      if (px == null || py == null) {
+        // Zoom around the current viewport centre.
+        const wx = (W / 2 - v.x) / v.k
+        const wy = (H / 2 - v.y) / v.k
+        return clampView({ k, x: W / 2 - wx * k, y: H / 2 - wy * k })
+      }
       return clampView({ k, x: px - (px - v.x) * (k / v.k), y: py - (py - v.y) * (k / v.k) })
     })
   }
 
   const onPointerDown = (e) => {
     drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
-    e.currentTarget.setPointerCapture?.(e.pointerId)
   }
   const onPointerMove = (e) => {
     if (!drag.current) return
@@ -260,11 +265,15 @@ export default function WorldMap() {
   const onPointerUp = () => { drag.current = null }
 
   const focusInstance = (inst) => {
-    const loc = detectLocation(inst)
     setSelected(inst.id)
+    const marker = located.find((m) => m.inst.id === inst.id)
+    const loc = marker?.loc || detectLocation(inst)
     if (!loc) return
-    const [cx, cy] = project([loc.lon, loc.lat])
-    setView((v) => clampView({ k: Math.max(v.k, 2.4), x: W / 2 - cx * Math.max(v.k, 2.4), y: H / 2 - cy * Math.max(v.k, 2.4) }))
+    const [cx, cy] = project(marker ? [marker.lon, marker.lat] : [loc.lon, loc.lat])
+    setView((v) => {
+      const k = Math.max(v.k, 2.4)
+      return clampView({ k, x: W / 2 - cx * k, y: H / 2 - cy * k })
+    })
   }
 
   const reset = () => { setView({ k: 1, x: 0, y: 0 }); setSelected(null) }
@@ -370,6 +379,7 @@ export default function WorldMap() {
                     key={m.inst.id}
                     className={`wm-marker ${st}${isSel ? ' selected' : ''}`}
                     transform={`translate(${sx} ${sy})`}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onMouseEnter={() => setHover({ inst: m.inst, sx, sy, loc: m.loc })}
                     onMouseLeave={() => setHover(null)}
                     onClick={(e) => { e.stopPropagation(); focusInstance(m.inst) }}
