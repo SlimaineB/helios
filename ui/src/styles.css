@@ -423,6 +423,24 @@ label.row.small { font-size: 12px; }
 .badge.tunnel { color: var(--accent); background: var(--accent-soft); border-color: #c7d7fe; }
 .badge.agent { color: var(--muted); background: var(--panel-2); border-color: var(--border); }
 
+/* auto-apply state chips (host / application / override) */
+.autoheal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.autoheal-chip.small { font-size: 10.5px; padding: 1px 7px; }
+.autoheal-chip.on { color: #067a5e; background: var(--ok-soft); border-color: #b7ebdd; }
+.autoheal-chip.off { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
+.host-actions { display: inline-flex; align-items: center; gap: 8px; }
+.host-autoheal-card .card-head { gap: 10px; }
+
 /* ---------------------------------------------------------- tunnel diagram */
 
 .tunnel-diagram {

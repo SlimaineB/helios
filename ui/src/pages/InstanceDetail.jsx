@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
+import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import StatusIcon from '../components/StatusIcon.jsx'
 import LogsModal from '../components/LogsModal.jsx'
 import DiffModal from '../components/DiffModal.jsx'
@@ -91,6 +92,16 @@ export default function InstanceDetail() {
     try {
       await api.setAutoHeal(id, app.application.id, !app.autoheal)
       toast.success('Auto-apply updated')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const toggleHostAutoHeal = async (enabled) => {
+    try {
+      await api.setInstanceAutoHeal(id, enabled)
+      toast.success(enabled ? 'Host auto-apply enabled' : 'Host auto-apply disabled')
       refresh()
     } catch (e) {
       toast.error(e.message)
@@ -197,6 +208,31 @@ export default function InstanceDetail() {
         <div><b>Last seen</b> {inst.last_seen ? new Date(inst.last_seen).toLocaleString() : 'never'}</div>
       </div>
 
+      <div className="card host-autoheal-card">
+        <div className="card-head">
+          <strong>Host auto-apply</strong>
+          <AutoHealChip
+            enabled={hostAutoHealOn(inst)}
+            scope="host"
+            reason={hostAutoHealOn(inst)
+              ? 'Every application on this host may apply drift automatically'
+              : 'Drift is still detected but nothing is applied automatically on this host'}
+          />
+          <label className="switch" title={hostAutoHealOn(inst) ? 'Turn off auto-apply for every app on this host' : 'Turn on auto-apply for this host'}>
+            <input
+              type="checkbox"
+              checked={hostAutoHealOn(inst)}
+              disabled={!can('instances', 'update')}
+              onChange={() => toggleHostAutoHeal(!hostAutoHealOn(inst))}
+            />
+            <span className="slider" />
+          </label>
+          <span className="sub muted">
+            Master switch for this host. Per-application switches below still apply (most restrictive wins).
+          </span>
+        </div>
+      </div>
+
       {isTunnel && (
         <div className="card">
           <div className="card-head">
@@ -223,6 +259,7 @@ export default function InstanceDetail() {
       {inst.apps.length === 0 && <SkeletonEmpty lines={2} />}
       {inst.apps.map((a) => {
         const pending = commands.pending[`${inst.id}:${a.application.id}`]
+        const ah = appAutoHealMeta(inst, a)
         return (
         <div className="card" key={a.application.id}>
           <div className="card-head">
@@ -234,11 +271,11 @@ export default function InstanceDetail() {
             {a.stuck ? (
               <button className="small warn" title="Resume auto-apply once the playbook is fixed" disabled={!can('instances', 'update')} onClick={() => rearm(a)}>Resume auto-apply</button>
             ) : (
-              <label className="switch" title="Auto-apply on drift">
-                <input type="checkbox" checked={a.autoheal} disabled={!can('instances', 'update')} onChange={() => toggleAutoHeal(a)} /><span className="slider" />
+              <label className="switch" title={ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
+                <input type="checkbox" checked={a.autoheal} disabled={!can('instances', 'update') || ah.locked} onChange={() => toggleAutoHeal(a)} /><span className="slider" />
               </label>
             )}
-            <span className="sub">{a.autoheal ? (a.autoheal_set ? 'auto-apply on (host override)' : 'auto-apply on') : 'auto-apply off'}</span>
+            <span className="sub">{ah.label}</span>
             {a.target_revision && (
               <>
                 <Badge state="pinned" label={`pinned @${a.target_revision.slice(0, 9)}`} small />

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS instances (
   execution_mode TEXT NOT NULL DEFAULT 'agent',
   tunnel_port INTEGER NOT NULL DEFAULT 0,
   last_tunnel_at TEXT NOT NULL DEFAULT '',
+  autoheal    INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 
@@ -220,6 +221,7 @@ CREATE TABLE IF NOT EXISTS instances (
   execution_mode TEXT NOT NULL DEFAULT 'agent',
   tunnel_port INTEGER NOT NULL DEFAULT 0,
   last_tunnel_at TEXT NOT NULL DEFAULT '',
+  autoheal    INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 
@@ -478,6 +480,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'agent'`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tunnel_port INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS autoheal INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
@@ -616,6 +619,7 @@ func migrate(db *sql.DB) error {
 		{"instances", "execution_mode", "ALTER TABLE instances ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent'"},
 		{"instances", "tunnel_port", "ALTER TABLE instances ADD COLUMN tunnel_port INTEGER NOT NULL DEFAULT 0"},
 		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
+		{"instances", "autoheal", "ALTER TABLE instances ADD COLUMN autoheal INTEGER NOT NULL DEFAULT 1"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
@@ -683,21 +687,23 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, execution_mode, tunnel_port, last_tunnel_at, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, execution_mode, tunnel_port, last_tunnel_at, autoheal, created_at`
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
 		inst                          model.Instance
 		lastSeen, lastTunnel, created string
+		autoheal                      int
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
 		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project,
-		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &created)
+		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &created)
 	if err != nil {
 		return inst, err
 	}
 	inst.LastSeen = parseTime(lastSeen)
 	inst.LastTunnelAt = parseTime(lastTunnel)
+	inst.AutoHeal = autoheal != 0
 	inst.CreatedAt = parseTime(created)
 	return inst, nil
 }
@@ -774,8 +780,8 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 		in.ExecutionMode = model.ModeAgent
 	}
 	res, err := s.exec(ctx,
-		`INSERT INTO instances (id, name, token_hash, state, project, execution_mode, tunnel_port, created_at) VALUES (?,?,?,?,?,?,?,?)`,
-		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.ExecutionMode, in.TunnelPort, tm(in.CreatedAt))
+		`INSERT INTO instances (id, name, token_hash, state, project, execution_mode, tunnel_port, autoheal, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.ExecutionMode, in.TunnelPort, 1, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create instance: %w", err)
 	}
@@ -792,6 +798,17 @@ func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error 
 		return fmt.Errorf("update instance: %w", err)
 	}
 	return nil
+}
+
+// SetInstanceAutoHeal toggles the host-level auto-apply switch. It does not
+// touch per-assignment overrides, which still apply when the host is enabled.
+func (s *sqlstore) SetInstanceAutoHeal(ctx context.Context, id string, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := s.exec(ctx, `UPDATE instances SET autoheal=? WHERE id=?`, v, id)
+	return err
 }
 
 func (s *sqlstore) DeleteInstance(ctx context.Context, id string) error {

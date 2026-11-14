@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronDown, ChevronRight, LayoutGrid, List, Network } from 'lucide-react'
 import { api, stateLabel, DEFAULT_PROJECT, projectForApi, projectLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
+import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import LogsModal from '../components/LogsModal.jsx'
 import DiffModal from '../components/DiffModal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
@@ -58,7 +59,7 @@ function appMatches(inst, app, { appFilter, stateFilter, q }) {
   return true
 }
 
-function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign, can, collapsed, toggle, pendingFor, appFilter, search, stateFilter }) {
+function InstancesTree({ instances, onAction, onHostAutoHeal, onDiff, onLogs, onVars, onUnassign, can, collapsed, toggle, pendingFor, appFilter, search, stateFilter }) {
   const q = search.trim().toLowerCase()
   const appsFor = (inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))
 
@@ -143,6 +144,9 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                             label={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
                             small
                           />
+                          {!hostAutoHealOn(inst) && (
+                            <AutoHealChip enabled={false} scope="host" reason="No application on this host is applied automatically" />
+                          )}
                           <span className="cell-sub">
                             <CopyButton value={String(inst.id)} size="small" title="Copy instance ID" />
                             <span className="mono">{inst.id}</span>
@@ -161,13 +165,30 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                         </span>
                       </td>
                       <td>
-                        <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
+                        <div className="host-actions">
+                          <label
+                            className="switch"
+                            title={hostAutoHealOn(inst)
+                              ? 'Host auto-apply enabled — turn off to pause every app on this host'
+                              : 'Host auto-apply disabled — turn on to resume'}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={hostAutoHealOn(inst)}
+                              disabled={!can('instances', 'update')}
+                              onChange={() => onHostAutoHeal(inst, !hostAutoHealOn(inst))}
+                            />
+                            <span className="slider" />
+                          </label>
+                          <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
+                        </div>
                       </td>
                     </tr>
 
                     {iOpen && apps.map((app) => {
                       const pending = pendingFor(inst.id, app.application.id)
                       const drifting = appState(app) === 'drift'
+                      const ah = appAutoHealMeta(inst, app)
                       return (
                       <tr className="tree-app" key={`${inst.id}-${app.application.id}`}>
                         <td />
@@ -184,6 +205,14 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                                 {app.application.name}
                               </Link>
                               {app.stuck && <Badge state="stuck" label="stuck" small />}
+                              {!app.autoheal && (
+                                <AutoHealChip
+                                  enabled={false}
+                                  scope="assignment"
+                                  label={ah.locked ? 'auto-apply blocked' : 'auto-apply off'}
+                                  reason={ah.reason}
+                                />
+                              )}
                             </div>
                             {app.latest_check?.commit_after && (
                               <span className="cell-sub">
@@ -229,18 +258,16 @@ function InstancesTree({ instances, onAction, onDiff, onLogs, onVars, onUnassign
                               </button>
                             ) : (
                               <>
-                                <label className="switch" title="Auto-apply on drift">
+                                <label className="switch" title={ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
                                   <input
                                     type="checkbox"
                                     checked={app.autoheal}
-                                    disabled={!can('instances', 'update')}
+                                    disabled={!can('instances', 'update') || ah.locked}
                                     onChange={() => onAction(inst.id, app.application.id, 'toggle-autoheal')}
                                   />
                                   <span className="slider" />
                                 </label>
-                                <span className={`sub ${app.autoheal ? '' : 'muted'}`}>
-                                  {app.autoheal ? (app.autoheal_set ? 'on (host override)' : 'on') : 'off'}
-                                </span>
+                                <span className={`sub ${app.autoheal ? '' : 'muted'}`}>{ah.label}</span>
                               </>
                             )}
                             <button
@@ -484,6 +511,16 @@ export default function Instances() {
     } finally {
       setBusy((b) => ({ ...b, [key]: false }))
       refresh()
+    }
+  }
+
+  const toggleHostAutoHeal = async (inst, enabled) => {
+    try {
+      await api.setInstanceAutoHeal(inst.id, enabled)
+      toast.success(enabled ? 'Host auto-apply enabled' : 'Host auto-apply disabled')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
     }
   }
 
@@ -808,6 +845,7 @@ export default function Instances() {
               key={inst.id}
               instance={inst}
               onAction={act}
+              onHostAutoHeal={toggleHostAutoHeal}
               onDiff={(runId) => setDiffModal(runId)}
               onLogs={(runId) => setRunModal({ runId, view: 'text' })}
               onVars={setVarsApp}
@@ -818,6 +856,7 @@ export default function Instances() {
         <InstancesTree
           instances={pageItems}
           onAction={act}
+          onHostAutoHeal={toggleHostAutoHeal}
           onDiff={(runId) => setDiffModal(runId)}
           onLogs={(runId) => setRunModal({ runId, view: 'text' })}
           onVars={setVarsApp}

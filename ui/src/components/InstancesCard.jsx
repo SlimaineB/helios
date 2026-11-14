@@ -1,5 +1,6 @@
 import CopyButton from './CopyButton.jsx'
 import Badge from './Badge.jsx'
+import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from './AutoHealChip.jsx'
 import { Link } from 'react-router-dom'
 import { api, stateLabel } from '../api/client.js'
 import { useAuth } from '../App.jsx'
@@ -10,10 +11,29 @@ const online = (inst) =>
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
 
-export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVars }) {
+export default function InstancesCard({ instance, onAction, onHostAutoHeal, onDiff, onLogs, onVars }) {
   const { can } = useAuth()
   const isOnline = online(instance)
   const apps = instance.apps.length ? instance.apps : [null]
+  const hostOn = hostAutoHealOn(instance)
+  const hostControl = (
+    <span className="host-actions">
+      <AutoHealChip
+        enabled={hostOn}
+        scope="host"
+        reason={hostOn ? 'Host auto-apply enabled' : 'No application on this host is applied automatically'}
+      />
+      <label className="switch" title={hostOn ? 'Turn off auto-apply for every app on this host' : 'Turn on auto-apply for this host'}>
+        <input
+          type="checkbox"
+          checked={hostOn}
+          disabled={!can('instances', 'update')}
+          onChange={() => onHostAutoHeal?.(instance, !hostOn)}
+        />
+        <span className="slider" />
+      </label>
+    </span>
+  )
 
   if (apps.length === 1 && !apps[0]) {
     return (
@@ -35,6 +55,7 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
             </span>
           </div>
           <div className="card-actions">
+            {hostControl}
             <span className="muted">Not assigned</span>
           </div>
         </header>
@@ -61,6 +82,7 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
           </span>
         </div>
         <div className="card-actions">
+          {hostControl}
           <span className={`state-badge ${instance.state}`}>{stateLabel(instance.state)}</span>
         </div>
       </header>
@@ -68,6 +90,7 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
       <div className="card-body">
         {apps.map((app, idx) => {
           const drifting = app?.latest_check?.status === 'drift'
+          const ah = app ? appAutoHealMeta(instance, app) : null
           return (
           <div key={`${instance.id}-${app?.application.id || 'none'}`} className="app-row">
             {idx === 0 && (
@@ -129,18 +152,16 @@ export default function InstancesCard({ instance, onAction, onDiff, onLogs, onVa
                       </button>
                     ) : (
                       <>
-                        <label className="switch" title="Auto-apply on drift">
+                        <label className="switch" title={ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
                           <input
                             type="checkbox"
                             checked={app.autoheal}
-                            disabled={!can('instances', 'update')}
+                            disabled={!can('instances', 'update') || ah.locked}
                             onChange={() => onAction(instance.id, app.application.id, 'toggle-autoheal')}
                           />
                           <span className="slider" />
                         </label>
-                        <span className={`sub ${app.autoheal ? '' : 'muted'}`}>
-                          {app.autoheal ? (app.autoheal_set ? 'on (host override)' : 'on') : 'off'}
-                        </span>
+                        <span className={`sub ${app.autoheal ? '' : 'muted'}`}>{ah.label}</span>
                       </>
                     )}
                     <button

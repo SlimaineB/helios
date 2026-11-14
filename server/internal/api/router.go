@@ -43,6 +43,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/instances", s.op("instances.create", s.handleCreateInstance))
 	m.HandleFunc("GET /api/v1/instances/{id}", s.op("instances.get", s.handleGetInstance))
 	m.HandleFunc("DELETE /api/v1/instances/{id}", s.op("instances.delete", s.handleDeleteInstance))
+	m.HandleFunc("PUT /api/v1/instances/{id}/autoheal", s.op("instances.update", s.handleSetInstanceAutoHeal))
 	m.HandleFunc("POST /api/v1/instances/{id}/assign", s.op("instances.update", s.handleAssign))
 	m.HandleFunc("DELETE /api/v1/instances/{id}/assign/{appId}", s.op("instances.update", s.handleUnassign))
 	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/autoheal", s.op("instances.update", s.handleSetAutoHeal))

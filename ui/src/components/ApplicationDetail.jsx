@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { GitCommit } from 'lucide-react'
 import Modal from './Modal.jsx'
 import Badge from './Badge.jsx'
+import AutoHealChip from './AutoHealChip.jsx'
 import HealthBadge from './HealthBadge.jsx'
 import CopyButton from './CopyButton.jsx'
 import { api, projectLabel } from '../api/client.js'
@@ -115,7 +116,14 @@ export default function ApplicationDetail({
             <span className="project-badge">{projectLabel(app.project)}</span>
             <CopyButton value={String(app.id)} size="small" title="Copy application ID" />
             <span className="mono">id {app.id}</span>
-            {autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
+            <AutoHealChip
+              enabled={autoheal}
+              scope="app"
+              label={autoheal ? 'auto-apply · all hosts' : 'auto-apply off · all hosts'}
+              reason={autoheal
+                ? 'Auto-apply is enabled for this application on every host (unless a host disables it)'
+                : 'Auto-apply is disabled for this application on every host'}
+            />
           </div>
         </div>
         <HealthBadge state={health} label={healthLabel} size={16} />
@@ -151,9 +159,9 @@ export default function ApplicationDetail({
           <div className="value">{app.sync_interval ? `${app.sync_interval}s` : 'inherit (0)'}</div>
         </div>
         <div className="detail">
-          <label>Auto-apply on drift</label>
+          <label>Auto-apply on drift · all hosts</label>
           <div className="value switch">
-            <label className="switch" title={`Auto-apply on drift is ${autoheal ? 'enabled' : 'disabled'}`}>
+            <label className="switch" title={`Auto-apply on drift is ${autoheal ? 'enabled' : 'disabled'} for every host`}>
               <input
                 type="checkbox"
                 checked={autoheal}
@@ -163,6 +171,9 @@ export default function ApplicationDetail({
             </label>
             <span className="sub muted">{autoheal ? 'on' : 'off'}</span>
           </div>
+          <span className="cell-sub">
+            Applies to every host unless a host disables auto-apply or sets a per-host override. Most restrictive wins.
+          </span>
         </div>
         <div className="detail">
           <label>Latest revision</label>

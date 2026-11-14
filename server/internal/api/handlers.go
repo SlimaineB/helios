@@ -248,7 +248,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	out := make([]InstanceWithApps, 0, len(insts))
 	for _, inst := range insts {
 		inst = s.decorateInstance(inst)
-		as, err := s.appsForInstance(r.Context(), inst.ID, windows)
+		as, err := s.appsForInstance(r.Context(), inst, windows)
 		if err != nil {
 			s.internalError(w, r, err)
 			return
@@ -258,8 +258,8 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	writePage(w, out, total, limit, offset)
 }
 
-func (s *Server) appsForInstance(ctx context.Context, instanceID string, windows []model.SyncWindow) ([]AppStatus, error) {
-	ass, err := s.store.ListAssignments(ctx, instanceID)
+func (s *Server) appsForInstance(ctx context.Context, inst model.Instance, windows []model.SyncWindow) ([]AppStatus, error) {
+	ass, err := s.store.ListAssignments(ctx, inst.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,8 @@ func (s *Server) appsForInstance(ctx context.Context, instanceID string, windows
 		}
 		as := AppStatus{
 			Application:    app,
-			AutoHeal:       effectiveAutoHeal(app, a),
+			AutoHeal:       effectiveAutoHeal(inst.AutoHeal, app, a),
+			HostAutoHeal:   inst.AutoHeal,
 			Stuck:          a.Stuck,
 			StuckAt:        a.StuckAt,
 			LastCheckAt:    a.LastCheckAt,
@@ -281,12 +282,12 @@ func (s *Server) appsForInstance(ctx context.Context, instanceID string, windows
 		if a.AutoHeal != nil {
 			as.AutoHealSet = true
 		}
-		check, err := s.store.LatestRun(ctx, instanceID, a.AppID, "check")
+		check, err := s.store.LatestRun(ctx, inst.ID, a.AppID, "check")
 		if err == nil {
 			as.LatestCheck = check
 			as.HasCheck = true
 		}
-		apply, err := s.store.LatestRun(ctx, instanceID, a.AppID, "apply")
+		apply, err := s.store.LatestRun(ctx, inst.ID, a.AppID, "apply")
 		if err == nil {
 			as.LatestApply = apply
 		}
@@ -295,13 +296,17 @@ func (s *Server) appsForInstance(ctx context.Context, instanceID string, windows
 	return out, nil
 }
 
-// effectiveAutoHeal resolves an assignment-level override, falling back to the
-// application default.
-func effectiveAutoHeal(app model.Application, a model.Assignment) bool {
+// effectiveAutoHeal combines the three control levels with AND semantics: the
+// host switch, the application default, and the per-(host, app) override must
+// all allow auto-apply. A nil override inherits (enabled).
+func effectiveAutoHeal(hostAutoHeal bool, app model.Application, a model.Assignment) bool {
+	if !hostAutoHeal || !app.AutoHeal {
+		return false
+	}
 	if a.AutoHeal != nil {
 		return *a.AutoHeal
 	}
-	return app.AutoHeal
+	return true
 }
 
 // handleCreateInstance registers a new instance and returns its bootstrap token once.
@@ -412,7 +417,7 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	inst = s.decorateInstance(inst)
 	windows, _ := s.store.ListSyncWindows(r.Context())
-	as, err := s.appsForInstance(r.Context(), inst.ID, windows)
+	as, err := s.appsForInstance(r.Context(), inst, windows)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -1023,6 +1028,37 @@ func (s *Server) handleDeleteApplication(w http.ResponseWriter, r *http.Request)
 	ok200(w)
 }
 
+// handleSetInstanceAutoHeal toggles the host-level auto-apply switch. When
+// disabled, no application on the host is applied automatically; drift checks
+// continue. Per-(host, app) overrides still apply once the host is re-enabled.
+func (s *Server) handleSetInstanceAutoHeal(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(r, "id")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	inst, err := s.store.GetInstance(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if !s.requireObject(w, r, "instances.update", inst.Project) {
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if err := s.store.SetInstanceAutoHeal(r.Context(), id, body.Enabled); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
 // handleSetApplicationAutoHeal toggles auto-apply on drift for every instance
 // that inherits the application default (per-instance overrides still apply).
 func (s *Server) handleSetApplicationAutoHeal(w http.ResponseWriter, r *http.Request) {
@@ -1262,7 +1298,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		app.AutoHeal = effectiveAutoHeal(app, a)
+		app.AutoHeal = effectiveAutoHeal(inst.AutoHeal, app, a)
 		// Rollback/pinned revision wins over the application branch. The agent
 		// stays unaware: it just sees a different target revision.
 		if a.TargetRevision != "" {
@@ -1376,7 +1412,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if body.Mode == "check" {
 		if body.Trigger == "after_apply" && body.Status == model.RunDrift {
 			if app, err := s.store.GetApplication(r.Context(), body.AppID); err == nil {
-				if a, err := s.store.GetAssignment(r.Context(), inst.ID, body.AppID); err == nil && effectiveAutoHeal(app, a) {
+				if a, err := s.store.GetAssignment(r.Context(), inst.ID, body.AppID); err == nil && effectiveAutoHeal(inst.AutoHeal, app, a) {
 					streak, _ := s.store.BumpDriftStreak(r.Context(), inst.ID, body.AppID)
 					if streak >= s.maxHealStreak {
 						if err := s.store.SetStuck(r.Context(), inst.ID, body.AppID, true); err != nil {

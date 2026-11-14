@@ -42,6 +42,7 @@ type Store interface {
 	CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error)
 	UpdateInstance(ctx context.Context, in model.Instance) error
 	DeleteInstance(ctx context.Context, id string) error
+	SetInstanceAutoHeal(ctx context.Context, id string, enabled bool) error
 
 	// Applications
 	ListApplications(ctx context.Context) ([]model.Application, error)

@@ -48,6 +48,9 @@ type Instance struct {
 	Platform   string    `json:"platform,omitempty"`
 	// Project scopes this instance (empty = global/default project).
 	Project string `json:"project"`
+	// AutoHeal is the host-level auto-apply switch. When false, no application
+	// on this host is applied automatically; drift checks keep running.
+	AutoHeal bool `json:"autoheal"`
 	// ExecutionMode is "agent" (default) or "tunnel" (reverse SSH; the tunnel may
 	// be maintained by a lightweight Helios agent or manually).
 	ExecutionMode string `json:"execution_mode"`
