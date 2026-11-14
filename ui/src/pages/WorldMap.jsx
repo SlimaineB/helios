@@ -127,14 +127,18 @@ function layoutMarkers(instances) {
   }
   for (const list of groups.values()) {
     list.forEach((item, i) => {
-      let { lon, lat } = item.loc
+      const [cx, cy] = project([item.loc.lon, item.loc.lat])
+      // Spread co-located hosts in projected units so overlapping pins stay
+      // readable at world zoom (a golden-angle spiral keeps it stable).
+      let dx = 0
+      let dy = 0
       if (list.length > 1) {
         const ang = i * 2.399963
-        const r = 0.85 * Math.sqrt(i + 1)
-        lat += r * Math.sin(ang)
-        lon += (r * Math.cos(ang)) / Math.max(0.3, Math.cos((lat * Math.PI) / 180))
+        const r = 18 * Math.sqrt(i + 1)
+        dx = r * Math.cos(ang)
+        dy = r * Math.sin(ang)
       }
-      located.push({ inst: item.inst, loc: item.loc, lon, lat })
+      located.push({ inst: item.inst, loc: item.loc, x: cx + dx, y: cy + dy })
     })
   }
   return { located, unknown }
@@ -269,7 +273,7 @@ export default function WorldMap() {
     const marker = located.find((m) => m.inst.id === inst.id)
     const loc = marker?.loc || detectLocation(inst)
     if (!loc) return
-    const [cx, cy] = project(marker ? [marker.lon, marker.lat] : [loc.lon, loc.lat])
+    const [cx, cy] = marker ? [marker.x, marker.y] : project([loc.lon, loc.lat])
     setView((v) => {
       const k = Math.max(v.k, 2.4)
       return clampView({ k, x: W / 2 - cx * k, y: H / 2 - cy * k })
@@ -369,9 +373,8 @@ export default function WorldMap() {
 
             <g className="wm-markers">
               {visible.map((m) => {
-                const [cx, cy] = project([m.lon, m.lat])
-                const sx = cx * scale + view.x
-                const sy = cy * scale + view.y
+                const sx = m.x * scale + view.x
+                const sy = m.y * scale + view.y
                 const st = hostState(m.inst)
                 const isSel = selected === m.inst.id
                 return (
@@ -394,9 +397,9 @@ export default function WorldMap() {
           </svg>
 
           <div className="wm-zoom">
-            <button type="button" onClick={() => zoomBy(1.4)} title="Zoom in" aria-label="Zoom in"><ZoomIn size={16} /></button>
-            <button type="button" onClick={() => zoomBy(1 / 1.4)} title="Zoom out" aria-label="Zoom out"><ZoomOut size={16} /></button>
-            <button type="button" onClick={reset} title="Reset view" aria-label="Reset view"><Maximize2 size={16} /></button>
+            <button type="button" onClick={() => zoomBy(1.4)} title="Zoom in" aria-label="Zoom in"><ZoomIn size={18} /></button>
+            <button type="button" onClick={() => zoomBy(1 / 1.4)} title="Zoom out" aria-label="Zoom out"><ZoomOut size={18} /></button>
+            <button type="button" onClick={reset} title="Reset view" aria-label="Reset view"><Maximize2 size={18} /></button>
           </div>
 
           <div className="wm-legend">
