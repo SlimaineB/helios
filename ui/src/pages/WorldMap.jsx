@@ -14,6 +14,14 @@ const H = 500
 
 const project = ([lon, lat]) => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H]
 
+// Keep the pan/zoom origin inside the map so the world can never be dragged off.
+function clampView(v) {
+  const k = Math.min(8, Math.max(1, v.k))
+  const minX = W - W * k
+  const minY = H - H * k
+  return { k, x: Math.min(0, Math.max(minX, v.x)), y: Math.min(0, Math.max(minY, v.y)) }
+}
+
 function ringToPath(ring) {
   if (!ring?.length) return ''
   let d = ''
@@ -201,7 +209,7 @@ export default function WorldMap() {
     }
     el.addEventListener('wheel', handler, { passive: false })
     return () => el.removeEventListener('wheel', handler)
-  }, [])
+  }, [loading])
 
   const { located, unknown } = useMemo(
     () => layoutMarkers(instances || []),
@@ -236,13 +244,6 @@ export default function WorldMap() {
     return s
   }, [visible])
 
-  const clampView = (v) => {
-    const k = Math.min(8, Math.max(1, v.k))
-    const minX = W - W * k
-    const minY = H - H * k
-    return { k, x: Math.min(0, Math.max(minX, v.x)), y: Math.min(0, Math.max(minY, v.y)) }
-  }
-
   const zoomBy = (factor, px, py) => {
     setView((v) => {
       const k = Math.min(8, Math.max(1, v.k * factor))
@@ -260,11 +261,12 @@ export default function WorldMap() {
     drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
   }
   const onPointerMove = (e) => {
-    if (!drag.current) return
+    const d = drag.current
+    if (!d || !svgRef.current) return
     const rect = svgRef.current.getBoundingClientRect()
-    const dx = ((e.clientX - drag.current.x) / rect.width) * W
-    const dy = ((e.clientY - drag.current.y) / rect.height) * H
-    setView((v) => clampView({ k: v.k, x: drag.current.vx + dx, y: drag.current.vy + dy }))
+    const dx = ((e.clientX - d.x) / rect.width) * W
+    const dy = ((e.clientY - d.y) / rect.height) * H
+    setView((v) => clampView({ k: v.k, x: d.vx + dx, y: d.vy + dy }))
   }
   const onPointerUp = () => { drag.current = null }
 

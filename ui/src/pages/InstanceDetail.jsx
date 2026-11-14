@@ -33,6 +33,10 @@ export default function InstanceDetail() {
   const [appFilter, setAppFilter] = useState('')
   const [confirm, setConfirm] = useState(null)
 
+  const appNamesById = useMemo(
+    () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
+    [inst]
+  )
   const filteredRuns = useMemo(
     () => runs.filter((r) =>
       !appFilter || (appNamesById.get(r.app_id) || '').toLowerCase().includes(appFilter.toLowerCase())
@@ -57,10 +61,6 @@ export default function InstanceDetail() {
   }, [id, runsOff])
 
   const commands = useCommandRunner(refresh)
-  const appNamesById = useMemo(
-    () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
-    [inst]
-  )
   const modalOpen = !!logRun || !!diffRun || !!varsApp || !!confirm
   useEffect(() => {
     refresh()
