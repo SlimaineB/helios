@@ -2131,15 +2131,16 @@ input:focus, select:focus, textarea:focus {
 .wm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .wm-head h1 { display: flex; align-items: center; gap: 8px; margin: 0; }
 .wm-head .sub { margin: 4px 0 0; }
-.wm-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wm-stats { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 .wm-stat {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--muted);
+  white-space: nowrap;
 }
 .wm-stat.ok { color: #067a5e; background: var(--ok-soft); border-color: #b7ebdd; }
 .wm-stat.drift { color: #8a5a00; background: var(--drift-soft); border-color: #f0d9a8; }
-.wm-stat.error { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
+.wm-stat.failed { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
 .wm-stat.unknown { color: var(--muted); }
 
 .wm-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -2203,7 +2204,8 @@ input:focus, select:focus, textarea:focus {
   padding: 7px 11px; border-radius: 999px; border: 1px solid rgba(150, 185, 230, .24);
   backdrop-filter: blur(6px);
 }
-.wm-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.wm-legend { align-items: center; row-gap: 6px; }
+.wm-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .wm-legend .dot { box-shadow: 0 0 6px currentColor; }
 .wm-legend .dot.ok { background: var(--ok); }
 .wm-legend .dot.drift { background: var(--drift); }

@@ -308,7 +308,7 @@ export default function WorldMap() {
         <div className="wm-stats">
           <span className="wm-stat ok"><CircleDot size={13} /> {stats.ok} healthy</span>
           <span className="wm-stat drift"><CircleDot size={13} /> {stats.drift} drift</span>
-          <span className="wm-stat error"><CircleDot size={13} /> {stats.error} failed</span>
+          <span className="wm-stat failed"><CircleDot size={13} /> {stats.error} failed</span>
           <span className="wm-stat unknown"><CircleDot size={13} /> {stats.unknown} unknown</span>
           <button type="button" className="btn ghost small" onClick={load} title="Refresh"><RefreshCw size={14} /> Refresh</button>
         </div>

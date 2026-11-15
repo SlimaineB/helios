@@ -477,6 +477,66 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	ok200(w)
 }
 
+// handleUpdateInstance renames an instance or moves it to another project.
+// Moving is refused while applications are assigned so project scoping stays
+// consistent; unassign them first.
+func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
+	id, _ := idParam(r, "id")
+	var body struct {
+		Name    string  `json:"name"`
+		Project *string `json:"project"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	inst, err := s.store.GetInstance(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if !s.requireObject(w, r, "instances.update", inst.Project) {
+		return
+	}
+	project := inst.Project
+	if body.Project != nil {
+		project = strings.TrimSpace(*body.Project)
+	}
+	if project != inst.Project {
+		if !s.requireObject(w, r, "instances.update", project) {
+			return
+		}
+		if msg, err := s.validateProjectOnly(r.Context(), project); err != nil {
+			s.internalError(w, r, err)
+			return
+		} else if msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
+		ass, err := s.store.ListAssignments(r.Context(), id)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if len(ass) > 0 {
+			writeErr(w, http.StatusConflict, "unassign applications before moving the instance to another project")
+			return
+		}
+	}
+	if err := s.store.UpdateInstanceMeta(r.Context(), id, name, project); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	inst.Name = name
+	inst.Project = project
+	writeJSON(w, http.StatusOK, s.decorateInstance(inst))
+}
+
 func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 	id, _ := idParam(r, "id")
 	var body struct {

@@ -885,6 +885,15 @@ func (s *sqlstore) UpdateInstanceState(ctx context.Context, id, state, lastCommi
 	return nil
 }
 
+// UpdateInstanceMeta updates only the editable metadata fields.
+func (s *sqlstore) UpdateInstanceMeta(ctx context.Context, id, name, project string) error {
+	_, err := s.exec(ctx, `UPDATE instances SET name=?, project=? WHERE id=?`, name, project, id)
+	if err != nil {
+		return fmt.Errorf("update instance meta: %w", err)
+	}
+	return nil
+}
+
 // SetInstanceAutoHeal toggles the host-level auto-apply switch. It does not
 // touch per-assignment overrides, which still apply when the host is enabled.
 func (s *sqlstore) SetInstanceAutoHeal(ctx context.Context, id string, enabled bool) error {

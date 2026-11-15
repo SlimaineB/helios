@@ -74,6 +74,7 @@ export const api = {
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),
   createInstance: (name, project, executionMode = 'agent') => request('POST', '/api/v1/instances', { name, project, execution_mode: executionMode }),
+  updateInstance: (id, name, project) => request('PUT', `/api/v1/instances/${id}`, { name, project }),
   deleteInstance: (id) => request('DELETE', `/api/v1/instances/${id}`),
   assign: (id, appId) => request('POST', `/api/v1/instances/${id}/assign`, { app_id: appId }),
   unassign: (id, appId) => request('DELETE', `/api/v1/instances/${id}/assign/${appId}`),

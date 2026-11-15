@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, instanceOnline, stateLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
 import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
@@ -10,6 +10,7 @@ import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import VariableEditor from '../components/VariableEditor.jsx'
 import Pager from '../components/Pager.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import Modal from '../components/Modal.jsx'
 import CopyButton from '../components/CopyButton.jsx'
 import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard, SkeletonTable, SkeletonEmpty } from '../components/Skeleton.jsx'
@@ -20,6 +21,7 @@ const PAGE_SIZE = 25
 
 export default function InstanceDetail() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const { can } = useAuth()
   const [inst, setInst] = useState(null)
   const [runs, setRuns] = useState([])
@@ -32,6 +34,9 @@ export default function InstanceDetail() {
   const [runsTotal, setRunsTotal] = useState(0)
   const [appFilter, setAppFilter] = useState('')
   const [confirm, setConfirm] = useState(null)
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [renaming, setRenaming] = useState(false)
 
   const appNamesById = useMemo(
     () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
@@ -140,6 +145,42 @@ export default function InstanceDetail() {
     }
   }
 
+  const openRename = () => {
+    setRenameValue(inst.name)
+    setRenameOpen(true)
+  }
+  const saveRename = async (e) => {
+    e.preventDefault()
+    const name = renameValue.trim()
+    if (!name) return
+    setRenaming(true)
+    try {
+      await api.updateInstance(inst.id, name, inst.project)
+      toast.success('Instance renamed')
+      setRenameOpen(false)
+      refresh()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setRenaming(false)
+    }
+  }
+  const askDelete = () => setConfirm({
+    title: 'Delete instance',
+    message: `Delete "${inst.name}"? Its applications are unassigned and its run history is removed. The agent will stop working until it is registered again.`,
+    variant: 'danger',
+    onConfirm: async () => {
+      setConfirm(null)
+      try {
+        await api.deleteInstance(inst.id)
+        toast.success('Instance deleted')
+        navigate('/instances')
+      } catch (err) {
+        toast.error(err.message)
+      }
+    },
+  })
+
   const confirmUnassign = (app) => setConfirm({
     title: 'Unassign application',
     message: `Unassign "${app.application.name}" from "${inst.name}"? The application stays on other instances.`,
@@ -195,6 +236,10 @@ export default function InstanceDetail() {
         {inst.name} <Badge state={inst.state} label={stateLabel(inst.state)} />
         {isTunnel && <Badge state="tunnel" label="tunnel" small />}
         <span className={`dot ${online ? 'online' : 'offline'}`} />
+        <span className="actions" style={{ marginLeft: 12 }}>
+          {can('instances', 'update') && <button className="small" onClick={openRename}>Rename</button>}
+          {can('instances', 'delete') && <button className="small danger" onClick={askDelete}>Delete</button>}
+        </span>
       </h1>
       <div className="meta">
         <div><b>ID</b> <CopyButton value={String(inst.id)} label="" size="small" title="Copy ID" />{inst.id}</div>
@@ -366,6 +411,19 @@ export default function InstanceDetail() {
       {logRun && <LogsModal runId={logRun.runId} initialView={logRun.view} onClose={() => setLogRun(null)} />}
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
       {varsApp && <VariableEditor title={`Host variables · ${inst.name}`} subtitle={`Overrides for ${varsApp.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(id, varsApp.id)} save={(items) => api.saveAssignmentVariables(id, varsApp.id, items)} onClose={() => setVarsApp(null)} />}
+      {renameOpen && (
+        <Modal title="Rename instance" onClose={() => setRenameOpen(false)}>
+          <form className="form-card" onSubmit={saveRename}>
+            <label>Instance name
+              <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
+            </label>
+            <div className="form-actions">
+              <button type="button" className="ghost" onClick={() => setRenameOpen(false)}>Cancel</button>
+              <button type="submit" disabled={renaming || !renameValue.trim()}>Save</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
       <Pager total={appFilter ? filteredRuns.length : runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
     </section>

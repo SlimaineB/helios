@@ -241,3 +241,36 @@ func TestHeartbeatUpdatesLivenessWithoutState(t *testing.T) {
 		t.Fatalf("heartbeat changed state to %q", got.State)
 	}
 }
+
+func TestUpdateInstanceRenamesWithoutTouchingLiveness(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	createInstance(t, st, "ren-1", model.ModeAgent, 0)
+	if err := st.TouchInstance(ctx, "ren-1", "1.2.3", "h1", "linux", 5, time.Now().UTC(), false); err != nil {
+		t.Fatalf("touch instance: %v", err)
+	}
+	before, err := st.GetInstance(ctx, "ren-1")
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/instances/ren-1", strings.NewReader(`{"name":"renamed"}`))
+	req.SetPathValue("id", "ren-1")
+	rec := httptest.NewRecorder()
+	s.handleUpdateInstance(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update instance: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	got, err := st.GetInstance(ctx, "ren-1")
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if got.Name != "renamed" {
+		t.Fatalf("name = %q, want renamed", got.Name)
+	}
+	if got.PollInterval != before.PollInterval || !got.LastSeen.Equal(before.LastSeen) {
+		t.Fatalf("rename touched liveness: poll %d->%d last_seen %v->%v",
+			before.PollInterval, got.PollInterval, before.LastSeen, got.LastSeen)
+	}
+}
