@@ -24,14 +24,16 @@ test-race:
 test-ui:
 	cd ui && npm ci && npm run build
 
-## Documentation site (requires: pip install -r requirements-docs.txt)
+## Documentation site (Astro + Starlight)
 docs: docs-build
 
 docs-build:
-	mkdocs build --strict
+	npm ci
+	npm run build
 
 docs-serve:
-	mkdocs serve
+	npm install
+	npm run dev
 
 ## One-command lab demo (build + start + wait + smoke)
 demo:

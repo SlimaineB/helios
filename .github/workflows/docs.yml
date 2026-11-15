@@ -2,11 +2,15 @@ name: Docs
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     paths:
+      - "src/**"
+      - "public/**"
       - "docs/**"
-      - "mkdocs.yml"
-      - "requirements-docs.txt"
+      - "astro.config.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/sync-docs.mjs"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -21,37 +25,34 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+      - uses: actions/setup-node@v7
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-docs.txt
-
-      - name: Install MkDocs
-        run: pip install -r requirements-docs.txt
-
-      - id: pages
-        uses: actions/configure-pages@v5
-
-      - name: Build site
-        run: mkdocs build --strict
-        env:
-          SITE_URL: ${{ steps.pages.outputs.base_url }}
-
-      - uses: actions/upload-pages-artifact@v3
+          node-version: "22.23.4"
+          cache: npm
+      - name: Install site dependencies
+        run: npm ci
+      - name: Build Astro site
+        run: npm run build
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: ./site
 
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
+    name: Deploy docs
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    needs: build
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,461 @@
+---
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import Icon from '../components/Icon.astro';
+import '../styles/landing.css';
+
+const base = import.meta.env.BASE_URL;
+const docs = `${base}quickstart/`;
+const site = 'https://slimaineb.github.io/helios/';
+
+const features = [
+  {
+    icon: 'refresh',
+    title: 'Drift detection that speaks Ansible',
+    text: 'Agents clone the app repository and run your playbook with --check. Any task that would change the host is drift — no bespoke state model to maintain.',
+  },
+  {
+    icon: 'zap',
+    title: 'Self-healing, with a stop button',
+    text: 'Auto-heal applies the playbook when drift appears, then re-checks to confirm convergence. After repeated failed cycles the assignment is flagged stuck and stops applying.',
+  },
+  {
+    icon: 'git',
+    title: 'Git is the source of truth',
+    text: 'Point an application at a branch, tag, SHA or semver range. Every assigned host converges to the same revision, and the resolved commit is recorded in the run history.',
+  },
+  {
+    icon: 'server',
+    title: 'Agents that fit anywhere',
+    text: 'One static Go binary on systemd or Kubernetes. Agents run non-root by default, poll the hub over outbound HTTPS, and can use tunnel mode on locked-down hosts.',
+  },
+  {
+    icon: 'globe',
+    title: 'The whole fleet in one place',
+    text: 'Instances, applications, assignments, check and apply runs, drift history and topology in a single dashboard backed by SQLite or PostgreSQL.',
+  },
+  {
+    icon: 'shield',
+    title: 'Safe by default',
+    text: 'Basic auth or OIDC, RBAC policies, AES-256-GCM encrypted secrets at rest, rate-limited logins, and no inbound SSH requirement for managed hosts.',
+  },
+];
+
+const security = [
+  {
+    icon: 'key',
+    title: 'Authentication and RBAC',
+    text: 'Local admin, OIDC single sign-on, and ArgoCD-style policies that scope what each role can see and change.',
+  },
+  {
+    icon: 'lock',
+    title: 'Secrets encrypted at rest',
+    text: 'Repository tokens, agent tokens and passwords are sealed with AES-256-GCM when HELIOS_SECRET_KEY is set.',
+  },
+  {
+    icon: 'terminal',
+    title: 'Pull model, no inbound SSH',
+    text: 'Agents call the hub; the hub never connects back. Hosts behind NAT or a firewall can use reverse SSH tunnel mode with a runner.',
+  },
+  {
+    icon: 'clock',
+    title: 'Run history and auditability',
+    text: 'Every check and apply keeps its revision, status and output, so you can see exactly what changed and when.',
+  },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Helios — drift detection and self-healing for Ansible</title>
+    <meta
+      name="description"
+      content="Helios keeps your Linux servers configured from Git. Lightweight agents run your Ansible playbook in check mode, report drift, and re-apply it automatically. Like ArgoCD, but for Ansible."
+    />
+    <meta name="theme-color" content="#07070c" />
+    <link rel="canonical" href={site} />
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Helios — drift detection and self-healing for Ansible" />
+    <meta
+      property="og:description"
+      content="Keep every Linux host converged to the Ansible playbook in Git. Drift detection, auto-heal, RBAC and a single dashboard."
+    />
+    <meta property="og:url" content={site} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'Helios',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Linux, Kubernetes',
+      description:
+        'GitOps-style drift detection and self-healing for Ansible playbooks.',
+      url: site,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    })} />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <SiteHeader />
+
+    <main id="main">
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div>
+            <div class="eyebrow reveal">
+              <span class="eyebrow-dot"></span>
+              Ansible drift, caught before it bites
+            </div>
+            <h1 class="reveal delay-1">
+              Your servers stay configured.<br />
+              <span class="gradient">Automatically.</span>
+            </h1>
+            <p class="hero-lede reveal delay-2">
+              Helios keeps the desired state of every Linux host in Git. Lightweight agents run
+              your Ansible playbook in check mode, report drift to the hub, and re-apply it when
+              you want — like ArgoCD, but for Ansible.
+            </p>
+            <div class="hero-actions reveal delay-3">
+              <a class="button" href={docs}>
+                Start in minutes
+                <Icon name="arrow-right" size={17} />
+              </a>
+              <a class="button button-ghost" href="#how-it-works">
+                See how it works
+                <Icon name="chevron" size={16} />
+              </a>
+            </div>
+            <div class="hero-note reveal delay-3">
+              <span><Icon name="check" size={15} /> Open source</span>
+              <span><Icon name="check" size={15} /> Single Go binary</span>
+              <span><Icon name="check" size={15} /> No inbound SSH</span>
+            </div>
+          </div>
+
+          <div class="hero-visual reveal delay-2">
+            <div class="browser">
+              <div class="browser-bar">
+                <div class="browser-dots"><i></i><i></i><i></i></div>
+                <div class="browser-address">
+                  <Icon name="lock" size={10} />
+                  helios.example.com
+                </div>
+              </div>
+              <div class="drift-console">
+                <div class="console-head">
+                  <span><i class="dot"></i> Fleet status</span>
+                  <span>12 instances</span>
+                </div>
+                <div class="console-row">
+                  <span class="console-name">web-01</span>
+                  <span class="console-app">site.yml</span>
+                  <span class="pill ok">converged</span>
+                </div>
+                <div class="console-row">
+                  <span class="console-name">db-01</span>
+                  <span class="console-app">site.yml</span>
+                  <span class="pill drift">drift · 3 tasks</span>
+                </div>
+                <div class="console-row">
+                  <span class="console-name">cache-02</span>
+                  <span class="console-app">base.yml</span>
+                  <span class="pill heal">auto-heal</span>
+                </div>
+                <div class="console-row">
+                  <span class="console-name">edge-04</span>
+                  <span class="console-app">site.yml</span>
+                  <span class="pill ok">converged</span>
+                </div>
+                <div class="console-foot">
+                  <span>git rev <code>a1b2c3d</code></span>
+                  <span>check every 30s</span>
+                </div>
+              </div>
+            </div>
+            <div class="float-card one">
+              <span class="float-icon"><Icon name="zap" size={15} /></span>
+              <span>
+                <strong>Drift healed</strong>
+                <small>3 tasks in 42s</small>
+              </span>
+            </div>
+            <div class="float-card two">
+              <span class="float-icon"><Icon name="git" size={15} /></span>
+              <span>
+                <strong>Revision pinned</strong>
+                <small>&gt;=1.2.0 &lt;2.0.0</small>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="trust-strip">
+        <div class="shell trust-inner">
+          <span class="trust-label">Built on</span>
+          <div class="trust-list">
+            <span><Icon name="terminal" size={15} /> Ansible</span>
+            <span><Icon name="git" size={15} /> Git</span>
+            <span><Icon name="server" size={15} /> systemd</span>
+            <span><Icon name="kubernetes" size={15} /> Kubernetes</span>
+            <span><Icon name="database" size={15} /> SQLite / PostgreSQL</span>
+          </div>
+        </div>
+      </div>
+
+      <section class="section" id="product">
+        <div class="shell">
+          <div class="section-head">
+            <div class="section-kicker">The product</div>
+            <h2>Ansible convergence without a control node per host.</h2>
+            <p class="section-lede">
+              Helios is the missing control plane for playbook-driven fleets: a hub that tracks
+              desired state, agents that check it locally, and a UI that shows what drifted and
+              what was healed — without replacing Ansible or your Git workflow.
+            </p>
+          </div>
+
+          <div class="feature-grid">
+            {features.map((feature) => (
+              <article class="feature-card">
+                <div class="icon-tile"><Icon name={feature.icon} size={20} /></div>
+                <h3>{feature.title}</h3>
+                <p>{feature.text}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="how-it-works">
+        <div class="shell split">
+          <div>
+            <div class="section-kicker">How it works</div>
+            <h2>Check, report, heal, confirm.</h2>
+            <p class="section-lede">
+              The agent does the work where the configuration lives. The hub keeps the fleet
+              state and decides what to run next. Git stays the only source of truth.
+            </p>
+            <ul class="check-list">
+              <li>
+                <Icon name="check-circle" size={19} />
+                <span><strong>Point at a playbook.</strong> Register a repository, branch or
+                revision, and the playbook path — for example <code>site.yml</code>.</span>
+              </li>
+              <li>
+                <Icon name="check-circle" size={19} />
+                <span><strong>Check the host.</strong> The agent runs
+                <code>ansible-playbook --check</code> with the JSON callback and reports every
+                task that would change.</span>
+              </li>
+              <li>
+                <Icon name="check-circle" size={19} />
+                <span><strong>Heal when needed.</strong> Auto-heal or an operator command applies
+                the playbook, then the agent re-checks to confirm convergence.</span>
+              </li>
+              <li>
+                <Icon name="check-circle" size={19} />
+                <span><strong>Keep the fleet honest.</strong> Drift streaks, failed applies and
+                stuck assignments are visible in the dashboard and the API.</span>
+              </li>
+            </ul>
+            <div class="ide-row">
+              <span class="chip"><Icon name="terminal" size={15} /> systemd hosts</span>
+              <span class="chip"><Icon name="kubernetes" size={15} /> k3s / Kubernetes</span>
+              <span class="chip"><Icon name="globe" size={15} /> EC2 / VMs</span>
+              <span class="chip"><Icon name="shield" size={15} /> Tunnel mode</span>
+            </div>
+          </div>
+
+          <div class="workflow-shell">
+            <div class="workflow-lanes">
+              <div class="lane">
+                <div class="lane-label">Managed host</div>
+                <div class="lane-item"><Icon name="server" size={15} /> helios-agent</div>
+                <div class="lane-item"><Icon name="terminal" size={15} /> ansible --check</div>
+                <div class="lane-item"><Icon name="zap" size={15} /> apply / auto-heal</div>
+              </div>
+              <div class="lane helios-lane">
+                <div class="lane-label">Helios hub</div>
+                <div class="lane-item"><Icon name="database" size={15} /> instances &amp; apps</div>
+                <div class="lane-item"><Icon name="refresh" size={15} /> drift state</div>
+                <div class="lane-item"><Icon name="key" size={15} /> auth + RBAC</div>
+              </div>
+              <div class="lane">
+                <div class="lane-label">Git + Ansible</div>
+                <div class="lane-item"><Icon name="git" size={15} /> playbook repo</div>
+                <div class="lane-item"><Icon name="box" size={15} /> resolved revision</div>
+                <div class="lane-item"><Icon name="clock" size={15} /> run history</div>
+              </div>
+            </div>
+            <div class="workflow-caption">
+              <span><i></i> Local execution</span>
+              <span><i></i> Desired state</span>
+              <span><i></i> Source of truth</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="security">
+        <div class="shell">
+          <div class="section-head">
+            <div class="section-kicker">Security</div>
+            <h2>Automation with guardrails, not a root shell on every host.</h2>
+            <p class="section-lede">
+              Helios is built for teams that need to prove what changed. Authentication, policy,
+              encrypted secrets and run history stay in the control plane; agents only do what
+              they were assigned.
+            </p>
+          </div>
+          <div class="security-grid">
+            {security.map((item) => (
+              <article class="security-item">
+                <div class="icon-tile"><Icon name={item.icon} size={18} /></div>
+                <div>
+                  <h3>{item.title}</h3>
+                  <p>{item.text}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="quickstart">
+        <div class="shell quickstart">
+          <div>
+            <div class="section-kicker">Quick start</div>
+            <h2>Install the hub. Add an agent. Register a playbook.</h2>
+            <p class="section-lede">
+              The installer downloads a release package and sets up systemd — no Go, Node or
+              Docker on the target. Helm charts are available when you want Kubernetes.
+            </p>
+            <div class="quickstart-steps">
+              <div class="quickstart-step"><span class="step-num">1</span> Install the hub on one Linux host</div>
+              <div class="quickstart-step"><span class="step-num">2</span> Register an agent and paste its token</div>
+              <div class="quickstart-step"><span class="step-num">3</span> Add an application and let it check</div>
+            </div>
+            <div class="hero-actions">
+              <a class="button" href={docs}>
+                Read the quick start
+                <Icon name="arrow-right" size={17} />
+              </a>
+              <a class="button button-ghost" href={`${base}install/`}>Installation guide</a>
+            </div>
+          </div>
+
+          <div class="code-card">
+            <div class="code-head">
+              <span><i class="dot"></i> terminal</span>
+              <span>install</span>
+            </div>
+            <pre><code><span class="c"># hub</span>
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- server \
+      --base-url http://YOUR_SERVER_IP:8080 \
+      --operator-password <span class="v">"$HELIOS_PASSWORD"</span>
+
+<span class="c"># agent, on each managed host</span>
+curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.sh \
+  | sudo sh -s -- agent \
+      --server http://YOUR_SERVER_IP:8080 \
+      --token <span class="v">"$INSTANCE_TOKEN"</span>
+
+<span class="g"># open http://YOUR_SERVER_IP:8080</span></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="faq">
+        <div class="shell split">
+          <div>
+            <div class="section-kicker">FAQ</div>
+            <h2>Questions operators ask first.</h2>
+            <p class="section-lede">
+              The short answers. The documentation covers the details, including installation
+              modes, OIDC, RBAC, capacity and high availability.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-ghost" href={`${base}install/`}>
+                Browse the docs
+                <Icon name="arrow-right" size={16} />
+              </a>
+            </div>
+          </div>
+
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary>
+                Does Helios replace Ansible?
+                <Icon name="chevron" size={17} />
+              </summary>
+              <p>
+                No. Helios runs your existing playbooks. It adds drift detection, scheduling,
+                auto-heal, fleet state and a UI around the Ansible you already write.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>
+                Do agents need inbound SSH?
+                <Icon name="chevron" size={17} />
+              </summary>
+              <p>
+                No. Agents poll the hub over outbound HTTPS. Hosts that cannot reach the hub
+                directly can use reverse SSH tunnel mode with a runner on a bastion.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>
+                What counts as drift?
+                <Icon name="chevron" size={17} />
+              </summary>
+              <p>
+                Any task that would change the host in <code>--check</code> mode. If the playbook
+                is idempotent, a converged host produces no changes and the check reports
+                <code>ok</code>.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>
+                Does it work on Kubernetes?
+                <Icon name="chevron" size={17} />
+              </summary>
+              <p>
+                Yes. The server and agents ship as Helm charts. You can run the hub with SQLite
+                on a PVC or PostgreSQL for multiple replicas and high availability.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-tight">
+        <div class="shell">
+          <div class="cta-band">
+            <div>
+              <h2>Stop finding drift in production.</h2>
+              <p>
+                Install Helios, point it at a playbook, and let every managed host report its
+                own state.
+              </p>
+            </div>
+            <div class="cta-actions">
+              <a class="button" href={docs}>Get started</a>
+              <a class="button button-ghost" href="https://github.com/SlimaineB/helios">
+                View on GitHub
+                <Icon name="arrow-up-right" size={16} />
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <SiteFooter />
+  </body>
+</html>
