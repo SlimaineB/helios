@@ -447,7 +447,7 @@ An empty runner token disables the runner API (`503`).
 
 Create a dedicated tunnel account; its only job is accepting remote forwards:
 
-```sshdconfig
+```ini
 # /etc/ssh/sshd_config on the bastion
 GatewayPorts no
 AllowTcpForwarding remote

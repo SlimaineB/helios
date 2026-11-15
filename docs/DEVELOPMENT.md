@@ -89,9 +89,9 @@ See [Testing](TESTING.md) for manual UI scenarios and troubleshooting, and
 ## Build the documentation
 
 ```sh
-pip install -r requirements-docs.txt
-make docs-serve        # local preview on http://127.0.0.1:8000
-make docs              # strict build into site/
+npm ci
+make docs-serve        # local preview on http://127.0.0.1:4321
+make docs              # production build into site/
 ```
 
 The docs deploy to GitHub Pages from `.github/workflows/docs.yml` on pushes to

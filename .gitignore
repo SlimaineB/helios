@@ -20,5 +20,7 @@ id_ed25519*
 *.sqlite3
 secrets/
 site/
+src/content/docs/
+.astro/
 .venv/
 .cache/
