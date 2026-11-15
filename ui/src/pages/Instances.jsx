@@ -58,7 +58,7 @@ function appMatches(inst, app, { appFilter, stateFilter, q }) {
   return true
 }
 
-function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, onUnassign, can, collapsed, toggle, pendingFor, appFilter, search, stateFilter }) {
+function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, onUnassign, can, expanded, toggle, pendingFor, appFilter, search, stateFilter }) {
   const q = search.trim().toLowerCase()
   const appsFor = (inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))
 
@@ -88,7 +88,7 @@ function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onD
         </thead>
         {groups.map(([project, list]) => {
           const pkey = `p:${project}`
-          const pOpen = !collapsed.has(pkey)
+          const pOpen = expanded.has(pkey)
           const appCount = list.reduce((n, i) => n + appsFor(i).length, 0)
           return (
             <tbody key={pkey}>
@@ -111,7 +111,7 @@ function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onD
 
               {pOpen && list.map((inst) => {
                 const ikey = `i:${inst.id}`
-                const iOpen = !collapsed.has(ikey)
+                const iOpen = expanded.has(ikey)
                 const apps = appsFor(inst)
                 return (
                   <Fragment key={ikey}>
@@ -384,7 +384,7 @@ export default function Instances() {
   const [varsApp, setVarsApp] = useState(null)
   const [confirm, setConfirm] = useState(null)
   const [pageOff, setPageOff] = useState(0)
-  const [collapsed, setCollapsed] = useState(() => new Set())
+  const [expanded, setExpanded] = useState(() => new Set())
   const [view, setView] = useState(() => {
     const saved = localStorage.getItem('helios_instances_view')
     if (saved === 'topology' || saved === 'list' || saved === 'cards') return saved
@@ -438,7 +438,7 @@ export default function Instances() {
 
   useEffect(() => {
     setPageOff(0)
-    setCollapsed(new Set())
+    setExpanded(new Set())
   }, [search, stateFilter, projectFilter, appFilter, modeFilter, onlineOnly])
 
   const addInstance = async (e) => {
@@ -626,7 +626,7 @@ export default function Instances() {
   }
 
   const toggleCollapse = (key) =>
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
@@ -887,7 +887,7 @@ export default function Instances() {
           onVars={setVarsApp}
           onUnassign={confirmUnassign}
           can={can}
-          collapsed={collapsed}
+          expanded={expanded}
           toggle={toggleCollapse}
           pendingFor={(instId, appId) => commands.pending[`${instId}:${appId}`] || null}
           appFilter={appFilter}
