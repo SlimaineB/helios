@@ -47,11 +47,13 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
 The agent installs `git`, `ansible-core` and `ansible.posix`, starts
 `helios-agent.service`, and appears in the UI within about 30 seconds.
 
-The installer still needs root (packages, binary, systemd unit). Once installed,
-the `helios-agent` service runs as a non-root `helios-agent` user by default, so
-you can adopt Helios on managed hosts without giving the agent permanent root.
-If a playbook must create system users, install packages, or write outside the
-agent state dir/home, opt that host into root with a systemd override:
+The agent does **not** require root. The system-wide installer uses root for OS
+packages and the systemd unit; you can instead run the same binary as a normal
+user with a user-level service (see
+[Rootless install](docs/INSTALL.md#rootless-install-no-root)). Either way the
+agent process and its playbooks run unprivileged by default. If a playbook must
+create system users, install packages, or write outside the agent state
+dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
 **Outbound-only servers?** Register the instance as *Tunnel · reverse SSH

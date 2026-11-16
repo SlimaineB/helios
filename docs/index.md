@@ -75,8 +75,8 @@ Open **http://YOUR_SERVER_IP:8080** and sign in as `admin`. No Go, Node, Docker 
 build tools are required.
 
 Then register an instance in the UI and install the agent on each managed host
-with the same `install.sh`. Full commands and troubleshooting:
-[Quickstart](QUICKSTART.md).
+with `install.sh`, or run it rootless as a normal user. Full commands and
+troubleshooting: [Quickstart](QUICKSTART.md).
 
 Building from source, running the development demo and tests:
 [Development](DEVELOPMENT.md).

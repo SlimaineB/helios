@@ -111,6 +111,11 @@ This installs the OS packages, extracts Ansible to `/opt/helios/ansible`, writes
 `/etc/helios/agent.yaml` with `ansible_bin`, and starts
 `helios-agent.service`.
 
+The agent binary itself can run as a normal user; the airgap installer uses root
+for OS packages and the systemd unit. For a no-root setup, make Ansible available
+to that user and follow the
+[Rootless install](INSTALL.md#rootless-install-no-root).
+
 For an outbound-only host, add `--mode tunnel`. The installer then skips the
 Ansible venv and installs only the OpenSSH client; the agent just maintains the
 reverse SSH tunnel and reports health. The bastion still runs Ansible through

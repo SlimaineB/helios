@@ -352,12 +352,81 @@ Useful flags: `--instance-id`, `--autoheal 0|1`, `--max-concurrent N`,
 `--poll-interval 5m`, `--state-dir /var/lib/helios`. For an outbound-only host,
 add `--mode tunnel`; see [Tunnel mode](#tunnel-mode--reverse-ssh).
 
+### Rootless install (no root)
+
+The agent is a single static binary and does not require root. Use this path
+when you cannot or do not want a system-wide service; run it as the account
+whose files the playbooks should manage.
+
+Prerequisites for that user: `git`, `ansible-core` and `ansible.posix`, plus a
+writable state directory. For example:
+
+```sh
+python3 -m pip install --user ansible-core
+ansible-galaxy collection install -p ~/.ansible/collections ansible.posix
+```
+
+Download `helios-agent` from a release tarball or from the hub's `/downloads/`
+directory, then install it under your home directory:
+
+```sh
+mkdir -p ~/.local/bin ~/.config/helios ~/.local/state/helios
+install -m 0755 helios-agent ~/.local/bin/helios-agent
+
+cat > ~/.config/helios/agent.yaml <<'YAML'
+server: https://hub.example.com
+token: PASTE_INSTANCE_TOKEN
+instance_id: PASTE_INSTANCE_ID
+state_dir: /home/you/.local/state/helios
+poll_interval: 30s
+YAML
+chmod 0600 ~/.config/helios/agent.yaml
+
+~/.local/bin/helios-agent -config ~/.config/helios/agent.yaml
+```
+
+Keep it running with a user-level systemd service:
+
+```sh
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/helios-agent.service <<'UNIT'
+[Unit]
+Description=Helios agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/helios-agent -config %h/.config/helios/agent.yaml
+Environment=HOME=%h
+Environment=LC_ALL=C.UTF-8
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+UNIT
+
+systemctl --user daemon-reload
+systemctl --user enable --now helios-agent
+loginctl enable-linger "$USER"   # optional; may be blocked by policy
+```
+
+Verify with `systemctl --user status helios-agent` and
+`journalctl --user -u helios-agent -f`.
+
+Rootless playbooks run as that user, so they can only change files the user
+owns. For packages or other system-wide changes, either run the system-wide
+installer as root or grant the user narrowly scoped sudo/polkit rights.
+
 ### 3. Verify
 
 ```sh
 systemctl status helios-agent
 journalctl -u helios-agent -f
 ```
+
+For a rootless install, use `systemctl --user status helios-agent` and
+`journalctl --user -u helios-agent -f` instead.
 
 The instance appears in the UI within one poll (default `5m`; the lab uses 5s).
 Assign applications from the instance detail page or `POST
@@ -606,11 +675,12 @@ history.
 
 ## Security notes
 
-- The installer needs root on the managed host (packages, binary, systemd unit).
-  The `helios-agent` service then runs as a non-root `helios-agent` user by
-  default. Playbooks run as that user; use a systemd override (`User=root`) only
-  for playbooks that create system users, install packages, or write outside the
-  agent state dir/home. Treat the hub and instance tokens as highly privileged.
+- The agent does **not** require root. The system-wide installer uses root to
+  install OS packages and a systemd unit; the rootless path above runs the same
+  binary under your user account. In both cases playbooks run unprivileged by
+  default: use a systemd override (`User=root`) only for playbooks that create
+  system users, install packages, or write outside the agent state dir/home.
+  Treat the hub and instance tokens as highly privileged.
 - The agent is **fail-closed**: it refuses applies if the hub is unreachable.
 - In tunnel mode the bastion runner holds SSH keys for managed hosts and the
   shared runner token can enumerate/act on every tunnel instance. Run it on a

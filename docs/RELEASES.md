@@ -132,7 +132,9 @@ curl -fsSL https://github.com/<owner>/helios/releases/latest/download/install.sh
       --token '<instance-token>'
 ```
 
-Set `HELIOS_VERSION=v1.2.3` with `sudo env` to pin a release.
+Set `HELIOS_VERSION=v1.2.3` with `sudo env` to pin a release. The agent also
+runs without root; see the
+[rootless install](INSTALL.md#rootless-install-no-root).
 
 Or install the hub from a release tarball:
 

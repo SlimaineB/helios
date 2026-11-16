@@ -7,8 +7,11 @@ Go, Node, Docker or build tools on the hub.
 
 - **Hub host:** Linux amd64/arm64, systemd, root access, port `8080` reachable
   from your browser.
-- **Managed host:** Linux amd64/arm64, systemd, root access, outbound HTTPS to
-  the hub and to your Git repository.
+- **Managed host:** Linux amd64/arm64 with outbound HTTPS to the hub and to your
+  Git repository. The agent runs as a normal user; root is **not** required.
+  The optional system-wide installer uses root for OS packages and the systemd
+  unit. For a no-root setup, see
+  [Rootless install](INSTALL.md#rootless-install-no-root).
 - **Playbooks:** an existing Git repository containing an Ansible playbook.
 
 ## 1. Install the hub
@@ -62,7 +65,9 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
 
 The installer installs `git`, `ansible-core` and `ansible.posix` if needed,
 writes `/etc/helios/agent.yaml`, and starts `helios-agent.service`. The instance
-appears in the UI within about 30 seconds.
+appears in the UI within about 30 seconds. If you cannot use root, run the agent
+as a normal user with the
+[Rootless install](INSTALL.md#rootless-install-no-root) instead.
 
 ```sh
 systemctl status helios-agent
@@ -120,7 +125,7 @@ To pin a release, add `HELIOS_VERSION=v0.1.1` after `sudo`, for example
 | Login fails | user is `admin`; password is the one passed to the installer |
 | Agent never appears | `systemctl status helios-agent`; `journalctl -u helios-agent -f` |
 | Agent appears but app stays unsynced | Git repo/path is correct and reachable from the managed host |
-| `install.sh` fails | host is Linux amd64/arm64 with systemd; rerun with `sudo` |
+| `install.sh` fails | host is Linux amd64/arm64 with systemd; for a system-wide install rerun with `sudo`, or use the [rootless install](INSTALL.md#rootless-install-no-root) |
 | Port 8080 already used | stop the other service or use `--addr :9090` and update `--base-url` |
 
 ## Other installation methods
