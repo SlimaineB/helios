@@ -75,7 +75,7 @@ const security = [
       name="description"
       content="Helios keeps your Linux servers configured from Git. Lightweight agents run your Ansible playbook in check mode, report drift, and re-apply it automatically. Like ArgoCD, but for Ansible."
     />
-    <meta name="theme-color" content="#07070c" />
+    <meta name="theme-color" content="#0b0805" />
     <link rel="canonical" href={site} />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
     <meta property="og:type" content="website" />
@@ -108,16 +108,17 @@ const security = [
           <div>
             <div class="eyebrow reveal">
               <span class="eyebrow-dot"></span>
-              Ansible drift, caught before it bites
+              The hub is the sun · agents pull
             </div>
             <h1 class="reveal delay-1">
-              Your servers stay configured.<br />
-              <span class="gradient">Automatically.</span>
+              Your fleet orbits one hub.<br />
+              <span class="gradient">Every host pulls.</span>
             </h1>
             <p class="hero-lede reveal delay-2">
-              Helios keeps the desired state of every Linux host in Git. Lightweight agents run
-              your Ansible playbook in check mode, report drift to the hub, and re-apply it when
-              you want — like ArgoCD, but for Ansible.
+              Helios is the sun at the center of your fleet: one hub holding every host&apos;s
+              desired state in Git. Lightweight agents pull their assignment over outbound
+              HTTPS, run your Ansible playbook in check mode, and report drift back — like
+              ArgoCD, but for Ansible.
             </p>
             <div class="hero-actions reveal delay-3">
               <a class="button" href={docs}>
@@ -234,11 +235,13 @@ const security = [
       <section class="section" id="how-it-works">
         <div class="shell split">
           <div>
-            <div class="section-kicker">How it works</div>
-            <h2>Check, report, heal, confirm.</h2>
+            <div class="section-kicker">The pull model</div>
+            <h2>One sun. Every host pulls.</h2>
             <p class="section-lede">
-              The agent does the work where the configuration lives. The hub keeps the fleet
-              state and decides what to run next. Git stays the only source of truth.
+              The hub is the sun: it holds the fleet state and decides what to run next. Agents
+              on each host pull their assignment and playbook over outbound HTTPS, run the work
+              locally, and report back. Nothing connects inbound; Git stays the only source of
+              truth.
             </p>
             <ul class="check-list">
               <li>
@@ -274,13 +277,13 @@ const security = [
           <div class="workflow-shell">
             <div class="workflow-lanes">
               <div class="lane">
-                <div class="lane-label">Managed host</div>
+                <div class="lane-label">Managed host · pulls</div>
                 <div class="lane-item"><Icon name="server" size={15} /> helios-agent</div>
                 <div class="lane-item"><Icon name="terminal" size={15} /> ansible --check</div>
                 <div class="lane-item"><Icon name="zap" size={15} /> apply / auto-heal</div>
               </div>
               <div class="lane helios-lane">
-                <div class="lane-label">Helios hub</div>
+                <div class="lane-label"><Icon name="sun" size={13} /> Helios hub · the sun</div>
                 <div class="lane-item"><Icon name="database" size={15} /> instances &amp; apps</div>
                 <div class="lane-item"><Icon name="refresh" size={15} /> drift state</div>
                 <div class="lane-item"><Icon name="key" size={15} /> auth + RBAC</div>
@@ -293,7 +296,7 @@ const security = [
               </div>
             </div>
             <div class="workflow-caption">
-              <span><i></i> Local execution</span>
+              <span><i></i> Pull over HTTPS</span>
               <span><i></i> Desired state</span>
               <span><i></i> Source of truth</span>
             </div>

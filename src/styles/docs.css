@@ -4,81 +4,83 @@
 :root {
   --sl-font: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --sl-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --sl-color-accent-low: #211641;
-  --sl-color-accent: #8b5cf6;
-  --sl-color-accent-high: #ddd6fe;
-  --sl-color-white: #f7f5ff;
-  --sl-color-gray-1: #ece9f5;
-  --sl-color-gray-2: #c9c5da;
-  --sl-color-gray-3: #a7a3b8;
-  --sl-color-gray-4: #777389;
-  --sl-color-gray-5: #34303f;
-  --sl-color-gray-6: #1a1822;
-  --sl-color-black: #07070c;
-  --sl-color-bg: #0a0a12;
-  --sl-color-bg-nav: rgba(10, 10, 18, 0.86);
-  --sl-color-bg-sidebar: rgba(10, 10, 18, 0.52);
-  --sl-color-hairline: rgba(255, 255, 255, 0.08);
-  --sl-color-hairline-light: rgba(255, 255, 255, 0.13);
-  --sl-color-hairline-shade: rgba(0, 0, 0, 0.35);
+  --sl-color-accent-low: #3b2408;
+  --sl-color-accent: #f59e0b;
+  --sl-color-accent-high: #fde68a;
+  --sl-color-white: #fff7ed;
+  --sl-color-gray-1: #f6ead9;
+  --sl-color-gray-2: #d9c6b0;
+  --sl-color-gray-3: #b39d86;
+  --sl-color-gray-4: #87715c;
+  --sl-color-gray-5: #3a2c20;
+  --sl-color-gray-6: #1c140e;
+  --sl-color-black: #0a0704;
+  --sl-color-bg: #0c0906;
+  --sl-color-bg-nav: rgba(12, 9, 6, 0.88);
+  --sl-color-bg-sidebar: rgba(12, 9, 6, 0.55);
+  --sl-color-hairline: rgba(255, 235, 205, 0.1);
+  --sl-color-hairline-light: rgba(255, 235, 205, 0.16);
+  --sl-color-hairline-shade: rgba(0, 0, 0, 0.4);
   --sl-color-text: var(--sl-color-gray-2);
-  --sl-color-text-accent: #c4b5fd;
-  --sl-color-bg-inline-code: rgba(139, 92, 246, 0.12);
-  --sl-color-orange-low: #3b2416;
+  --sl-color-text-accent: #fcd34d;
+  --sl-color-bg-inline-code: rgba(245, 158, 11, 0.13);
+  --sl-color-orange-low: #3b2110;
   --sl-color-orange: #fb923c;
   --sl-color-orange-high: #fed7aa;
-  --sl-color-green-low: #102e24;
-  --sl-color-green: #34d399;
-  --sl-color-green-high: #bbf7d0;
-  --sl-color-blue-low: #11253d;
-  --sl-color-blue: #38bdf8;
-  --sl-color-blue-high: #bae6fd;
-  --sl-color-purple-low: #251541;
-  --sl-color-purple: #a78bfa;
-  --sl-color-purple-high: #ddd6fe;
-  --sl-color-red-low: #3b141a;
+  --sl-color-green-low: #12271b;
+  --sl-color-green: #86d993;
+  --sl-color-green-high: #d7f5dd;
+  --sl-color-blue-low: #3a2a08;
+  --sl-color-blue: #facc15;
+  --sl-color-blue-high: #fef3c7;
+  --sl-color-purple-low: #3a1c12;
+  --sl-color-purple: #fb923c;
+  --sl-color-purple-high: #fed7aa;
+  --sl-color-red-low: #3b1414;
   --sl-color-red: #f87171;
   --sl-color-red-high: #fecaca;
-  --sl-color-backdrop-overlay: rgba(4, 4, 8, 0.72);
-  --sl-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.22);
-  --sl-shadow-md: 0 10px 32px rgba(0, 0, 0, 0.28);
-  --sl-shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.36);
+  --sl-color-backdrop-overlay: rgba(6, 4, 2, 0.75);
+  --sl-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --sl-shadow-md: 0 10px 32px rgba(0, 0, 0, 0.32);
+  --sl-shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.42);
 }
 
 :root[data-theme='light'] {
-  --sl-color-accent-low: #ede9fe;
-  --sl-color-accent: #7c3aed;
-  --sl-color-accent-high: #4c1d95;
-  --sl-color-white: #14121d;
-  --sl-color-gray-1: #262232;
-  --sl-color-gray-2: #3d3850;
-  --sl-color-gray-3: #625d75;
-  --sl-color-gray-4: #89849b;
-  --sl-color-gray-5: #d7d3e2;
-  --sl-color-gray-6: #eeeaf5;
-  --sl-color-gray-7: #f7f5fb;
-  --sl-color-black: #ffffff;
-  --sl-color-bg: #ffffff;
-  --sl-color-bg-nav: rgba(255, 255, 255, 0.88);
-  --sl-color-bg-sidebar: rgba(250, 249, 253, 0.75);
-  --sl-color-hairline: rgba(20, 18, 29, 0.1);
-  --sl-color-hairline-light: rgba(20, 18, 29, 0.16);
+  --sl-color-accent-low: #fef3c7;
+  --sl-color-accent: #b45309;
+  --sl-color-accent-high: #7c2d12;
+  --sl-color-white: #1c140e;
+  --sl-color-gray-1: #2e231a;
+  --sl-color-gray-2: #4a3a2c;
+  --sl-color-gray-3: #6f5b49;
+  --sl-color-gray-4: #9a8674;
+  --sl-color-gray-5: #e5d7c5;
+  --sl-color-gray-6: #f3e9da;
+  --sl-color-gray-7: #fbf5ec;
+  --sl-color-black: #fffdf9;
+  --sl-color-bg: #fffdf9;
+  --sl-color-bg-nav: rgba(255, 253, 249, 0.9);
+  --sl-color-bg-sidebar: rgba(250, 244, 234, 0.78);
+  --sl-color-hairline: rgba(60, 38, 20, 0.12);
+  --sl-color-hairline-light: rgba(60, 38, 20, 0.18);
   --sl-color-text: var(--sl-color-gray-2);
-  --sl-color-text-accent: #6d28d9;
-  --sl-color-bg-inline-code: rgba(124, 58, 237, 0.09);
+  --sl-color-text-accent: #b45309;
+  --sl-color-bg-inline-code: rgba(180, 83, 9, 0.08);
 }
 
 body {
   background:
-    radial-gradient(760px 420px at 8% -6%, rgba(139, 92, 246, 0.09), transparent 62%),
-    radial-gradient(640px 380px at 96% 4%, rgba(34, 211, 238, 0.045), transparent 60%),
+    radial-gradient(780px 430px at 8% -6%, rgba(251, 146, 60, 0.12), transparent 62%),
+    radial-gradient(640px 380px at 96% 4%, rgba(250, 204, 21, 0.055), transparent 60%),
+    radial-gradient(900px 520px at 50% 110%, rgba(194, 65, 12, 0.07), transparent 65%),
     var(--sl-color-bg);
 }
 
 :root[data-theme='light'] body {
   background:
-    radial-gradient(760px 420px at 8% -6%, rgba(139, 92, 246, 0.06), transparent 62%),
-    radial-gradient(640px 380px at 96% 4%, rgba(34, 211, 238, 0.04), transparent 60%),
+    radial-gradient(780px 430px at 8% -6%, rgba(251, 146, 60, 0.08), transparent 62%),
+    radial-gradient(640px 380px at 96% 4%, rgba(250, 204, 21, 0.05), transparent 60%),
+    radial-gradient(900px 520px at 50% 110%, rgba(194, 65, 12, 0.05), transparent 65%),
     var(--sl-color-bg);
 }
 
@@ -94,7 +96,7 @@ header.header {
 
 .site-title img {
   border-radius: 8px;
-  box-shadow: 0 5px 16px rgba(99, 102, 241, 0.24);
+  box-shadow: 0 5px 16px rgba(245, 158, 11, 0.3);
 }
 
 .sidebar-pane {
@@ -106,7 +108,7 @@ header.header {
 }
 
 .sidebar-content a:hover {
-  background: rgba(139, 92, 246, 0.08);
+  background: rgba(245, 158, 11, 0.1);
 }
 
 .sl-markdown-content h1,
@@ -137,7 +139,7 @@ header.header {
 }
 
 .sl-markdown-content code:not(:where(.not-content *)) {
-  border: 1px solid rgba(139, 92, 246, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.18);
   border-radius: 5px;
 }
 
@@ -151,7 +153,7 @@ header.header {
 
 .sl-markdown-content blockquote {
   border-inline-start-color: var(--sl-color-accent);
-  background: rgba(139, 92, 246, 0.055);
+  background: rgba(245, 158, 11, 0.07);
   border-radius: 0 8px 8px 0;
 }
 
@@ -164,8 +166,8 @@ header.header {
 }
 
 .pagination-links a:hover {
-  border-color: rgba(139, 92, 246, 0.45);
-  background: rgba(139, 92, 246, 0.07);
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .right-sidebar-panel {

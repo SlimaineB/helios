@@ -1,19 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
   <defs>
     <linearGradient id="helios-gradient" x1="5" y1="3" x2="43" y2="45" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#8B5CF6"/>
-      <stop offset="0.55" stop-color="#6366F1"/>
-      <stop offset="1" stop-color="#22D3EE"/>
+      <stop stop-color="#FFE08A"/>
+      <stop offset="0.5" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#EA580C"/>
     </linearGradient>
     <linearGradient id="helios-shine" x1="10" y1="6" x2="38" y2="42" gradientUnits="userSpaceOnUse">
-      <stop stop-color="white" stop-opacity=".3"/>
+      <stop stop-color="white" stop-opacity=".34"/>
       <stop offset="1" stop-color="white" stop-opacity="0"/>
     </linearGradient>
   </defs>
   <rect x="2" y="2" width="44" height="44" rx="13" fill="url(#helios-gradient)"/>
   <rect x="2" y="2" width="44" height="44" rx="13" fill="url(#helios-shine)"/>
-  <circle cx="24" cy="24" r="7" stroke="white" stroke-width="3"/>
-  <g stroke="white" stroke-width="3" stroke-linecap="round">
+  <circle cx="24" cy="24" r="7" stroke="#2A1503" stroke-width="3"/>
+  <g stroke="#2A1503" stroke-width="3" stroke-linecap="round">
     <path d="M36 24h4.5"/>
     <path d="M32.49 32.49l3.18 3.18"/>
     <path d="M24 36v4.5"/>
