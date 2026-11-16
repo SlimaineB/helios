@@ -418,7 +418,9 @@ their history is never cascaded away.
   behaviour) and the server logs a warning at startup. Existing plaintext rows
   remain readable after you enable the key; new writes are encrypted. Changing
   the key makes previously encrypted values unreadable, so back it up with the
-  database. Values are decrypted in memory and sent to agents over the network,
+  database. With Helm, set `secretKey.value` or `secretKey.existingSecret`
+  (key `secret-key`) to pass the key to the server. Values are decrypted in
+  memory and sent to agents over the network,
   so keep the hub-to-agent link on a trusted network or TLS.
 - Operator session tokens are not stored; only their SHA-256 hashes are kept.
 - Protect the SQLite file or PostgreSQL credentials, and use filesystem/volume

@@ -64,7 +64,7 @@ spec:
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway .Values.repoCache.enabled }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.secretKey.value .Values.secretKey.existingSecret .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway .Values.repoCache.enabled }}
           env:
             {{- if $baseURL }}
             - name: HELIOS_BASE_URL
@@ -86,6 +86,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "helios-server.operatorSecret" . }}
                   key: operator-password
+            {{- end }}
+            {{- if or .Values.secretKey.value .Values.secretKey.existingSecret }}
+            - name: HELIOS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "helios-server.secretKeySecret" . }}
+                  key: secret-key
             {{- end }}
             {{- if or .Values.runner.token .Values.runner.existingSecret }}
             - name: HELIOS_RUNNER_TOKEN

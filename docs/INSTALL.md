@@ -249,6 +249,11 @@ Notes:
 - Use `operatorAuth.existingSecret` instead of a password in values. If no
   password is supplied, the chart generates one and keeps it across upgrades;
   read it from the `<release>-helios-server-operator` Secret.
+- To encrypt stored repository credentials and secret variables, set
+  `secretKey.value` to a long random key, or point `secretKey.existingSecret`
+  at a Secret with key `secret-key`. Back the key up with the database: existing
+  plaintext rows stay readable, but previously encrypted values cannot be
+  decrypted after the key changes.
 - Enable `ingress`; `baseUrl` is derived from the ingress host/TLS settings
   unless set explicitly. Use it for TLS and OIDC.
 - Start with `-f deploy/k3s/server-values.yaml` for the reference k3s setup.

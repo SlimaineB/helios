@@ -120,6 +120,11 @@ helm install helios-server helm/helios-server -n helios \
   (`helios-server-helios-server-operator`); omit `operatorAuth.password` to let
   the chart generate and preserve one, or use `operatorAuth.existingSecret` to
   manage it yourself.
+- To encrypt stored credentials and secret variables, create a Secret and pass
+  its name: `kubectl -n helios create secret generic helios-secret-key
+  --from-literal=secret-key="$(openssl rand -hex 32)"` then add
+  `--set secretKey.existingSecret=helios-secret-key`. Back up this key with the
+  database; losing it makes existing ciphertext unreadable.
 
 Verify:
 

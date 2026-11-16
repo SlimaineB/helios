@@ -22,3 +22,6 @@ app.kubernetes.io/part-of: helios
 {{- define "helios-server.runnerSecret" -}}
 {{- .Values.runner.existingSecret | default (printf "%s-runner" (include "helios-server.fullname" .)) }}
 {{- end }}
+{{- define "helios-server.secretKeySecret" -}}
+{{- .Values.secretKey.existingSecret | default (printf "%s-secret-key" (include "helios-server.fullname" .)) }}
+{{- end }}

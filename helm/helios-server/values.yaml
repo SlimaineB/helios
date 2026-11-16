@@ -29,6 +29,15 @@ storage:
 # is enabled, the chart derives it from ingress.host and ingress.tls.
 baseUrl: ""
 
+# Encrypt repository credentials and secret playbook variables at rest with
+# AES-256-GCM. Use a stable 32-byte hex/base64 key, or any long passphrase (it is
+# hashed). Existing plaintext rows remain readable; changing the key makes
+# previously encrypted values unreadable, so back it up with the database.
+secretKey:
+  value: ""
+  # existingSecret: name of a Secret holding key `secret-key`.
+  existingSecret: ""
+
 ingress:
   enabled: false
   className: ""
