@@ -337,8 +337,9 @@ of view and is not linked to users or resources.
 | `status` | `INTEGER NOT NULL DEFAULT 0` | HTTP status code |
 | `remote_ip` | `TEXT NOT NULL DEFAULT ''` | Client address |
 
-Index: `idx_audit_at (at)`. There is no automatic retention/pruning job; the
-table grows with operator activity.
+Index: `idx_audit_at (at)`. The server prunes old audit entries (default 365
+days) together with runs (90 days) and completed commands (30 days); pending
+commands are never pruned. Tune with `HELIOS_RETENTION_*`.
 
 ## Indexes and constraints
 

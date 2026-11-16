@@ -27,6 +27,10 @@ type Config struct {
 	StateDir string `yaml:"state_dir"`
 	// PollInterval controls both heartbeat and drift check frequency.
 	PollInterval time.Duration `yaml:"poll_interval"`
+	// JitterPercent spreads checks/heartbeats by +/- this percentage so a
+	// fleet rolled out together does not hit the hub at the same instant.
+	// 0 disables jitter; the default is 20.
+	JitterPercent int `yaml:"jitter_percent"`
 	// MaxConcurrentApps bounds how many applications the agent reconciles in
 	// parallel during one pass. Keep this small on CPU-constrained hosts:
 	// every Ansible invocation is its own process.
@@ -78,6 +82,7 @@ func Default() Config {
 		Server:               "",
 		StateDir:             "/var/lib/helios/agent",
 		PollInterval:         5 * time.Minute,
+		JitterPercent:        20,
 		MaxConcurrentApps:    4,
 		AnsibleBin:           "ansible-playbook",
 		AwsRegion:            os.Getenv("AWS_REGION"),
@@ -131,6 +136,12 @@ func Load(path string) (Config, error) {
 				return fmt.Errorf("invalid HELIOS_POLL_INTERVAL %q: %w", v, err)
 			}
 			cfg.PollInterval = d
+		case "JITTER_PERCENT":
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 50 {
+				return fmt.Errorf("invalid HELIOS_JITTER_PERCENT %q: must be 0-50", v)
+			}
+			cfg.JitterPercent = n
 		case "MAX_CONCURRENT_APPS":
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {
@@ -178,7 +189,7 @@ func Load(path string) (Config, error) {
 		}
 		return nil
 	}
-	for _, name := range []string{"SERVER", "TOKEN", "INSTANCE_ID", "STATE_DIR", "POLL_INTERVAL", "MAX_CONCURRENT_APPS", "AUTOHEAL", "INSECURE", "ANSIBLE_BIN", "AWS_REGION", "MODE", "TUNNEL_SSH_KEY", "TUNNEL_SSH_COMMON_ARGS", "TUNNEL_LOCAL_TARGET", "TUNNEL_GATEWAY", "TUNNEL_PORT", "TUNNEL_HEALTH_INTERVAL"} {
+	for _, name := range []string{"SERVER", "TOKEN", "INSTANCE_ID", "STATE_DIR", "POLL_INTERVAL", "JITTER_PERCENT", "MAX_CONCURRENT_APPS", "AUTOHEAL", "INSECURE", "ANSIBLE_BIN", "AWS_REGION", "MODE", "TUNNEL_SSH_KEY", "TUNNEL_SSH_COMMON_ARGS", "TUNNEL_LOCAL_TARGET", "TUNNEL_GATEWAY", "TUNNEL_PORT", "TUNNEL_HEALTH_INTERVAL"} {
 		if err := applyEnv(name); err != nil {
 			return cfg, err
 		}
@@ -193,6 +204,9 @@ func Load(path string) (Config, error) {
 func (c Config) Validate() error {
 	if c.MaxConcurrentApps < 0 {
 		return fmt.Errorf("max_concurrent_apps must be >= 0 (0 uses the default)")
+	}
+	if c.JitterPercent < 0 || c.JitterPercent > 50 {
+		return fmt.Errorf("jitter_percent must be 0-50")
 	}
 	var missing []string
 	if strings.TrimSpace(c.Server) == "" {

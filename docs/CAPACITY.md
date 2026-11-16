@@ -70,6 +70,8 @@ apps, plan to paginate the UI/API or batch the assignment queries.
    a pass stays below the interval.
 4. Keep `poll_interval` (default `5m`) and per-app `sync_interval` realistic;
    do not poll every app every few seconds unless the host has spare CPU.
+   `jitter_percent` (default 20) spreads checks by ±20% so a fleet rollout does
+   not hit the hub in one wave.
 5. Add agents (or split apps) when the worst agent cannot meet freshness.
 6. Watch agent CPU and pass duration; if 8→16 workers does not reduce pass time,
    the host is CPU-bound.

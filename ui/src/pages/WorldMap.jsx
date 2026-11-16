@@ -7,6 +7,7 @@ import {
 import { api, instanceOnline } from '../api/client.js'
 import { toast } from '../components/Toast.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
+import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import world from '../assets/world-land.json'
 
 const W = 1000
@@ -189,10 +190,7 @@ export default function WorldMap() {
   }, [])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => {
-    const t = setInterval(() => { if (!document.hidden) load() }, 15000)
-    return () => clearInterval(t)
-  }, [load])
+  useLiveRefresh(load, { interval: 30000 })
 
   // Wheel zoom must be non-passive to call preventDefault (and stop page scroll).
   useEffect(() => {

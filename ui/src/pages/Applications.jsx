@@ -14,6 +14,7 @@ import TopologyView from '../components/TopologyView.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
+import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 
 const FETCH_ALL = 500
 const MAX_INSTANCES = 10000
@@ -93,11 +94,7 @@ export default function Applications() {
   useEffect(() => {
     refresh()
   }, [refresh])
-  useEffect(() => {
-    if (modalOpen) return
-    const t = setInterval(() => { if (!document.hidden) refresh() }, 15000)
-    return () => clearInterval(t)
-  }, [refresh, modalOpen])
+  useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
 
   useEffect(() => {
     setProjectFilter(searchParams.get('project') || '')

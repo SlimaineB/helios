@@ -235,3 +235,19 @@ func TestProcessAppsReportsFailedCheckWhenRepoSyncFails(t *testing.T) {
 		t.Fatalf("output_tail = %q, want the git error", rep.OutputTail)
 	}
 }
+
+func TestJitterDurationStaysWithinBounds(t *testing.T) {
+	const base = 5 * time.Minute
+	for i := 0; i < 50; i++ {
+		got := jitterDuration(base, 20)
+		if got < 4*time.Minute || got > 6*time.Minute {
+			t.Fatalf("jitterDuration(%v, 20) = %v, want 4m..6m", base, got)
+		}
+	}
+	if got := jitterDuration(base, 0); got != base {
+		t.Fatalf("jitterDuration disabled = %v, want %v", got, base)
+	}
+	if got := jitterDuration(time.Second, 50); got < time.Second {
+		t.Fatalf("jitterDuration must never return below 1s, got %v", got)
+	}
+}

@@ -21,6 +21,12 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   own repository, variables, sync interval and drift state.
 - **Operator controls** — Sync, Check, Diff, Logs, rollback to a pinned
   revision, sync windows, audit log and notifications.
+- **Fleet overview** — health, drift, offline hosts, agent versions, recent
+  activity and bulk check/apply across selected hosts.
+- **Live updates** — SSE pushes run/command events; the UI refreshes without
+  waiting for the next poll.
+- **Settings & retention** — effective auth/webhook configuration, a webhook
+  test button and automatic history pruning.
 - **Topology by default** — Applications and Instances switch between an
   interactive hub → instances → applications map, cards, or a dense list.
 - **Stateless replicas** — database-backed sessions and coordination allow

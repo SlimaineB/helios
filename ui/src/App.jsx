@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import Overview from './pages/Overview.jsx'
 import Instances from './pages/Instances.jsx'
 import InstanceDetail from './pages/InstanceDetail.jsx'
 import Applications from './pages/Applications.jsx'
@@ -8,8 +9,9 @@ import SyncWindows from './pages/SyncWindows.jsx'
 import Audit from './pages/Audit.jsx'
 import Projects from './pages/Projects.jsx'
 import ConfigRepos from './pages/ConfigRepos.jsx'
+import SettingsPage from './pages/Settings.jsx'
 import WorldMap from './pages/WorldMap.jsx'
-import { api, setBasic, clearBasic } from './api/client.js'
+import { api, setBasic, clearBasic, openEventStream } from './api/client.js'
 import ToastContainer from './components/Toast.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
 import Glossary from './components/Glossary.jsx'
@@ -80,6 +82,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  useEffect(() => {
+    if (!state?.me) return undefined
+    const perms = state.me.permissions
+    if (Array.isArray(perms) && !perms.includes('events.get')) return undefined
+    return openEventStream((event) => {
+      window.dispatchEvent(new CustomEvent('helios:event', { detail: event }))
+    })
+  }, [state?.me])
+
   if (state === null) {
     return (
       <div className="center-screen muted">
@@ -131,17 +142,18 @@ export default function App() {
             </header>
             <ErrorBoundary>
               <Routes>
-                <Route path="/" element={<Applications />} />
+                <Route path="/" element={<Overview />} />
+                <Route path="/applications" element={<Applications />} />
                 <Route path="/instances" element={<Instances />} />
                 <Route path="/instances/:id" element={<InstanceDetail />} />
                 <Route path="/map" element={<WorldMap />} />
                 <Route path="/topology" element={<Navigate to="/" replace />} />
-                <Route path="/applications" element={<Navigate to="/" replace />} />
                 <Route path="/projects" element={<Projects />} />
                 <Route path="/sync-windows" element={<SyncWindows />} />
                 <Route path="/repositories" element={<Repositories />} />
                 <Route path="/gitops" element={<ConfigRepos />} />
                 <Route path="/audit" element={<Audit />} />
+                <Route path="/settings" element={<SettingsPage />} />
               </Routes>
             </ErrorBoundary>
           </main>

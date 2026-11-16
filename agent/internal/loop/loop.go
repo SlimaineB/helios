@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,7 +139,28 @@ func (a *Agent) nextWake() time.Duration {
 	if wait < time.Second {
 		wait = time.Second
 	}
-	return wait
+	return jitterDuration(wait, a.cfg.JitterPercent)
+}
+
+// jitterDuration spreads a nominal interval by +/- pct percent. The result is
+// never shorter than one second, so a tight poll interval stays usable.
+func jitterDuration(d time.Duration, pct int) time.Duration {
+	if pct <= 0 || d <= 0 {
+		return d
+	}
+	if pct > 50 {
+		pct = 50
+	}
+	delta := d * time.Duration(pct) / 100
+	if delta <= 0 {
+		return d
+	}
+	offset := time.Duration(rand.Int63n(int64(delta)*2+1)) - delta
+	out := d + offset
+	if out < time.Second {
+		return time.Second
+	}
+	return out
 }
 
 // intervalFor is the app's check/sync frequency: its own sync_interval when
@@ -168,13 +190,13 @@ func (a *Agent) checkinPayload() client.CheckinIn {
 // heartbeat runs independently from the check loop. Checks can block for
 // minutes (a slow playbook), so liveness must not depend on pass() returning.
 func (a *Agent) heartbeat(ctx context.Context) {
-	ticker := time.NewTicker(a.pollInterval())
-	defer ticker.Stop()
 	for {
+		timer := time.NewTimer(jitterDuration(a.pollInterval(), a.cfg.JitterPercent))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if err := a.client.Heartbeat(ctx, a.checkinPayload()); err != nil {
 				a.log.Debug("heartbeat failed", "error", err)
 			}

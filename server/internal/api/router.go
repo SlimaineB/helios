@@ -38,6 +38,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/auth/me", s.handleMe)
 
 	// Operator / UI — each route declares the RBAC operation it needs.
+	m.HandleFunc("GET /api/v1/events", s.op("events.get", s.handleEvents))
+	m.HandleFunc("GET /api/v1/settings", s.op("settings.get", s.handleSettings))
+	m.HandleFunc("POST /api/v1/settings/webhook/test", s.op("settings.update", s.handleTestWebhook))
+
 	m.HandleFunc("GET /api/v1/downloads", s.op("instances.get", s.handleListDownloads))
 	m.HandleFunc("GET /api/v1/instances", s.op("instances.get", s.handleListInstances))
 	m.HandleFunc("POST /api/v1/instances", s.op("instances.create", s.handleCreateInstance))
@@ -50,6 +54,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/autoheal", s.op("instances.update", s.handleSetAutoHeal))
 	m.HandleFunc("PUT /api/v1/instances/{id}/assign/{appId}/revision", s.op("instances.update", s.handleSetRevision))
 	m.HandleFunc("POST /api/v1/instances/{id}/{action}", s.op("commands.create", s.handleCreateInstanceCommand))
+	m.HandleFunc("POST /api/v1/bulk/commands", s.op("commands.create", s.handleBulkCommands))
 	m.HandleFunc("GET /api/v1/instances/{id}/runs", s.op("runs.get", s.handleListRuns))
 	m.HandleFunc("GET /api/v1/runs/{runId}/log", s.op("runs.get", s.handleRunLog))
 
@@ -160,6 +165,7 @@ func (s *Server) handleCommandResult(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	s.publishEvent(hubEvent{Type: "command", InstanceID: inst.ID, Status: body.Status})
 	// A completed apply should refresh the check state afterwards.
 	if body.Status == model.CmdDone {
 		if err := s.refreshInstanceState(r.Context(), inst); err != nil {

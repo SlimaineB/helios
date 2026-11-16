@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/slim/helios/server/internal/envutil"
@@ -59,6 +60,34 @@ func FromEnv(log *slog.Logger) *Notifier {
 		client: &http.Client{Timeout: timeout},
 		log:    log,
 	}
+}
+
+// Configured reports whether a webhook URL was configured.
+func (n *Notifier) Configured() bool {
+	return n != nil && n.url != ""
+}
+
+// Endpoint returns the safe, credential-free endpoint for display in the UI.
+func (n *Notifier) Endpoint() string {
+	if n == nil || n.url == "" {
+		return ""
+	}
+	u, err := url.Parse(n.url)
+	if err != nil || u.Host == "" {
+		return "configured"
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// Signed reports whether deliveries include an HMAC signature.
+func (n *Notifier) Signed() bool { return n != nil && n.secret != "" }
+
+// Timeout is the HTTP delivery timeout.
+func (n *Notifier) Timeout() time.Duration {
+	if n == nil || n.client == nil {
+		return 0
+	}
+	return n.client.Timeout
 }
 
 // Send posts the event asynchronously. Failures are logged, never retried:

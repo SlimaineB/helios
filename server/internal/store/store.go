@@ -105,6 +105,7 @@ type Store interface {
 	GetRun(ctx context.Context, id int64) (model.Run, error)
 	CreateRun(ctx context.Context, r model.Run) (model.Run, error)
 	LatestRun(ctx context.Context, instanceID string, appID int64, mode string) (model.Run, error)
+	PruneRuns(ctx context.Context, before time.Time) (int64, error)
 
 	// Variables: app defaults + per-assignment (host) overrides.
 	AppVariables(ctx context.Context, appID int64) ([]model.Variable, error)
@@ -118,6 +119,7 @@ type Store interface {
 	ClaimCommands(ctx context.Context, instanceID string) ([]model.Command, error)
 	CompleteCommand(ctx context.Context, instanceID string, id int64, status, result, commit string) error
 	LatestCommand(ctx context.Context, instanceID string, appID int64, action string) (model.Command, error)
+	PruneCommands(ctx context.Context, before time.Time) (int64, error)
 
 	// Projects (RBAC scopes + repository allowlists)
 	ListProjects(ctx context.Context) ([]model.Project, error)
@@ -156,6 +158,7 @@ type Store interface {
 	// Audit log (mutating operator actions)
 	AppendAudit(ctx context.Context, e model.AuditEntry) error
 	ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error)
+	PruneAudit(ctx context.Context, before time.Time) (int64, error)
 
 	// Operator sessions (shared by all server replicas).
 	CreateOperatorSession(ctx context.Context, tokenHash string, sess model.OperatorSession) error

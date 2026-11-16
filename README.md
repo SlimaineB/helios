@@ -172,12 +172,22 @@ checks and drift reporting keep running, autoheal is turned off in the checkin
 response, and manual Sync/Rollback return `409` (events still record the
 attempt). This is the ArgoCD maintenance-window analogue, evaluated server-side.
 
-### Notifications, metrics, audit
+### Notifications, retention, live updates, metrics, audit
 
 - **Webhook**: set `HELIOS_WEBHOOK_URL` (optionally `HELIOS_WEBHOOK_SECRET` for an
   HMAC-SHA256 `X-Helios-Signature: sha256=…` header and
   `HELIOS_WEBHOOK_TIMEOUT`). Events: `run_failed`, `assignment_stuck`, `apply_ok`,
-  `command_failed`, `sync_blocked`. Delivery is async/best-effort.
+  `command_failed`, `sync_blocked`. Delivery is async/best-effort. The
+  **Settings** page shows the effective endpoint and can send a test event.
+- **Retention**: a background job prunes old history without deleting pending
+  commands. Defaults: runs 90 days, completed commands 30 days, audit 365 days,
+  every 6 hours. Tune with `HELIOS_RETENTION_RUNS`,
+  `HELIOS_RETENTION_COMMANDS`, `HELIOS_RETENTION_AUDIT` and
+  `HELIOS_RETENTION_INTERVAL` (`0` disables a TTL). The Settings page shows the
+  last pass and deleted counts.
+- **Live updates**: `GET /api/v1/events` is a server-sent event stream; the UI
+  refreshes Instances, Applications, Overview and World map on run/command
+  events, with polling retained as a fallback.
 - **Metrics**: `GET /metrics` exposes Prometheus text with
   `helios_runs_total{instance,app,mode,status}`,
   `helios_commands_total{status}`,
@@ -284,10 +294,10 @@ minutes and another replica takes over. See
   keeps per-app local repo mirrors under `state_dir`, runs
   `ansible-playbook --check/apply` with `ANSIBLE_STDOUT_CALLBACK=json`
   (`ansible.posix` collection) and parses changed tasks into a diff view.
-- **`ui/`** — React + Vite. Instances table (state badges, commit, last seen),
-  instance detail (per-app drift tasks, output, run history), application and
-  repository CRUD. Operator sign-in screen (SSO + local admin) and
-  permission-aware controls from the RBAC `permissions` list.
+- **`ui/`** — React + Vite. Fleet Overview, Instances (cards/list/tree with bulk
+  check/apply), instance detail (per-app drift tasks, output, run history),
+  applications, repositories and Settings. Operator sign-in screen (SSO + local
+  admin), permission-aware controls and live updates over SSE.
 - **`examples/playbooks/demo/`** — the demo app (ensures a marker file, so drift
   is trivially demonstrable).
 
@@ -306,14 +316,19 @@ GET    /api/v1/auth/me                    # identity + effective permissions (RB
 GET    /api/v1/instances                          # dashboard list (with per-app latest runs)
 POST   /api/v1/instances          {name, project} # register → {instance, token} (token shown once)
 GET    /api/v1/instances/{id}
+PUT    /api/v1/instances/{id}      {name, project}   # rename / move project
 DELETE /api/v1/instances/{id}
 POST   /api/v1/instances/{id}/assign   {app_id}
 DELETE /api/v1/instances/{id}/assign/{appId}
 PUT    /api/v1/instances/{id}/assign/{appId}/autoheal   # {enabled} or {inherit} → per-assignment auto-sync override
 PUT    /api/v1/instances/{id}/assign/{appId}/revision   # {revision: "<sha>" | ""} — rollback pin / track branch
 POST   /api/v1/instances/{id}/{action}   {app_id}    # action ∈ check|apply — create a command
+POST   /api/v1/bulk/commands      {action, instance_ids} # check/apply every assignment on each host
 GET    /api/v1/instances/{id}/runs?mode=&limit=
 GET    /api/v1/runs/{runId}/log       # run detail: output (json raw), output_text (readable), diff, resources
+GET    /api/v1/events                 # SSE change stream (run, command)
+GET    /api/v1/settings               # effective non-secret runtime configuration
+POST   /api/v1/settings/webhook/test   # deliver a test webhook event
 GET    /api/v1/applications
 POST   /api/v1/applications
 PUT    /api/v1/applications/{appId}
@@ -449,11 +464,11 @@ lists). Unauthenticated → `401`; unprivileged → `403`.
 
 Route map (what each permission unlocks in the UI): `instances.get` list/detail,
 `instances.create` register, `instances.update` assign/unassign/auto-sync,
-`commands.create` Sync & Check, `runs.get` logs/diffs, plus the natural
-`applications.*`, `repositories.*`, `projects.*`, `configrepos.*`,
-`windows.*` and `audit.get` pairs. `repositories.*`, `projects.*`,
-`configrepos.*`, `windows.*` and `audit.get` require the global (`*`) object
-scope.
+`commands.create` Sync/Check and bulk actions, `runs.get` logs/diffs, plus the
+natural `applications.*`, `repositories.*`, `projects.*`, `configrepos.*`,
+`windows.*`, `audit.get`, `settings.get` and `events.get` pairs.
+`repositories.*`, `projects.*`, `configrepos.*`, `windows.*`, `audit.get` and
+`settings.*` require the global (`*`) object scope.
 
 ## Install the hub
 
@@ -521,6 +536,7 @@ token: <bootstrap token>
 instance_id: ""            # empty → auto (EC2 metadata / local fingerprint)
 state_dir: /var/lib/helios
 poll_interval: 5m         # default heartbeat + check cadence
+jitter_percent: 20        # spread checks/heartbeats by ±20% (0 disables)
 max_concurrent_apps: 4    # parallel app reconciliations per pass
 autoheal: true             # apply automatically when drift is detected
 insecure_skip_verify: false
@@ -528,10 +544,12 @@ ansible_bin: ansible-playbook
 ```
 
 Per-application cadence is set on the application (`sync_interval`, seconds;
-`0` inherits `poll_interval`). `max_concurrent_apps` (env
-`HELIOS_MAX_CONCURRENT_APPS`, default `4`) bounds parallel reconciliations per
-pass. Raise it on hosts with spare CPU; lower it on small instances, since each
-Ansible run is a separate process.
+`0` inherits `poll_interval`). `jitter_percent` (env
+`HELIOS_JITTER_PERCENT`, default `20`, max `50`) spreads checks and heartbeats
+so a fleet provisioned together does not stampede the hub. `max_concurrent_apps`
+(env `HELIOS_MAX_CONCURRENT_APPS`, default `4`) bounds parallel reconciliations
+per pass. Raise it on hosts with spare CPU; lower it on small instances, since
+each Ansible run is a separate process.
 
 ## Documentation
 

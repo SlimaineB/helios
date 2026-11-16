@@ -162,3 +162,27 @@ tunnel_health_interval: 15s
 		t.Fatalf("TunnelLocalTarget = %q", cfg.TunnelLocalTarget)
 	}
 }
+
+func TestLoadJitterPercent(t *testing.T) {
+	t.Setenv("HELIOS_SERVER", "http://hub.example.test")
+	t.Setenv("HELIOS_TOKEN", "token")
+	t.Setenv("HELIOS_JITTER_PERCENT", "35")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JitterPercent != 35 {
+		t.Fatalf("JitterPercent = %d, want 35", cfg.JitterPercent)
+	}
+}
+
+func TestLoadRejectsInvalidJitterPercent(t *testing.T) {
+	t.Setenv("HELIOS_SERVER", "http://hub.example.test")
+	t.Setenv("HELIOS_TOKEN", "token")
+	t.Setenv("HELIOS_JITTER_PERCENT", "80")
+
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "HELIOS_JITTER_PERCENT") {
+		t.Fatalf("Load error = %v, want invalid HELIOS_JITTER_PERCENT", err)
+	}
+}

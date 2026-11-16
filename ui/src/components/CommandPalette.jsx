@@ -8,13 +8,15 @@ const SHORTCUTS = [
 ]
 
 const NAV = [
-  { id: 'applications', label: 'Applications', path: '/', perm: 'applications.get' },
+  { id: 'overview', label: 'Overview', path: '/', perm: 'instances.get' },
+  { id: 'applications', label: 'Applications', path: '/applications', perm: 'applications.get' },
   { id: 'instances', label: 'Instances', path: '/instances', perm: 'instances.get' },
   { id: 'projects', label: 'Projects', path: '/projects', perm: 'projects.get' },
   { id: 'sync-windows', label: 'Sync windows', path: '/sync-windows', perm: 'windows.get' },
   { id: 'repositories', label: 'Repositories', path: '/repositories', perm: 'repositories.get' },
   { id: 'gitops', label: 'GitOps', path: '/gitops', perm: 'configrepos.get' },
   { id: 'audit', label: 'Audit log', path: '/audit', perm: 'audit.get' },
+  { id: 'settings', label: 'Settings', path: '/settings', perm: 'settings.get' },
 ]
 
 export default function CommandPalette({ open, onClose, can, navigate }) {

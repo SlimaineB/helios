@@ -25,6 +25,7 @@ import (
 	"github.com/slim/helios/server/internal/rbac"
 	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/repocache"
+	"github.com/slim/helios/server/internal/retention"
 	"github.com/slim/helios/server/internal/store"
 )
 
@@ -46,6 +47,11 @@ func main() {
 		repoResolve   = flag.Duration("repo-cache-resolve-ttl", envDuration("HELIOS_REPO_CACHE_RESOLVE_TTL", 30*time.Second), "reuse a branch resolution for this long (0 = fetch every request)")
 		sessTTL       = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
 		secretKey     = flag.String("secret-key", envutil.Get("HELIOS_SECRET_KEY"), "key for encrypting stored secrets at rest (32-byte hex/base64 or passphrase; empty = plaintext)")
+		version       = flag.String("version", envutil.Or("HELIOS_VERSION", "dev"), "build/version label shown in the UI")
+		retRuns       = flag.Duration("retention-runs", envDuration("HELIOS_RETENTION_RUNS", 90*24*time.Hour), "delete run history older than this (0 disables)")
+		retCommands   = flag.Duration("retention-commands", envDuration("HELIOS_RETENTION_COMMANDS", 30*24*time.Hour), "delete completed commands older than this (0 disables)")
+		retAudit      = flag.Duration("retention-audit", envDuration("HELIOS_RETENTION_AUDIT", 365*24*time.Hour), "delete audit entries older than this (0 disables)")
+		retInterval   = flag.Duration("retention-interval", envDuration("HELIOS_RETENTION_INTERVAL", 6*time.Hour), "how often the retention job runs")
 	)
 	flag.Parse()
 	tunnelPortMin := envInt("HELIOS_TUNNEL_PORT_MIN", 22000)
@@ -154,7 +160,23 @@ func main() {
 
 	srv := api.New(st, log, oa, secure)
 	srv.SetRepoCache(repoCache)
-	srv.SetNotifier(notify.FromEnv(log))
+	webhook := notify.FromEnv(log)
+	srv.SetNotifier(webhook)
+	ret := retention.New(st, log, retention.Config{
+		Runs: *retRuns, Commands: *retCommands, Audit: *retAudit, Interval: *retInterval,
+	})
+	srv.SetRetention(ret)
+	srv.SetSettings(api.ServerSettings{
+		Version:       *version,
+		Store:         store.Kind(*dbPath),
+		BaseURL:       *baseURL,
+		TLS:           *tlsCert != "" && *tlsKey != "",
+		SecretKey:     *secretKey != "",
+		RepoCache:     repoCache != nil,
+		TunnelGateway: *tunnelGateway,
+		RunnerEnabled: *runnerToken != "",
+		GitOps:        true,
+	})
 	srv.SetDownloadsDir(*downloads)
 	srv.SetRunnerToken(*runnerToken)
 	srv.SetTunnelConfig(*tunnelGateway, tunnelPortMin, tunnelPortMax)
@@ -164,7 +186,7 @@ func main() {
 	gitopsState := envutil.Or("HELIOS_GITOPS_STATE_DIR", "/tmp/helios-gitops")
 	recon := reconciler.New(st, log, gitopsState)
 	srv.SetReconciler(recon)
-	metrics.SetInfo("dev")
+	metrics.SetInfo(*version)
 	handler := srv.Handler()
 
 	if *uiDir != "" {
@@ -186,6 +208,7 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	recon.Start(ctx)
+	go ret.Start(ctx)
 	if repoCache != nil {
 		repoCache.Start(ctx)
 	}

@@ -8,6 +8,7 @@ import LogsModal from '../components/LogsModal.jsx'
 import DiffModal from '../components/DiffModal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
 import { useCommandRunner } from '../hooks/useCommandRunner.js'
+import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Pager from '../components/Pager.jsx'
@@ -58,7 +59,7 @@ function appMatches(inst, app, { appFilter, stateFilter, q }) {
   return true
 }
 
-function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, onUnassign, can, expanded, toggle, pendingFor, appFilter, search, stateFilter }) {
+function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, onUnassign, can, expanded, toggle, pendingFor, appFilter, search, stateFilter, selected, onSelect }) {
   const q = search.trim().toLowerCase()
   const appsFor = (inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))
 
@@ -135,6 +136,13 @@ function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onD
                       </td>
                       <td>
                         <div className="cell-title">
+                          <input
+                            type="checkbox"
+                            className="row-select"
+                            checked={selected?.has(inst.id) || false}
+                            onChange={() => onSelect?.(inst.id)}
+                            aria-label={`Select ${inst.name}`}
+                          />
                           <Link to={`/instances/${inst.id}`} className="instance-link">
                             <strong>{inst.name}</strong>
                           </Link>
@@ -200,7 +208,7 @@ function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onD
                         <td>
                           <div className="cell-title">
                             <div className="app-name">
-                              <Link className="entity-link" to={`/?app=${app.application.id}`} title="Open application">
+                              <Link className="entity-link" to={`/applications?app=${app.application.id}`} title="Open application">
                                 {app.application.name}
                               </Link>
                               {app.stuck && <Badge state="stuck" label="stuck" small />}
@@ -385,6 +393,8 @@ export default function Instances() {
   const [confirm, setConfirm] = useState(null)
   const [pageOff, setPageOff] = useState(0)
   const [expanded, setExpanded] = useState(() => new Set())
+  const [selected, setSelected] = useState(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState('')
   const [view, setView] = useState(() => {
     const saved = localStorage.getItem('helios_instances_view')
     if (saved === 'topology' || saved === 'list' || saved === 'cards') return saved
@@ -416,11 +426,20 @@ export default function Instances() {
   useEffect(() => {
     refresh()
   }, [refresh])
+  useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
+
   useEffect(() => {
-    if (modalOpen) return
-    const t = setInterval(() => { if (!document.hidden) refresh() }, 10000)
-    return () => clearInterval(t)
-  }, [refresh, modalOpen])
+    const ids = new Set(instances.map((i) => i.id))
+    setSelected((prev) => {
+      let changed = false
+      const next = new Set()
+      for (const id of prev) {
+        if (ids.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [instances])
 
   useEffect(() => {
     setAppFilter(searchParams.get('app') || '')
@@ -633,7 +652,55 @@ export default function Instances() {
       return next
     })
 
+  const toggleSelected = (id) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
   const pageItems = filtered.slice(pageOff, pageOff + PAGE_SIZE)
+  const pageAllSelected = pageItems.length > 0 && pageItems.every((i) => selected.has(i.id))
+  const togglePageSelection = () => {
+    const ids = pageItems.map((i) => i.id)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (pageAllSelected) next.delete(id)
+        else next.add(id)
+      }
+      return next
+    })
+  }
+  const selectedInstances = instances.filter((i) => selected.has(i.id))
+  const selectedApps = selectedInstances.reduce((n, i) => n + (i.apps?.length || 0), 0)
+
+  const bulk = async (action) => {
+    const ids = [...selected]
+    if (!ids.length || bulkBusy) return
+    setBulkBusy(action)
+    try {
+      const res = await api.bulkCommands(action, ids)
+      const label = action === 'apply' ? 'Apply' : 'Check'
+      if (res.queued) toast.success(`${label} queued for ${res.queued} assignment${res.queued === 1 ? '' : 's'}`)
+      else toast.info('Nothing was queued')
+      if (res.skipped) toast.info(`${res.skipped} assignment${res.skipped === 1 ? '' : 's'} skipped`)
+      if (res.errors?.length) toast.error(`${res.errors.length} host${res.errors.length === 1 ? '' : 's'} failed: ${res.errors[0].error}`)
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setBulkBusy('')
+    }
+  }
+
+  const confirmBulkApply = () => setConfirm({
+    title: 'Apply to selected hosts',
+    message: `Queue an apply for ${selectedApps} assigned application${selectedApps === 1 ? '' : 's'} across ${selected.size} selected host${selected.size === 1 ? '' : 's'}? This changes the managed hosts now.`,
+    variant: 'warn',
+    onConfirm: () => { setConfirm(null); bulk('apply') },
+  })
   const filtersActive = !!(search || stateFilter || projectFilter || appFilter || modeFilter || onlineOnly)
   const clearFilters = () => {
     setSearch('')
@@ -756,6 +823,12 @@ export default function Instances() {
         <span className="muted">
           {filtered.length} of {instances.length} instance{instances.length === 1 ? '' : 's'}
         </span>
+        {view !== 'topology' && pageItems.length > 0 && (
+          <label className="bulk-select-page">
+            <input type="checkbox" checked={pageAllSelected} onChange={togglePageSelection} />
+            Select page
+          </label>
+        )}
         <div className="toolbar-right">
           <div className="seg" role="group" aria-label="View mode">
             <button
@@ -785,6 +858,33 @@ export default function Instances() {
           </div>
         </div>
       </div>
+
+      {selected.size > 0 && (
+        <div className="bulk-bar">
+          <strong>{selected.size} selected</strong>
+          <span className="muted">{selectedApps} assigned app{selectedApps === 1 ? '' : 's'}</span>
+          <span className="spacer" />
+          <button
+            type="button"
+            className="btn small"
+            disabled={!can('commands', 'create') || !!bulkBusy || !selectedApps}
+            onClick={() => bulk('check')}
+          >
+            {bulkBusy === 'check' ? 'Queueing…' : 'Check selected'}
+          </button>
+          <button
+            type="button"
+            className="btn small warn"
+            disabled={!can('commands', 'create') || !!bulkBusy || !selectedApps}
+            onClick={confirmBulkApply}
+          >
+            {bulkBusy === 'apply' ? 'Queueing…' : 'Apply selected'}
+          </button>
+          <button type="button" className="btn ghost small" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+        </div>
+      )}
 
       {showReg && (
         <Modal title="Register an instance" onClose={closeReg}>
@@ -873,6 +973,8 @@ export default function Instances() {
               onDiff={(runId) => setDiffModal(runId)}
               onLogs={(runId) => setRunModal({ runId, view: 'text' })}
               onVars={setVarsApp}
+              selected={selected.has(inst.id)}
+              onSelect={toggleSelected}
             />
           ))}
         </div>
@@ -893,6 +995,8 @@ export default function Instances() {
           appFilter={appFilter}
           search={search}
           stateFilter={stateFilter}
+          selected={selected}
+          onSelect={toggleSelected}
         />
       )}
 

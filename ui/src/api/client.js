@@ -95,6 +95,10 @@ export const api = {
     request('PUT', `/api/v1/instances/${id}/assign/${appId}/revision`, { revision }),
 
   audit: (query) => request('GET', `/api/v1/audit${query || ''}`),
+  settings: () => request('GET', '/api/v1/settings'),
+  testWebhook: () => request('POST', '/api/v1/settings/webhook/test'),
+  bulkCommands: (action, instanceIds) =>
+    request('POST', '/api/v1/bulk/commands', { action, instance_ids: instanceIds }),
 
   syncWindows: () => request('GET', '/api/v1/sync-windows'),
   createSyncWindow: (w) => request('POST', '/api/v1/sync-windows', w),
@@ -159,3 +163,59 @@ export const DEFAULT_PROJECT = '__default__'
 export const projectForUi = (p) => p || DEFAULT_PROJECT
 export const projectForApi = (p) => (p === DEFAULT_PROJECT ? '' : p)
 export const projectLabel = (p) => p || 'default (global)'
+
+// openEventStream reads the SSE endpoint with fetch() because EventSource
+// cannot attach the Basic authorization header used by the local admin mode.
+export function openEventStream(onEvent, onStatus) {
+  let closed = false
+  const ctrl = new AbortController()
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  async function connect() {
+    while (!closed) {
+      try {
+        const headers = { Accept: 'text/event-stream' }
+        if (basicCreds) headers.Authorization = `Basic ${basicCreds}`
+        const res = await fetch('/api/v1/events', { headers, signal: ctrl.signal })
+        if (!res.ok || !res.body) throw new Error(`event stream failed: ${res.status}`)
+        onStatus?.('open')
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!closed) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          let idx
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, idx)
+            buffer = buffer.slice(idx + 2)
+            const data = block
+              .split('\n')
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trimStart())
+              .join('\n')
+            if (!data) continue
+            try {
+              onEvent?.(JSON.parse(data))
+            } catch {
+              /* ignore malformed event */
+            }
+          }
+        }
+        if (!closed) throw new Error('event stream closed')
+      } catch (err) {
+        if (closed || ctrl.signal.aborted) return
+        onStatus?.('reconnecting', err)
+        await sleep(3000)
+      }
+    }
+  }
+
+  connect()
+  return () => {
+    closed = true
+    ctrl.abort()
+  }
+}

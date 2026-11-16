@@ -23,6 +23,7 @@ import (
 	"github.com/slim/helios/server/internal/ratelimit"
 	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/repocache"
+	"github.com/slim/helios/server/internal/retention"
 	"github.com/slim/helios/server/internal/store"
 	"github.com/slim/helios/server/internal/syncwindows"
 )
@@ -49,6 +50,9 @@ type Server struct {
 	tunnelPortMin   int
 	tunnelPortMax   int
 	repoCache       *repocache.Cache
+	settings        ServerSettings
+	retention       *retention.Manager
+	events          *eventHub
 	authLimiter     *ratelimit.Limiter
 	// trustProxy makes the server derive client IPs from X-Forwarded-For /
 	// X-Real-IP. Only enable it when a trusted reverse proxy always overwrites
@@ -63,6 +67,12 @@ type Server struct {
 
 // SetNotifier enables webhook notifications (nil disables them).
 func (s *Server) SetNotifier(n *notify.Notifier) { s.notifier = n }
+
+// SetSettings stores the non-secret runtime configuration shown in the UI.
+func (s *Server) SetSettings(v ServerSettings) { s.settings = v }
+
+// SetRetention exposes the retention manager status in the Settings API.
+func (s *Server) SetRetention(m *retention.Manager) { s.retention = m }
 
 // SetReconciler enables the optional GitOps controller endpoints.
 func (s *Server) SetReconciler(r *reconciler.Reconciler) { s.reconciler = r }
@@ -124,6 +134,7 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 		tunnelPortMax: 22999,
 		bgCtx:         bgCtx,
 		bgCancel:      bgCancel,
+		events:        newEventHub(),
 	}
 	if v := envutil.Get("HELIOS_HEAL_MAX_STREAK"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -1600,6 +1611,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	s.publishEvent(hubEvent{
+		Type: "run", InstanceID: inst.ID, AppID: body.AppID,
+		Mode: body.Mode, Status: body.Status, Trigger: body.Trigger,
+	})
 	switch {
 	case body.Status == model.RunFailed:
 		s.notifyEvent(r.Context(), notify.Event{

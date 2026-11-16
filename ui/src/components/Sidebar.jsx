@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import HeliosMark from './HeliosMark.jsx'
 import {
   Server, Database, GitBranch, Layers, Clock,
-  ChevronLeft, ChevronRight, FileText, RefreshCw, Globe2
+  ChevronLeft, ChevronRight, FileText, RefreshCw, Globe2, Gauge, Settings as SettingsIcon
 } from 'lucide-react'
 
 const SidebarContext = createContext(null)
@@ -27,7 +27,8 @@ export function SidebarProvider({ children }) {
 }
 
 const NAV_ITEMS = [
-  { path: '/', label: 'Applications', icon: Database, perm: 'applications.get' },
+  { path: '/', label: 'Overview', icon: Gauge, perm: 'instances.get' },
+  { path: '/applications', label: 'Applications', icon: Database, perm: 'applications.get' },
   { path: '/instances', label: 'Instances', icon: Server, perm: 'instances.get' },
   { path: '/map', label: 'World map', icon: Globe2, perm: 'instances.get' },
   { path: '/projects', label: 'Projects', icon: Layers, perm: 'projects.get' },
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { path: '/repositories', label: 'Repositories', icon: GitBranch, perm: 'repositories.get' },
   { path: '/gitops', label: 'GitOps', icon: RefreshCw, perm: 'configrepos.get' },
   { path: '/audit', label: 'Audit log', icon: FileText, perm: 'audit.get' },
+  { path: '/settings', label: 'Settings', icon: SettingsIcon, perm: 'settings.get' },
 ]
 
 export default function Sidebar({ can }) {

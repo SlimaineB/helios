@@ -345,7 +345,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                       onMouseEnter={() => setFocus({ kind: 'app', instanceId: group.inst.id, appId: app.application.id })}
                       onFocus={() => setFocus({ kind: 'app', instanceId: group.inst.id, appId: app.application.id })}
                       onBlur={() => setFocus(null)}
-                      onClick={() => navigate(`/?app=${app.application.id}`)}
+                      onClick={() => navigate(`/applications?app=${app.application.id}`)}
                       title={`${app.application.name} on ${group.inst.name} · ${APP_STATE_LABEL[state]} · last check ${lastCheck}`}
                       aria-label={`Open application ${app.application.name}`}
                     >

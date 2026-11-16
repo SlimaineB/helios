@@ -1591,6 +1591,16 @@ func (s *sqlstore) LatestRun(ctx context.Context, instanceID string, appID int64
 	return r, nil
 }
 
+// PruneRuns deletes check/apply history older than before.
+func (s *sqlstore) PruneRuns(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.exec(ctx, `DELETE FROM runs WHERE finished_at < ?`, tm(before))
+	if err != nil {
+		return 0, fmt.Errorf("prune runs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ---- Commands ----
 
 func (s *sqlstore) CreateCommand(ctx context.Context, c model.Command) (model.Command, error) {
@@ -1662,6 +1672,17 @@ func (s *sqlstore) CompleteCommand(ctx context.Context, instanceID string, id in
 		return ErrNotFound
 	}
 	return nil
+}
+
+// PruneCommands deletes completed commands older than before. Pending and
+// claimed commands are kept so an offline agent can still receive them.
+func (s *sqlstore) PruneCommands(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.exec(ctx, `DELETE FROM commands WHERE created_at < ? AND status <> ?`, tm(before), model.CmdPending)
+	if err != nil {
+		return 0, fmt.Errorf("prune commands: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func (s *sqlstore) LatestCommand(ctx context.Context, instanceID string, appID int64, action string) (model.Command, error) {
@@ -2259,6 +2280,16 @@ func (s *sqlstore) AppendAudit(ctx context.Context, e model.AuditEntry) error {
 		return fmt.Errorf("append audit: %w", err)
 	}
 	return nil
+}
+
+// PruneAudit deletes operator audit entries older than before.
+func (s *sqlstore) PruneAudit(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.exec(ctx, `DELETE FROM audit_log WHERE at < ?`, tm(before))
+	if err != nil {
+		return 0, fmt.Errorf("prune audit: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 func (s *sqlstore) ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error) {

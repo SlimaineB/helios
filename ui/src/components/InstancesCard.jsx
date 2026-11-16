@@ -10,7 +10,7 @@ const online = (inst) => instanceOnline(inst)
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
 
-export default function InstancesCard({ instance, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars }) {
+export default function InstancesCard({ instance, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, selected, onSelect }) {
   const { can } = useAuth()
   const isOnline = online(instance)
   const apps = instance.apps.length ? instance.apps : [null]
@@ -36,8 +36,15 @@ export default function InstancesCard({ instance, onAction, onHostAutoHeal, onAp
 
   if (apps.length === 1 && !apps[0]) {
     return (
-      <article className="instance-card">
+      <article className={`instance-card${selected ? ' selected' : ''}`}>
         <header className="card-head">
+          <input
+            type="checkbox"
+            className="card-select"
+            checked={selected || false}
+            onChange={() => onSelect?.(instance.id)}
+            aria-label={`Select ${instance.name}`}
+          />
           <div className="instance-main">
             <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} aria-hidden="true" />
             <div className="instance-title">
@@ -63,8 +70,15 @@ export default function InstancesCard({ instance, onAction, onHostAutoHeal, onAp
   }
 
   return (
-    <article className="instance-card">
+    <article className={`instance-card${selected ? ' selected' : ''}`}>
       <header className="card-head">
+        <input
+          type="checkbox"
+          className="card-select"
+          checked={selected || false}
+          onChange={() => onSelect?.(instance.id)}
+          aria-label={`Select ${instance.name}`}
+        />
         <div className="instance-main">
           <span className={`status-dot ${isOnline ? 'online' : 'offline'}`} aria-hidden="true" />
           <div className="instance-title">
@@ -112,7 +126,7 @@ export default function InstancesCard({ instance, onAction, onHostAutoHeal, onAp
                 <>
                   <div className="app-header">
                     <div className="app-main">
-                      <Link className="entity-link app-name" to={`/?app=${app.application.id}`} title="Open application">
+                      <Link className="entity-link app-name" to={`/applications?app=${app.application.id}`} title="Open application">
                         {app.application.name}
                       </Link>
                       {app.stuck && <Badge state="stuck" label="stuck" small />}

@@ -379,6 +379,7 @@ token: PASTE_INSTANCE_TOKEN
 instance_id: PASTE_INSTANCE_ID
 state_dir: /home/you/.local/state/helios
 poll_interval: 30s
+jitter_percent: 20
 YAML
 chmod 0600 ~/.config/helios/agent.yaml
 
@@ -671,6 +672,7 @@ history.
 - [ ] For outbound-only hosts, configure the runner, gateway and tunnel agent (see Tunnel mode).
 - [ ] Enable the repo snapshot cache for larger fleets (see Repo snapshot cache).
 - [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
+- [ ] Review the **Settings** page for webhook, retention and secret-key status.
 - [ ] Read the [convergence pitfalls](DEVELOPMENT.md#convergence-pitfalls) before writing playbooks.
 
 ## Security notes

@@ -7,6 +7,7 @@ import StatusIcon from '../components/StatusIcon.jsx'
 import LogsModal from '../components/LogsModal.jsx'
 import DiffModal from '../components/DiffModal.jsx'
 import { useCommandRunner } from '../hooks/useCommandRunner.js'
+import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import VariableEditor from '../components/VariableEditor.jsx'
 import Pager from '../components/Pager.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
@@ -70,11 +71,7 @@ export default function InstanceDetail() {
   useEffect(() => {
     refresh()
   }, [refresh])
-  useEffect(() => {
-    if (modalOpen) return
-    const t = setInterval(() => { if (!document.hidden) refresh() }, 10000)
-    return () => clearInterval(t)
-  }, [refresh, modalOpen])
+  useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
 
   useEffect(() => {
     setRunsOff(0)
