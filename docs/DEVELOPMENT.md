@@ -73,6 +73,24 @@ make compose-down     # stop, keep the database and agent state
 make compose-clean    # stop and delete the compose volumes
 ```
 
+### Full Dex + PostgreSQL example
+
+A self-contained example runs the same stack on shifted ports (`8081`, `5557`,
+`5433`, `8001`) so it can coexist with the lab harness:
+
+```sh
+make example-demo     # build/start + wait + smoke test
+make example-up       # start only
+make example-smoke    # verify API, Dex discovery, OIDC redirect and agents
+make example-logs
+make example-down     # stop, keep data
+make example-clean    # stop and delete volumes
+```
+
+Files live in `deploy/examples/dex-postgres/`. Sign in with the local admin
+(`admin` / `changeme`) or SSO (`admin@example.com` / `admin123`,
+`reader@example.com` / `reader123`).
+
 ## Tests
 
 ```sh

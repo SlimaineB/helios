@@ -1,0 +1,120 @@
+# Full local example: Helios + Dex (OIDC) + PostgreSQL + demo git + 2 agents.
+#
+# Everything uses host networking so the browser, Dex issuer and API all share
+# "localhost". Ports are shifted from the root lab harness so both stacks can
+# run side by side:
+#   server 8081, dex 5557, postgres 5433, repo 8001.
+#
+# This is a lab. The credentials in .env.example are fixtures, not secrets.
+name: helios-dex-pg
+
+services:
+  db:
+    image: postgres:16-alpine
+    network_mode: host
+    command: ["postgres", "-p", "5433"]
+    environment:
+      POSTGRES_USER: helios
+      POSTGRES_PASSWORD: ${HELIOS_POSTGRES_PASSWORD:-helios-example}
+      POSTGRES_DB: helios
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helios -d helios -p 5433"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  dex:
+    image: dexidp/dex:v2.37.0
+    network_mode: host
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      HELIOS_DEX_CLIENT_SECRET: ${HELIOS_DEX_CLIENT_SECRET:-dex-example-secret}
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    network_mode: host
+    command: ["-addr", ":8081", "-ui", "/app/ui"]
+    environment:
+      HELIOS_DB: postgres://helios:${HELIOS_POSTGRES_PASSWORD:-helios-example}@localhost:5433/helios?sslmode=disable
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-admin}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-changeme}
+      HELIOS_BASE_URL: http://localhost:8081
+      HELIOS_SECRET_KEY: ${HELIOS_SECRET_KEY:-9c1f4d6e8a2b7c3d5f0e1a4b6c8d2e9f3a5b7c1d4e6f8a0b2c4d6e8f1a3b5c7d}
+      HELIOS_RBAC_FILE: /etc/helios/rbac.yaml
+      HELIOS_OIDC_ISSUER: http://localhost:5557
+      HELIOS_OIDC_CLIENT_ID: helios
+      HELIOS_OIDC_CLIENT_SECRET: ${HELIOS_DEX_CLIENT_SECRET:-dex-example-secret}
+      # Dex's local password connector does not emit a groups claim, so the
+      # lab maps the email claim (see hack/dex/rbac.yaml for a real provider).
+      HELIOS_OIDC_GROUP_CLAIM: email
+      HELIOS_OIDC_SCOPES: openid, profile, email, groups
+    volumes:
+      - ./rbac.yaml:/etc/helios/rbac.yaml:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  repo:
+    build:
+      context: ../../..
+      dockerfile: hack/repo-server/Dockerfile
+    network_mode: host
+    command: ["python3", "-m", "http.server", "8001", "--directory", "/srv"]
+    restart: unless-stopped
+
+  bootstrap:
+    build:
+      context: ../../..
+      dockerfile: hack/bootstrap/Dockerfile
+    network_mode: host
+    environment:
+      HELIOS_SERVER: http://localhost:8081
+      NUM_AGENTS: ${NUM_AGENTS:-2}
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-admin}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-changeme}
+      DEMO_REPO_URL: http://localhost:8001/demo.git
+    volumes:
+      - agentconf:/conf
+    depends_on:
+      - server
+      - repo
+    restart: "no"
+
+  agent-1:
+    build:
+      context: ../../..
+      dockerfile: agent/Dockerfile
+    network_mode: host
+    environment:
+      CONFIG_FILE: /etc/helios/agent-1.yaml
+    volumes:
+      - agentconf:/etc/helios
+    depends_on:
+      - bootstrap
+    restart: unless-stopped
+
+  agent-2:
+    build:
+      context: ../../..
+      dockerfile: agent/Dockerfile
+    network_mode: host
+    environment:
+      CONFIG_FILE: /etc/helios/agent-2.yaml
+    volumes:
+      - agentconf:/etc/helios
+    depends_on:
+      - bootstrap
+    restart: unless-stopped
+
+volumes:
+  dbdata:
+  agentconf:

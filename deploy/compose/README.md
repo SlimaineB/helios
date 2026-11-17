@@ -2,7 +2,9 @@
 
 This is the production-oriented hub compose file. For the lab/demo stack
 (Postgres + Dex + demo repo + two agents), use the root `compose.yaml` and
-[docs/QUICKSTART.md](../../docs/QUICKSTART.md).
+[docs/QUICKSTART.md](../../docs/QUICKSTART.md). A self-contained full example on
+shifted ports is in
+[`deploy/examples/dex-postgres`](../examples/dex-postgres/README.md).
 
 ## Install
 
