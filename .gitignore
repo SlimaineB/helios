@@ -24,3 +24,8 @@ src/content/docs/
 .astro/
 .venv/
 .cache/
+
+# local runtime artifacts
+agent.log
+hub.pid
+nohup.out
