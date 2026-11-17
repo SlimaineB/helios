@@ -120,6 +120,30 @@ func (a *Agent) jitterPercent() int {
 	return j
 }
 
+func (a *Agent) instanceIDValue() string {
+	a.policyMu.RLock()
+	id := a.instanceID
+	a.policyMu.RUnlock()
+	return id
+}
+
+// adoptInstanceID learns the canonical server-side ID from checkin. The
+// locally derived helper ID is only a bootstrap value; keeping it forever makes
+// every checkin log a mismatch warning.
+func (a *Agent) adoptInstanceID(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	a.policyMu.Lock()
+	changed := a.instanceID != id
+	a.instanceID = id
+	a.policyMu.Unlock()
+	if changed {
+		a.log.Info("using canonical server instance id", "instance_id", id)
+	}
+}
+
 // applyScanPolicy adopts the hub's fleet-wide interval/jitter. Per-app
 // sync_interval values still win in intervalFor, so operators can keep a
 // specific application on a slower or faster cadence.
@@ -153,7 +177,7 @@ func (a *Agent) applyScanPolicy(checkin client.CheckinOK) {
 // often than the others.
 func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent starting",
-		"server", a.cfg.Server, "instance_id", a.instanceID,
+		"server", a.cfg.Server, "instance_id", a.instanceIDValue(),
 		"poll", a.pollInterval().String(), "autoheal", a.cfg.AutoHeal)
 
 	go a.heartbeat(ctx)
@@ -264,7 +288,7 @@ func (a *Agent) checkinPayload() client.CheckinIn {
 		pollSecs = 1
 	}
 	return client.CheckinIn{
-		InstanceID:   a.instanceID,
+		InstanceID:   a.instanceIDValue(),
 		Version:      a.version,
 		Hostname:     a.hostname,
 		Platform:     a.platform,
@@ -301,6 +325,7 @@ func (a *Agent) pass(ctx context.Context) {
 	}
 
 	a.repoCache = checkin.RepoCache
+	a.adoptInstanceID(checkin.InstanceID)
 	a.applyScanPolicy(checkin)
 	starts := time.Now()
 	// Register assignments and drop state for apps no longer assigned before

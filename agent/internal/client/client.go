@@ -92,6 +92,7 @@ type CheckinOK struct {
 	Applications  []Application `json:"applications"`
 	Commands      []Command     `json:"commands"`
 	RepoCache     bool          `json:"repo_cache"`
+	InstanceID    string        `json:"instance_id,omitempty"`
 	ScanInterval  int64         `json:"scan_interval,omitempty"`
 	JitterPercent int           `json:"jitter_percent,omitempty"`
 }

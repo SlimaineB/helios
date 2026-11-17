@@ -1377,6 +1377,7 @@ type checkinResponse struct {
 	Applications  []model.Application `json:"applications"`
 	Commands      []model.Command     `json:"commands"`
 	RepoCache     bool                `json:"repo_cache"`
+	InstanceID    string              `json:"instance_id"`
 	ScanInterval  int64               `json:"scan_interval"`
 	JitterPercent int                 `json:"jitter_percent"`
 }
@@ -1449,6 +1450,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := checkinResponse{
 		RepoCache:     s.repoCache != nil,
+		InstanceID:    inst.ID,
 		ScanInterval:  scanning.IntervalSeconds,
 		JitterPercent: scanning.JitterPercent,
 	}

@@ -302,4 +302,7 @@ func TestTunnelCheckinReturnsScanPolicy(t *testing.T) {
 	if got.ScanInterval != 15 || got.JitterPercent != 35 {
 		t.Fatalf("scan policy = %d/%d, want 15/35", got.ScanInterval, got.JitterPercent)
 	}
+	if got.InstanceID != "tunnel-scan" {
+		t.Fatalf("instance id = %q, want tunnel-scan", got.InstanceID)
+	}
 }
