@@ -81,7 +81,7 @@ func Default() Config {
 	return Config{
 		Server:               "",
 		StateDir:             "/var/lib/helios/agent",
-		PollInterval:         5 * time.Minute,
+		PollInterval:         30 * time.Second,
 		JitterPercent:        20,
 		MaxConcurrentApps:    4,
 		AnsibleBin:           "ansible-playbook",
@@ -92,8 +92,7 @@ func Default() Config {
 	}
 }
 
-// Load reads a yaml config file and merges HELIOS_* env overrides. The legacy
-// ANSIBLEHUB_* / ANH_* / AHUB_* names are accepted as fallbacks.
+// Load reads a yaml config file and merges HELIOS_* env overrides.
 // Env vars (e.g. HELIOS_SERVER, HELIOS_TOKEN, HELIOS_POLL_INTERVAL=2m, HELIOS_AUTOHEAL=1).
 func Load(path string) (Config, error) {
 	cfg := Default()
@@ -108,12 +107,7 @@ func Load(path string) (Config, error) {
 	}
 
 	env := func(name string) string {
-		for _, prefix := range []string{"HELIOS_", "ANSIBLEHUB_", "ANH_", "AHUB_"} {
-			if v := os.Getenv(prefix + name); v != "" {
-				return v
-			}
-		}
-		return ""
+		return os.Getenv("HELIOS_" + name)
 	}
 
 	applyEnv := func(name string) error {

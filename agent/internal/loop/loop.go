@@ -37,6 +37,16 @@ type Agent struct {
 	mu        sync.Mutex
 	states    map[int64]*appState
 	repoCache bool
+
+	// The hub controls the fleet-wide scan cadence through checkin. Keep it
+	// separate from mu because nextWake holds mu while reading the interval.
+	policyMu     sync.RWMutex
+	scanInterval time.Duration
+	scanJitter   int
+
+	// wake interrupts the scan sleep when the fast command watcher sees a
+	// queued operator action (Check now / Apply now).
+	wake chan struct{}
 }
 
 func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
@@ -59,14 +69,17 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 		}
 	}
 	return &Agent{
-		cfg:      cfg,
-		client:   c,
-		runner:   &ansible.Runner{Bin: cfg.AnsibleBin, Target: target},
-		log:      log,
-		hostname: hostname,
-		version:  agentversion.Version,
-		platform: platform,
-		states:   map[int64]*appState{},
+		cfg:          cfg,
+		client:       c,
+		runner:       &ansible.Runner{Bin: cfg.AnsibleBin, Target: target},
+		log:          log,
+		hostname:     hostname,
+		version:      agentversion.Version,
+		platform:     platform,
+		states:       map[int64]*appState{},
+		scanInterval: cfg.PollInterval,
+		scanJitter:   cfg.JitterPercent,
+		wake:         make(chan struct{}, 1),
 	}
 }
 
@@ -88,10 +101,50 @@ func (a *Agent) ResolveInstanceID(ctx context.Context) error {
 }
 
 func (a *Agent) pollInterval() time.Duration {
+	a.policyMu.RLock()
+	iv := a.scanInterval
+	a.policyMu.RUnlock()
+	if iv > 0 {
+		return iv
+	}
 	if a.cfg.PollInterval > 0 {
 		return a.cfg.PollInterval
 	}
-	return 5 * time.Minute
+	return 30 * time.Second
+}
+
+func (a *Agent) jitterPercent() int {
+	a.policyMu.RLock()
+	j := a.scanJitter
+	a.policyMu.RUnlock()
+	return j
+}
+
+// applyScanPolicy adopts the hub's fleet-wide interval/jitter. Per-app
+// sync_interval values still win in intervalFor, so operators can keep a
+// specific application on a slower or faster cadence.
+func (a *Agent) applyScanPolicy(checkin client.CheckinOK) {
+	if checkin.ScanInterval <= 0 {
+		return
+	}
+	iv := time.Duration(checkin.ScanInterval) * time.Second
+	if iv < 5*time.Second {
+		iv = 5 * time.Second
+	}
+	if iv > 24*time.Hour {
+		iv = 24 * time.Hour
+	}
+	j := checkin.JitterPercent
+	if j < 0 {
+		j = 0
+	}
+	if j > 50 {
+		j = 50
+	}
+	a.policyMu.Lock()
+	a.scanInterval = iv
+	a.scanJitter = j
+	a.policyMu.Unlock()
 }
 
 // Run is the main poll loop: checkin -> drift check per app -> run commands.
@@ -104,6 +157,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		"poll", a.pollInterval().String(), "autoheal", a.cfg.AutoHeal)
 
 	go a.heartbeat(ctx)
+	go a.commandWatch(ctx)
 	for {
 		a.pass(ctx) // errors are logged inside
 		timer := time.NewTimer(a.nextWake())
@@ -112,6 +166,37 @@ func (a *Agent) Run(ctx context.Context) error {
 			timer.Stop()
 			return ctx.Err()
 		case <-timer.C:
+		case <-a.wake:
+			timer.Stop()
+		}
+	}
+}
+
+// commandWatch polls a lightweight endpoint so manual Check/Apply commands are
+// picked up in seconds instead of waiting for the next scheduled scan. The
+// probe does not claim commands: it only wakes the main loop, which performs a
+// normal checkin and claims them atomically with the application list.
+func (a *Agent) commandWatch(ctx context.Context) {
+	const interval = 5 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pending, err := a.client.PendingCommands(ctx)
+			if err != nil {
+				a.log.Debug("command probe failed", "error", err)
+				continue
+			}
+			if !pending {
+				continue
+			}
+			select {
+			case a.wake <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
@@ -139,7 +224,7 @@ func (a *Agent) nextWake() time.Duration {
 	if wait < time.Second {
 		wait = time.Second
 	}
-	return jitterDuration(wait, a.cfg.JitterPercent)
+	return jitterDuration(wait, a.jitterPercent())
 }
 
 // jitterDuration spreads a nominal interval by +/- pct percent. The result is
@@ -191,7 +276,7 @@ func (a *Agent) checkinPayload() client.CheckinIn {
 // minutes (a slow playbook), so liveness must not depend on pass() returning.
 func (a *Agent) heartbeat(ctx context.Context) {
 	for {
-		timer := time.NewTimer(jitterDuration(a.pollInterval(), a.cfg.JitterPercent))
+		timer := time.NewTimer(jitterDuration(a.pollInterval(), a.jitterPercent()))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -216,6 +301,7 @@ func (a *Agent) pass(ctx context.Context) {
 	}
 
 	a.repoCache = checkin.RepoCache
+	a.applyScanPolicy(checkin)
 	starts := time.Now()
 	// Register assignments and drop state for apps no longer assigned before
 	// anything runs, so an old queued command cannot apply a removed app.

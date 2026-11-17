@@ -75,7 +75,7 @@ func (s *Server) handleRunnerInstances(w http.ResponseWriter, r *http.Request) {
 // Staleness detection. An agent checks in once per poll interval, so allow
 // three missed beats (with a floor for very fast agents and a cap for slow
 // ones). Agents that predate poll_interval reporting keep the historical
-// seven-minute grace, which covers the default five-minute poll.
+// seven-minute grace.
 const (
 	defaultOfflineGrace = 7 * time.Minute
 	minOfflineGrace     = 30 * time.Second

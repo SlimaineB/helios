@@ -40,12 +40,20 @@ export default function Settings() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [testing, setTesting] = useState(false)
+  const [scanInterval, setScanInterval] = useState(30)
+  const [scanJitter, setScanJitter] = useState(20)
+  const [savingScan, setSavingScan] = useState(false)
   const loadedRef = useRef(false)
 
   const load = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     try {
-      setData(await api.settings())
+      const next = await api.settings()
+      setData(next)
+      if (next.scanning) {
+        setScanInterval(next.scanning.interval_seconds)
+        setScanJitter(next.scanning.jitter_percent)
+      }
     } catch (e) {
       if (!loadedRef.current) toast.error(e.message)
     } finally {
@@ -65,6 +73,23 @@ export default function Settings() {
       toast.error(e.message)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const saveScanning = async (e) => {
+    e.preventDefault()
+    setSavingScan(true)
+    try {
+      const next = await api.updateScanning({
+        interval_seconds: Number(scanInterval),
+        jitter_percent: Number(scanJitter),
+      })
+      setData((prev) => ({ ...prev, scanning: next }))
+      toast.success('Scan policy saved — agents will adopt it at their next checkin')
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setSavingScan(false)
     }
   }
 
@@ -93,6 +118,7 @@ export default function Settings() {
   const webhook = data.webhook || {}
   const retention = data.retention || {}
   const features = data.features || {}
+  const scanning = data.scanning || { interval_seconds: 30, jitter_percent: 20, min_seconds: 10, max_seconds: 86400 }
   const anyAuth = auth.basic_admin || auth.oidc
 
   return (
@@ -100,7 +126,7 @@ export default function Settings() {
       <div className="ov-head">
         <div>
           <h1><Settings2 size={24} /> Settings</h1>
-          <p className="page-intro">Effective hub configuration. Values come from environment variables or server flags.</p>
+          <p className="page-intro">Effective hub configuration. Security and storage values come from the environment; the fleet scan policy is editable here.</p>
         </div>
         <div className="ov-actions">
           <button type="button" className="btn ghost small" onClick={load} title="Reload settings">
@@ -160,6 +186,54 @@ export default function Settings() {
         <div className="card">
           <div className="card-head">
             <div>
+              <h3><TimerReset size={16} /> Scanning</h3>
+              <span className="sub">Fleet-wide drift check and auto-heal cadence</span>
+            </div>
+            <span className="state-badge enabled">{scanning.interval_seconds}s</span>
+          </div>
+          <div className="card-body settings-body">
+            <form className="scan-form" onSubmit={saveScanning}>
+              <label>
+                Scan interval (seconds)
+                <input
+                  type="number"
+                  min={scanning.min_seconds || 10}
+                  max={scanning.max_seconds || 86400}
+                  step="5"
+                  value={scanInterval}
+                  disabled={!can('settings', 'update')}
+                  onChange={(e) => setScanInterval(e.target.value)}
+                />
+                <span className="sub">How often agents check every assigned application. Lower is more reactive but uses more CPU on each host.</span>
+              </label>
+              <label>
+                Jitter (%)
+                <input
+                  type="number"
+                  min="0"
+                  max="50"
+                  step="1"
+                  value={scanJitter}
+                  disabled={!can('settings', 'update')}
+                  onChange={(e) => setScanJitter(e.target.value)}
+                />
+                <span className="sub">Spreads checkins so a large fleet does not hit the hub at the same instant.</span>
+              </label>
+              <div className="form-actions">
+                <button type="submit" className="btn small" disabled={savingScan || !can('settings', 'update')}>
+                  {savingScan ? 'Saving…' : 'Save scan policy'}
+                </button>
+              </div>
+            </form>
+            <div className="settings-note">
+              Agents adopt this policy at their next checkin. A per-application sync interval still overrides the fleet default.
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <div>
               <h3><TimerReset size={16} /> Retention</h3>
               <span className="sub">Automatic history pruning</span>
             </div>
@@ -201,7 +275,7 @@ export default function Settings() {
 
       <div className="settings-foot">
         <Activity size={15} />
-        <span>Configuration is read-only in the UI. Change the environment or server flags, then restart the hub.</span>
+        <span>Security and storage settings are read-only. Scanning can be edited above; agents adopt it at their next checkin.</span>
         <span className="spacer" />
         <GitBranch size={14} /> <code>helm/helios-server/values.yaml</code>
         <Rocket size={14} /> <code>HELIOS_VERSION</code>

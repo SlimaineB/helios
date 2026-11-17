@@ -25,7 +25,8 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   activity and bulk check/apply across selected hosts.
 - **Live updates** — SSE pushes run/command events; the UI refreshes without
   waiting for the next poll.
-- **Settings & retention** — effective auth/webhook configuration, a webhook
+- **Settings & retention** — effective auth/webhook configuration, editable fleet scan
+  interval/jitter, a webhook
   test button and automatic history pruning.
 - **Topology by default** — Applications and Instances switch between an
   interactive hub → instances → applications map, cards, or a dense list.

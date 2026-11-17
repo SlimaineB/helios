@@ -89,9 +89,11 @@ type Command struct {
 }
 
 type CheckinOK struct {
-	Applications []Application `json:"applications"`
-	Commands     []Command     `json:"commands"`
-	RepoCache    bool          `json:"repo_cache"`
+	Applications  []Application `json:"applications"`
+	Commands      []Command     `json:"commands"`
+	RepoCache     bool          `json:"repo_cache"`
+	ScanInterval  int64         `json:"scan_interval,omitempty"`
+	JitterPercent int           `json:"jitter_percent,omitempty"`
 }
 
 // TunnelConfig is the hub-assigned reverse tunnel endpoint.
@@ -238,6 +240,24 @@ func (c *Client) Heartbeat(ctx context.Context, in CheckinIn) error {
 		return err
 	}
 	return c.do(ctx, http.MethodPost, c.prefix+"/heartbeat", in, nil)
+}
+
+// PendingCommands is a cheap probe for the fast command watcher. It returns
+// true when the hub has queued operator actions, so the main loop can perform
+// an immediate checkin instead of waiting for the scan interval.
+func (c *Client) PendingCommands(ctx context.Context) (bool, error) {
+	if err := c.ensureTunnel(); err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var out struct {
+		Pending bool `json:"pending"`
+	}
+	if err := c.do(ctx, http.MethodGet, c.prefix+"/commands/pending", nil, &out); err != nil {
+		return false, err
+	}
+	return out.Pending, nil
 }
 
 // RunnerInstance is one tunnel instance discovered by a runner.

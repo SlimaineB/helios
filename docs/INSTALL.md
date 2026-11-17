@@ -141,21 +141,6 @@ OIDC and RBAC are configured with environment variables or a mounted file. See
 The compose file is intentionally small; add `env_file:` or extra volumes for
 your own OIDC/RBAC files.
 
-### Upgrading from AnsibleHub
-
-The rename to Helios keeps the old environment names working: `ANSIBLEHUB_*`,
-`ANH_*` and `AHUB_*` are read as fallbacks when the corresponding `HELIOS_*`
-variable is absent. The installers also create the legacy binary names as
-symlinks (`ansiblehub-server`, `ansiblehub-agent`), so an existing systemd unit
-that still points at the old path keeps working.
-
-New installs use `/etc/helios`, `/var/lib/helios` and the new binary/unit
-names. To migrate an existing host, install the new package, move the data to
-the new paths (or keep the old paths in the unit/config), then switch the unit
-and environment file at your own pace.
-
----
-
 ## Option B — systemd binary (no containers)
 
 ### One command from GitHub Releases
@@ -354,7 +339,7 @@ sudo ./deploy/install-agent.sh --server https://hub.example.com \
 ```
 
 Useful flags: `--instance-id`, `--autoheal 0|1`, `--max-concurrent N`,
-`--poll-interval 5m`, `--state-dir /var/lib/helios`. For an outbound-only host,
+`--poll-interval 30s`, `--state-dir /var/lib/helios`. For an outbound-only host,
 add `--mode tunnel`; see [Tunnel mode](#tunnel-mode--reverse-ssh).
 
 ### Rootless install (no root)
@@ -434,9 +419,11 @@ journalctl -u helios-agent -f
 For a rootless install, use `systemctl --user status helios-agent` and
 `journalctl --user -u helios-agent -f` instead.
 
-The instance appears in the UI within one poll (default `5m`; the lab uses 5s).
-Assign applications from the instance detail page or `POST
-/api/v1/instances/{id}/assign`.
+The instance appears in the UI within one poll (default `30s`). The fleet-wide
+scan interval and jitter are editable in **Settings → Scanning**; agents adopt
+the new policy at their next checkin, while per-application `sync_interval`
+values still override it. Assign applications from the instance detail page or
+`POST /api/v1/instances/{id}/assign`.
 
 ### Upgrade / uninstall
 

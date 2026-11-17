@@ -3,13 +3,10 @@
 # Checks health/auth, the demo app, registered agents and a fresh Check command.
 set -eu
 
-# env_compat NAME DEFAULT: HELIOS_NAME, then the pre-rename ANSIBLEHUB_/ANH_/AHUB_.
+# env_compat NAME DEFAULT: read HELIOS_<NAME>, or use DEFAULT.
 env_compat() {
-    for prefix in HELIOS_ ANSIBLEHUB_ ANH_ AHUB_; do
-        eval "value=\${$prefix$1:-}"
-        if [ -n "$value" ]; then printf '%s' "$value"; return; fi
-    done
-    printf '%s' "$2"
+  eval "value=\${HELIOS_$1:-$2}"
+  printf '%s' "$value"
 }
 
 BASE=$(env_compat SERVER http://localhost:8080)

@@ -232,7 +232,7 @@ export default function Overview() {
               <h3>Needs attention</h3>
               <span className="sub">Offline, failed, stuck or drifting assignments</span>
             </div>
-            <Link className="btn ghost small" to="/instances?state=drift">Open drift <ArrowRight size={13} /></Link>
+            <Link className="btn ghost small" to="/drift">Open drift <ArrowRight size={13} /></Link>
           </div>
           <div className="card-body">
             {model.attention.length === 0 ? (

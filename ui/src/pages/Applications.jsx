@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { GitCommit, LayoutGrid, List, Network } from 'lucide-react'
+import { ClipboardCheck, GitCommit, LayoutGrid, List, Network, Pencil, Play, History, Trash2, Variable } from 'lucide-react'
 import { api, DEFAULT_PROJECT, projectForUi, projectForApi, projectLabel } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
@@ -8,6 +8,8 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
 import HealthBadge from '../components/HealthBadge.jsx'
 import ApplicationCard from '../components/ApplicationCard.jsx'
+import QuickMenu from '../components/QuickMenu.jsx'
+import AutoHealChip from '../components/AutoHealChip.jsx'
 import ApplicationHistory from '../components/ApplicationHistory.jsx'
 import ApplicationDetail from '../components/ApplicationDetail.jsx'
 import TopologyView from '../components/TopologyView.jsx'
@@ -36,6 +38,7 @@ async function fetchAllInstances() {
 
 const emptyApp = { name: '', branch: 'main', path: 'site.yml', autoheal: false, sync_interval: 0, ignore_paths: '', project: DEFAULT_PROJECT }
 const emptyRepo = { name: '', url: '', username: '', password: '', ssh_key: '', insecure_skip_verify: false }
+const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
 
 export default function Applications() {
   const { can } = useAuth()
@@ -217,6 +220,33 @@ export default function Applications() {
   }
 
   const openDetail = (app) => setDetailApp(app)
+
+  const appNodeIDs = (appID) =>
+    instances.filter((i) => (i.apps || []).some((a) => a.application.id === appID)).map((i) => i.id)
+
+  const runApp = async (app, action) => {
+    const ids = appNodeIDs(app.id)
+    if (!ids.length) {
+      toast.info('No node is running this application')
+      return
+    }
+    const label = action === 'apply' ? 'Apply' : 'Check'
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => (action === 'apply' ? api.sync(id, app.id) : api.check(id, app.id))),
+      )
+      const ok = results.filter((r) => r.status === 'fulfilled').length
+      const failed = results.length - ok
+      if (ok) toast.success(`${label} queued on ${ok} node${ok === 1 ? '' : 's'}`)
+      if (failed) {
+        const first = results.find((r) => r.status === 'rejected')
+        toast.error(`${failed} node${failed === 1 ? '' : 's'} failed: ${first?.reason?.message || 'request failed'}`)
+      }
+      setTimeout(refresh, 800)
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
   const editFromDetail = (app) => {
     setDetailApp(null)
     openEdit(app)
@@ -273,16 +303,21 @@ export default function Applications() {
 
   const appStats = useMemo(() => {
     const map = new Map()
-    for (const app of apps) map.set(app.id, { instances: 0, drift: 0, error: 0, stuck: 0, revision: '', revisionMsg: '', revisionAt: 0 })
+    for (const app of apps) map.set(app.id, { instances: 0, synced: 0, unknown: 0, drift: 0, error: 0, stuck: 0, autoheal: 0, revision: '', revisionMsg: '', revisionAt: 0, lastAt: 0 })
     for (const inst of instances) {
       for (const a of inst.apps || []) {
         const s = map.get(a.application.id)
         if (!s) continue
         s.instances++
         if (a.stuck) s.stuck++
+        if (a.autoheal) s.autoheal++
         const st = a.latest_check?.status
-        if (st === 'drift') s.drift++
-        if (st === 'failed' || st === 'error') s.error++
+        if (st === 'ok') s.synced++
+        else if (st === 'drift') s.drift++
+        else if (st === 'failed' || st === 'error') s.error++
+        else s.unknown++
+        const checkedAt = new Date(a.last_check_at || a.latest_check?.finished_at || 0).getTime()
+        if (checkedAt > s.lastAt) s.lastAt = checkedAt
         const run = a.latest_check
         if (run?.commit_after) {
           const at = new Date(run.finished_at || 0).getTime()
@@ -570,6 +605,8 @@ export default function Applications() {
               onDetail={openDetail}
               onHistory={() => setHistoryApp(a)}
               can={can}
+              onCheckAll={() => runApp(a, 'check')}
+              onApplyAll={() => runApp(a, 'apply')}
               onEdit={openEdit}
               onDelete={confirmDelete}
               onVars={setVarsApp}
@@ -578,21 +615,45 @@ export default function Applications() {
         </div>
       ) : (
         <div className="table-wrap">
-          <table className="grid">
+          <table className="grid summary-table">
             <thead>
               <tr>
                 <th>Application</th>
-                <th>Project</th>
-                <th>Repository</th>
-                <th>Revision</th>
-                <th style={{ width: '140px' }}>Instances</th>
-                <th style={{ width: '160px' }}>Health</th>
-                <th style={{ width: '300px' }}>Actions</th>
+                <th style={{ width: '150px' }}>Project</th>
+                <th style={{ width: '150px' }}>Nodes</th>
+                <th style={{ width: '170px' }}>State</th>
+                <th style={{ width: '190px' }}>Auto-heal</th>
+                <th style={{ width: '130px' }}>Revision</th>
+                <th style={{ width: '130px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredApps.map((a) => {
-                const s = appStats.get(a.id) || { instances: 0, drift: 0, error: 0, stuck: 0 }
+                const st = appStats.get(a.id) || {}
+                const s = { instances: 0, synced: 0, unknown: 0, drift: 0, error: 0, stuck: 0, autoheal: 0, ...st }
+                const unhealthy = s.error + s.stuck
+                const health = unhealthy > 0 ? 'failed' : s.drift > 0 ? 'drift' : s.instances === 0 || s.synced < s.instances ? 'unknown' : 'ok'
+                const healthLabel = unhealthy > 0
+                  ? `${unhealthy} failed`
+                  : s.drift > 0
+                    ? `${s.drift} drifted`
+                    : s.instances === 0
+                      ? 'Unassigned'
+                      : s.synced === s.instances
+                        ? 'Synced'
+                        : `${s.synced}/${s.instances} synced`
+                const canRun = can('commands', 'create') && s.instances > 0
+                const menu = [
+                  { label: 'View nodes', icon: Network, to: `/instances?app=${a.id}` },
+                  { label: 'Check all nodes', icon: ClipboardCheck, onClick: () => runApp(a, 'check'), disabled: !canRun },
+                  { label: 'Apply to all nodes', icon: Play, onClick: () => runApp(a, 'apply'), disabled: !canRun },
+                  { label: 'History', icon: History, onClick: () => setHistoryApp(a) },
+                  { separator: true },
+                  { label: 'Edit', icon: Pencil, onClick: () => openEdit(a), disabled: !can('applications', 'update') },
+                  { label: 'Variables', icon: Variable, onClick: () => setVarsApp(a), disabled: !can('applications', 'update') },
+                  { separator: true },
+                  { label: 'Delete', icon: Trash2, onClick: () => confirmDelete(a), disabled: !can('applications', 'delete'), danger: true },
+                ]
                 return (
                   <tr key={a.id} id={`app-${a.id}`} className={a.id === focusAppId ? 'is-focused' : undefined}>
                     <td>
@@ -606,68 +667,46 @@ export default function Applications() {
                           <strong>{a.name}</strong>
                         </button>
                         <span className="cell-sub">
-                          <CopyButton value={String(a.id)} size="small" title="Copy app ID" />
                           <span className="mono">id {a.id}</span>
-                          {a.autoheal && <span className="project-badge" title="Auto-apply on drift is enabled">auto-apply</span>}
+                          <span className="mono repo-cell" title={a.repo_url}>{shortRepo(a.repo_url)}</span>
                         </span>
-                        <button
-                          type="button"
-                          className="rev-link"
-                          onClick={() => setHistoryApp(a)}
-                          title={s.revisionMsg || 'View revision history'}
-                        >
-                          <GitCommit size={12} />
-                          <span className="mono">{s.revision ? s.revision.slice(0, 7) : 'History'}</span>
-                        </button>
                       </div>
                     </td>
                     <td><span className="project-badge">{projectLabel(a.project)}</span></td>
                     <td>
-                      <span className="mono repo-cell" title={a.repo_url}>{a.repo_url}</span>
-                    </td>
-                    <td>
                       <div className="cell-title">
-                        <span className="mono">{a.branch}</span>
-                        <span className="cell-sub mono">{a.path ? a.path.split('/').pop() : '—'}</span>
+                        <strong className="mono">{s.synced}/{s.instances}</strong>
+                        <span className="cell-sub">
+                          {s.instances} node{s.instances === 1 ? '' : 's'}
+                          {s.unknown ? ` · ${s.unknown} unknown` : ''}
+                        </span>
                       </div>
                     </td>
+                    <td><HealthBadge state={health} label={healthLabel} size={13} small /></td>
                     <td>
-                      <Link
-                        to={`/instances?app=${a.id}`}
-                        className={`instance-count ${s.instances ? '' : 'empty-link'}`}
-                        title="View instances running this application"
+                      <AutoHealChip
+                        enabled={!!a.autoheal}
+                        scope="app"
+                        label={a.autoheal ? `on · ${s.autoheal}/${s.instances} hosts` : 'off'}
+                        reason={a.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="rev-link"
+                        onClick={() => setHistoryApp(a)}
+                        title={s.revisionMsg || 'View revision history'}
                       >
-                        {s.instances} instance{s.instances === 1 ? '' : 's'}
-                      </Link>
-                      {s.drift > 0 && <div className="cell-sub drift-text">{s.drift} in drift</div>}
+                        <GitCommit size={12} />
+                        <span className="mono">{s.revision ? s.revision.slice(0, 7) : 'History'}</span>
+                      </button>
+                      <div className="cell-sub mono">{a.branch}</div>
                     </td>
                     <td>
-                      {(() => {
-                        const unhealthy = s.error + s.stuck
-                        const health = unhealthy > 0 ? 'failed' : s.instances === 0 ? 'unknown' : s.drift > 0 ? 'drift' : 'ok'
-                        const label = unhealthy > 0
-                          ? `${unhealthy} failed`
-                          : s.instances === 0
-                            ? 'Unassigned'
-                            : s.drift > 0
-                              ? `${s.drift} in drift`
-                              : 'Synced'
-                        return <HealthBadge state={health} label={label} size={13} small />
-                      })()}
-                    </td>
-                    <td>
-                      <div className="app-actions">
-                        <Link
-                          className={`btn small${s.drift > 0 ? ' warn' : ''}`}
-                          to={`/instances?app=${a.id}`}
-                          title={s.drift > 0 ? 'Review instances with drift' : 'View instances running this application'}
-                        >
-                          {s.drift > 0 ? 'Review drift' : 'Instances'}
-                        </Link>
-                        <button className="btn ghost small" title="Historique des runs" onClick={() => setHistoryApp(a)}>History</button>
-                        <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => openEdit(a)}>Edit</button>
-                        <button className="btn ghost small" disabled={!can('applications', 'update')} onClick={() => setVarsApp(a)}>Vars</button>
-                        <button className="btn danger small" disabled={!can('applications', 'delete')} onClick={() => confirmDelete(a)}>Delete</button>
+                      <div className="row-actions">
+                        <Link className="btn ghost small" to={`/instances?app=${a.id}`}>Open</Link>
+                        <QuickMenu label={`Actions for ${a.name}`} items={menu} />
                       </div>
                     </td>
                   </tr>

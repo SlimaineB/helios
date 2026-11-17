@@ -69,10 +69,10 @@ type InstanceWithApps struct {
 }
 
 type AppStatus struct {
-	Application model.Application `json:"application"`
-	AutoHeal    bool              `json:"autoheal"`      // effective value (host AND app AND override)
-	AutoHealSet bool              `json:"autoheal_set"`  // true when an explicit override exists
-	HostAutoHeal bool             `json:"host_autoheal"` // host-level kill switch value
+	Application  model.Application `json:"application"`
+	AutoHeal     bool              `json:"autoheal"`      // effective value (host AND app AND override)
+	AutoHealSet  bool              `json:"autoheal_set"`  // true when an explicit override exists
+	HostAutoHeal bool              `json:"host_autoheal"` // host-level kill switch value
 	// Stuck marks autoheal as blocked: the last max-drifting apply cycles did
 	// not converge, so the server stopped asking the agent to apply.
 	Stuck       bool      `json:"stuck"`

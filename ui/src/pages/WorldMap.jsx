@@ -103,7 +103,7 @@ const GEO = {
 }
 
 function detectLocation(inst) {
-  const hay = `${inst.name || ''} ${inst.project || ''}`
+  const hay = `${inst.region || ''} ${inst.name || ''} ${inst.project || ''}`
   const tokens = hay.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
   let best = null
   for (const t of tokens) {
@@ -230,7 +230,7 @@ export default function WorldMap() {
     if (appFilter && !(inst.apps || []).some((a) => String(a.application.id) === appFilter)) return false
     if (stateFilter && hostState(inst) !== stateFilter) return false
     if (q) {
-      const hay = [inst.name, inst.id, inst.project, loc?.label, ...(inst.apps || []).map((a) => a.application.name)]
+      const hay = [inst.name, inst.id, inst.project, inst.region, loc?.label, ...(inst.apps || []).map((a) => a.application.name)]
         .filter(Boolean).join(' ').toLowerCase()
       if (!hay.includes(q)) return false
     }
@@ -421,7 +421,7 @@ export default function WorldMap() {
             >
               <strong>{hover.inst.name}</strong>
               <span className={`wm-tooltip-state ${hostState(hover.inst)}`}>{STATE_LABEL[hostState(hover.inst)]}</span>
-              <span className="wm-tooltip-row">{hover.loc.label} · {hover.inst.project || 'global'}</span>
+              <span className="wm-tooltip-row">{hover.loc.label} · {hover.inst.project || 'global'}{hover.inst.region ? ` · ${hover.inst.region}` : ''}</span>
               <span className="wm-tooltip-row">{(hover.inst.apps || []).length} app{(hover.inst.apps || []).length === 1 ? '' : 's'}{hover.inst.autoheal === false ? ' · auto-apply off' : ''}</span>
             </div>
           )}
@@ -451,7 +451,7 @@ export default function WorldMap() {
                     <span className={`dot ${st}`} />
                     <span className="wm-item-main">
                       <span className="wm-item-name">{m.inst.name}</span>
-                      <span className="wm-item-sub">{m.loc.label} · {m.inst.project || 'global'}</span>
+                      <span className="wm-item-sub">{m.loc.label} · {m.inst.project || 'global'}{m.inst.region ? ` · ${m.inst.region}` : ''}</span>
                     </span>
                     <span className="wm-item-end">
                       <span className="wm-off-slot">
@@ -469,7 +469,7 @@ export default function WorldMap() {
                   <span className={`dot ${hostState(inst)}`} />
                   <span className="wm-item-main">
                     <span className="wm-item-name">{inst.name}</span>
-                    <span className="wm-item-sub">Location unknown · {inst.project || 'global'}</span>
+                    <span className="wm-item-sub">Location unknown · {inst.project || 'global'}{inst.region ? ` · ${inst.region}` : ''}</span>
                   </span>
                   <span className="wm-badge unknown">Unplaced</span>
                 </Link>
@@ -481,8 +481,8 @@ export default function WorldMap() {
           </ul>
           {unknown.length > 0 && (
             <p className="wm-hint">
-              <Server size={13} /> {unknown.length} host{unknown.length === 1 ? '' : 's'} have no region in their name.
-              Add a token like <code>eu</code>, <code>us</code>, <code>de</code>… to place them.
+              <Server size={13} /> {unknown.length} host{unknown.length === 1 ? '' : 's'} have no recognizable location.
+              Set the instance <strong>region</strong> (or add a token like <code>eu</code>, <code>us</code>, <code>de</code> to the name).
             </p>
           )}
         </aside>

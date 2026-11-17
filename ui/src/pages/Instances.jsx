@@ -1,12 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, LayoutGrid, List, Network } from 'lucide-react'
+import { ClipboardCheck, LayoutGrid, List, Network, Play, RefreshCw, Server } from 'lucide-react'
 import { api, stateLabel, instanceOnline, DEFAULT_PROJECT, projectForApi, projectLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
-import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
-import LogsModal from '../components/LogsModal.jsx'
-import DiffModal from '../components/DiffModal.jsx'
-import VariableEditor from '../components/VariableEditor.jsx'
+import AutoHealChip, { hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import Modal from '../components/Modal.jsx'
@@ -17,6 +14,7 @@ import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import TopologyView from '../components/TopologyView.jsx'
 import InstancesCard from '../components/InstancesCard.jsx'
+import QuickMenu from '../components/QuickMenu.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
@@ -49,7 +47,7 @@ function appState(app) {
 }
 
 function instanceMatches(inst, q) {
-  return !q || [inst.name, inst.id, inst.project].join(' ').toLowerCase().includes(q)
+  return !q || [inst.name, inst.id, inst.project, inst.region].join(' ').toLowerCase().includes(q)
 }
 
 function appMatches(inst, app, { appFilter, stateFilter, q }) {
@@ -59,314 +57,137 @@ function appMatches(inst, app, { appFilter, stateFilter, q }) {
   return true
 }
 
-function InstancesTree({ instances, onAction, onHostAutoHeal, onAppAutoHeal, onDiff, onLogs, onVars, onUnassign, can, expanded, toggle, pendingFor, appFilter, search, stateFilter, selected, onSelect }) {
-  const q = search.trim().toLowerCase()
-  const appsFor = (inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))
+function instanceSummary(inst) {
+  const apps = inst.apps || []
+  return apps.reduce((acc, a) => {
+    acc.total++
+    if (a.stuck) acc.stuck++
+    if (a.autoheal) acc.autoheal++
+    const st = a.latest_check?.status
+    if (st === 'ok') acc.synced++
+    else if (st === 'drift') acc.drift++
+    else if (st === 'failed' || st === 'error') acc.failed++
+    else acc.unknown++
+    return acc
+  }, { total: 0, synced: 0, drift: 0, failed: 0, stuck: 0, unknown: 0, autoheal: 0 })
+}
 
-  const groups = useMemo(() => {
-    const map = new Map()
-    for (const inst of instances) {
-      const key = inst.project || ''
-      if (!map.has(key)) map.set(key, [])
-      map.get(key).push(inst)
-    }
-    return [...map.entries()].sort((a, b) => (a[0] || '~').localeCompare(b[0] || '~'))
-  }, [instances])
+function InstancesTree({ instances, onCheckAll, onApplyAll, onHostAutoHeal, can, selected, onSelect }) {
+  const rows = useMemo(
+    () => [...instances].sort((a, b) => (a.project || '~').localeCompare(b.project || '~') || a.name.localeCompare(b.name)),
+    [instances],
+  )
 
   return (
     <div className="table-wrap">
-      <table className="grid tree-table">
+      <table className="grid summary-table">
         <thead>
           <tr>
-            <th style={{ width: '36px' }} aria-label="Tree" />
+            <th style={{ width: '36px' }} aria-label="Select" />
             <th style={{ width: '36px' }} aria-label="Status" />
-            <th>Instance / application</th>
-            <th style={{ width: '110px' }}>State</th>
+            <th>Instance</th>
+            <th style={{ width: '150px' }}>Project</th>
+            <th style={{ width: '160px' }}>Server</th>
+            <th style={{ width: '190px' }}>Applications</th>
+            <th style={{ width: '200px' }}>Auto-heal</th>
             <th style={{ width: '120px' }}>Last check</th>
-            <th>Details</th>
-            <th style={{ width: '300px' }}>Actions</th>
+            <th style={{ width: '130px' }}>Actions</th>
           </tr>
         </thead>
-        {groups.map(([project, list]) => {
-          const pkey = `p:${project}`
-          const pOpen = expanded.has(pkey)
-          const appCount = list.reduce((n, i) => n + appsFor(i).length, 0)
-          return (
-            <tbody key={pkey}>
-              <tr className="tree-group">
-                <td colSpan={7}>
-                  <button
-                    type="button"
-                    className="tree-toggle"
-                    onClick={() => toggle(pkey)}
-                    aria-expanded={pOpen}
-                  >
-                    {pOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                  </button>
-                  <span className="tree-name">{projectLabel(project)}</span>
-                  <span className="tree-count">
-                    {list.length} instance{list.length === 1 ? '' : 's'} · {appCount} app{appCount === 1 ? '' : 's'}
-                  </span>
+        <tbody>
+          {rows.map((inst) => {
+            const isOnline = online(inst)
+            const c = instanceSummary(inst)
+            const hostOn = hostAutoHealOn(inst)
+            const hostState = !isOnline ? 'offline' : inst.state === 'ok' ? 'ok' : inst.state || 'unknown'
+            const canRun = can('commands', 'create') && c.total > 0
+            const menu = [
+              { label: 'Open details', icon: Server, to: `/instances/${inst.id}` },
+              { separator: true },
+              { label: 'Check all applications', icon: ClipboardCheck, onClick: () => onCheckAll?.(inst), disabled: !canRun },
+              { label: 'Apply all applications', icon: Play, onClick: () => onApplyAll?.(inst), disabled: !canRun },
+              c.total === 1
+                ? { label: 'Open application', icon: Network, to: `/applications?app=${inst.apps[0].application.id}` }
+                : null,
+              { separator: true },
+              {
+                label: hostOn ? 'Disable host auto-heal' : 'Enable host auto-heal',
+                icon: RefreshCw,
+                onClick: () => onHostAutoHeal?.(inst, !hostOn),
+                disabled: !can('instances', 'update'),
+              },
+            ]
+            return (
+              <tr key={inst.id} className="summary-row">
+                <td>
+                  <input
+                    type="checkbox"
+                    className="row-select"
+                    checked={selected?.has(inst.id) || false}
+                    onChange={() => onSelect?.(inst.id)}
+                    aria-label={`Select ${inst.name}`}
+                  />
+                </td>
+                <td>
+                  <span
+                    className={`status-dot ${isOnline ? 'online' : 'offline'}`}
+                    title={isOnline ? 'online' : 'offline'}
+                  />
+                </td>
+                <td>
+                  <div className="cell-title">
+                    <Link to={`/instances/${inst.id}`} className="instance-link">
+                      <strong>{inst.name}</strong>
+                    </Link>
+                    <span className="cell-sub">
+                      <Badge
+                        state={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
+                        label={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
+                        small
+                      />
+                      <span className="mono">{inst.id}</span>
+                      {inst.region && <span>· {inst.region}</span>}
+                    </span>
+                  </div>
+                </td>
+                <td><span className="project-badge">{projectLabel(inst.project)}</span></td>
+                <td>
+                  <div className="cell-title">
+                    <Badge state={hostState} label={stateLabel(hostState)} small />
+                    <span className="cell-sub">{isOnline ? 'reachable' : 'no recent heartbeat'}</span>
+                  </div>
+                </td>
+                <td>
+                  <div className="cell-title">
+                    <strong className="mono">{c.synced}/{c.total}</strong>
+                    <span className="cell-sub">
+                      {c.total} deployed
+                      {c.drift ? ` · ${c.drift} drift` : ''}
+                      {c.failed + c.stuck ? ` · ${c.failed + c.stuck} failed` : ''}
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <div className="cell-title">
+                    <AutoHealChip
+                      enabled={hostOn}
+                      scope="host"
+                      reason={hostOn ? 'Host auto-apply enabled' : 'No application on this host is applied automatically'}
+                    />
+                    <span className="cell-sub">{c.autoheal}/{c.total} apps</span>
+                  </div>
+                </td>
+                <td className="muted">{fmtTime(inst.last_check_at)}</td>
+                <td>
+                  <div className="row-actions">
+                    <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
+                    <QuickMenu label={`Actions for ${inst.name}`} items={menu} />
+                  </div>
                 </td>
               </tr>
-
-              {pOpen && list.map((inst) => {
-                const ikey = `i:${inst.id}`
-                const iOpen = expanded.has(ikey)
-                const apps = appsFor(inst)
-                return (
-                  <Fragment key={ikey}>
-                    <tr className="tree-instance">
-                      <td>
-                        <button
-                          type="button"
-                          className="tree-toggle"
-                          onClick={() => toggle(ikey)}
-                          aria-expanded={iOpen}
-                          aria-label={iOpen ? `Collapse ${inst.name}` : `Expand ${inst.name}`}
-                        >
-                          {iOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                        </button>
-                      </td>
-                      <td>
-                        <span
-                          className={`status-dot ${online(inst) ? 'online' : 'offline'}`}
-                          title={online(inst) ? 'online' : 'offline'}
-                        />
-                      </td>
-                      <td>
-                        <div className="cell-title">
-                          <input
-                            type="checkbox"
-                            className="row-select"
-                            checked={selected?.has(inst.id) || false}
-                            onChange={() => onSelect?.(inst.id)}
-                            aria-label={`Select ${inst.name}`}
-                          />
-                          <Link to={`/instances/${inst.id}`} className="instance-link">
-                            <strong>{inst.name}</strong>
-                          </Link>
-                          <Badge
-                            state={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
-                            label={inst.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
-                            small
-                          />
-                          {!hostAutoHealOn(inst) && (
-                            <AutoHealChip enabled={false} scope="host" reason="No application on this host is applied automatically" />
-                          )}
-                          <span className="cell-sub">
-                            <CopyButton value={String(inst.id)} size="small" title="Copy instance ID" />
-                            <span className="mono">{inst.id}</span>
-                          </span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`state-badge ${inst.state}`}>{stateLabel(inst.state)}</span>
-                      </td>
-                      <td className="muted">{fmtTime(inst.last_check_at)}</td>
-                      <td>
-                        <span className="muted">
-                          {apps.length
-                            ? `${apps.length} application${apps.length === 1 ? '' : 's'}`
-                            : 'no application'}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="host-actions">
-                          <label
-                            className="switch"
-                            title={hostAutoHealOn(inst)
-                              ? 'Host auto-apply enabled — turn off to pause every app on this host'
-                              : 'Host auto-apply disabled — turn on to resume'}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={hostAutoHealOn(inst)}
-                              disabled={!can('instances', 'update')}
-                              onChange={() => onHostAutoHeal(inst, !hostAutoHealOn(inst))}
-                            />
-                            <span className="slider" />
-                          </label>
-                          <Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link>
-                        </div>
-                      </td>
-                    </tr>
-
-                    {iOpen && apps.map((app) => {
-                      const pending = pendingFor(inst.id, app.application.id)
-                      const drifting = appState(app) === 'drift'
-                      const ah = appAutoHealMeta(inst, app)
-                      return (
-                      <tr className="tree-app" key={`${inst.id}-${app.application.id}`}>
-                        <td />
-                        <td>
-                          <span
-                            className={`status-dot ${appState(app)}`}
-                            title={appState(app)}
-                          />
-                        </td>
-                        <td>
-                          <div className="cell-title">
-                            <div className="app-name">
-                              <Link className="entity-link" to={`/applications?app=${app.application.id}`} title="Open application">
-                                {app.application.name}
-                              </Link>
-                              {app.stuck && <Badge state="stuck" label="stuck" small />}
-                              {!app.autoheal && (
-                                <AutoHealChip
-                                  enabled={false}
-                                  scope="assignment"
-                                  label={ah.locked ? 'auto-apply blocked' : 'auto-apply off'}
-                                  reason={ah.reason}
-                                />
-                              )}
-                            </div>
-                            {app.latest_check?.commit_after && (
-                              <span className="cell-sub">
-                                <span className="mono">{app.latest_check.commit_after.slice(0, 7)}</span>
-                                {app.latest_check.commit_msg && (
-                                  <span className="commit-msg">{app.latest_check.commit_msg}</span>
-                                )}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`state-badge ${appState(app)}`}>{stateLabel(appState(app))}</span>
-                        </td>
-                        <td className="muted">{fmtTime(app.last_check_at || app.latest_check?.finished_at)}</td>
-                        <td>
-                          {app.latest_check?.changed_tasks?.length > 0 ? (
-                            <div className="drift-tasks">
-                              {app.latest_check.changed_tasks.map((t, i) => (
-                                <span
-                                  key={i}
-                                  className="drift-chip"
-                                  title={t.host ? `host: ${t.host}` : undefined}
-                                >
-                                  {t.task}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="muted">—</span>
-                          )}
-                        </td>
-                        <td>
-                          <div className="app-actions">
-                            {app.stuck ? (
-                              <button
-                                className="btn warn small"
-                                disabled={!can('instances', 'update') || app.autoheal}
-                                onClick={() => onAction(inst.id, app.application.id, 'rearm')}
-                                title="Resume auto-apply once the playbook is fixed"
-                              >
-                                Resume auto-apply
-                              </button>
-                            ) : (
-                              <>
-                                {ah.locked ? (
-                                  <button
-                                    type="button"
-                                    className="btn small"
-                                    disabled={ah.hostLocked ? !can('instances', 'update') : !can('applications', 'update')}
-                                    title={ah.reason}
-                                    onClick={() => (ah.hostLocked
-                                      ? onHostAutoHeal(inst, true)
-                                      : onAppAutoHeal(app.application.id))}
-                                  >
-                                    {ah.hostLocked ? 'Enable host' : 'Enable app'}
-                                  </button>
-                                ) : (
-                                  <label className="switch" title="Auto-apply on drift for this application on this host">
-                                    <input
-                                      type="checkbox"
-                                      checked={app.autoheal}
-                                      disabled={!can('instances', 'update')}
-                                      onChange={() => onAction(inst.id, app.application.id, 'toggle-autoheal')}
-                                    />
-                                    <span className="slider" />
-                                  </label>
-                                )}
-                                <span className={`sub ${app.autoheal ? '' : 'muted'}`}>{ah.label}</span>
-                              </>
-                            )}
-                            <button
-                              className="btn small"
-                              disabled={!can('commands', 'create') || !!pending}
-                              aria-busy={pending?.action === 'apply'}
-                              onClick={() => onAction(inst.id, app.application.id, 'apply')}
-                            >
-                              {pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}
-                              Apply now
-                            </button>
-                            <button
-                              className="btn ghost small"
-                              disabled={!can('commands', 'create') || !!pending}
-                              aria-busy={pending?.action === 'check'}
-                              onClick={() => onAction(inst.id, app.application.id, 'check')}
-                            >
-                              {pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}
-                              Check now
-                            </button>
-                            {app.latest_check?.id && (
-                              <>
-                                {drifting && (
-                                  <button
-                                    className="btn small warn"
-                                    title="Review the latest drift diff"
-                                    onClick={() => onDiff(app.latest_check.id)}
-                                  >
-                                    Review drift
-                                  </button>
-                                )}
-                                <button
-                                  className="btn ghost small"
-                                  title="View the full latest run log"
-                                  onClick={() => onLogs(app.latest_check.id)}
-                                >
-                                  View logs
-                                </button>
-                              </>
-                            )}
-                            <button
-                              className="btn ghost small"
-                              disabled={!can('instances', 'update')}
-                              onClick={() => onVars({ inst, app })}
-                            >
-                              Vars
-                            </button>
-                            <button
-                              className="btn danger small"
-                              disabled={!can('instances', 'update')}
-                              onClick={() => onUnassign(inst, app)}
-                              title="Remove this application from this instance only"
-                            >
-                              Unassign
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      )
-                    })}
-
-                    {iOpen && !apps.length && (
-                      <tr className="tree-app tree-empty">
-                        <td />
-                        <td />
-                        <td colSpan={5} className="muted">
-                          {appFilter || stateFilter || (q && !instanceMatches(inst, q))
-                            ? 'No application matches these filters.'
-                            : 'No application assigned — assign one from the Applications page.'}
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                )
-              })}
-            </tbody>
-          )
-        })}
+            )
+          })}
+        </tbody>
       </table>
     </div>
   )
@@ -381,18 +202,15 @@ export default function Instances() {
   const [showReg, setShowReg] = useState(false)
   const [regName, setRegName] = useState('')
   const [regProject, setRegProject] = useState(DEFAULT_PROJECT)
+  const [regRegion, setRegRegion] = useState('')
   const [regMode, setRegMode] = useState('agent')
   const [projects, setProjects] = useState([])
   const [regResult, setRegResult] = useState(null)
   const [regError, setRegError] = useState('')
   const [downloads, setDownloads] = useState([])
   const [busy, setBusy] = useState({})
-  const [runModal, setRunModal] = useState(null)
-  const [diffModal, setDiffModal] = useState(null)
-  const [varsApp, setVarsApp] = useState(null)
   const [confirm, setConfirm] = useState(null)
   const [pageOff, setPageOff] = useState(0)
-  const [expanded, setExpanded] = useState(() => new Set())
   const [selected, setSelected] = useState(() => new Set())
   const [bulkBusy, setBulkBusy] = useState('')
   const [view, setView] = useState(() => {
@@ -422,7 +240,7 @@ export default function Instances() {
   }, [])
 
   const commands = useCommandRunner(refresh)
-  const modalOpen = showReg || !!runModal || !!diffModal || !!varsApp || !!confirm
+  const modalOpen = showReg || !!confirm
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -457,17 +275,17 @@ export default function Instances() {
 
   useEffect(() => {
     setPageOff(0)
-    setExpanded(new Set())
   }, [search, stateFilter, projectFilter, appFilter, modeFilter, onlineOnly])
 
   const addInstance = async (e) => {
     e.preventDefault()
     setRegError('')
     try {
-      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regMode)
+      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regMode, regRegion.trim())
       setRegResult(res)
       setRegName('')
       setRegProject(DEFAULT_PROJECT)
+      setRegRegion('')
       setRegMode('agent')
       toast.success('Instance registered')
       refresh()
@@ -480,6 +298,7 @@ export default function Instances() {
     setShowReg(false)
     setRegResult(null)
     setRegName('')
+    setRegRegion('')
     setRegError('')
     setRegMode('agent')
   }
@@ -521,31 +340,6 @@ export default function Instances() {
       ].join('\n')
     : ''
 
-  const act = async (instId, appId, action) => {
-    if (action === 'apply' || action === 'check') {
-      commands.run(instId, appId, action)
-      return
-    }
-    const key = `${instId}:${appId}:${action}`
-    setBusy((b) => ({ ...b, [key]: true }))
-    try {
-      if (action === 'toggle-autoheal') {
-        const cur = instances
-          .find((i) => i.id === instId)
-          ?.apps?.find((a) => a.application.id === appId)?.autoheal
-        await api.setAutoHeal(instId, appId, !cur)
-      } else if (action === 'rearm') {
-        await api.setAutoHeal(instId, appId, true)
-      }
-      toast.success('Done')
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      setBusy((b) => ({ ...b, [key]: false }))
-      refresh()
-    }
-  }
-
   const toggleHostAutoHeal = async (inst, enabled) => {
     try {
       await api.setInstanceAutoHeal(inst.id, enabled)
@@ -556,33 +350,8 @@ export default function Instances() {
     }
   }
 
-  const enableAppAutoHeal = async (appId) => {
-    try {
-      await api.setAppAutoHeal(appId, true)
-      toast.success('Application auto-apply enabled')
-      refresh()
-    } catch (e) {
-      toast.error(e.message)
-    }
-  }
-
-  const confirmUnassign = (inst, app) => setConfirm({
-    title: 'Unassign application',
-    message: `Unassign "${app.application.name}" from "${inst.name}"? The application stays on other instances.`,
-    onConfirm: () => doUnassign(inst, app),
-    variant: 'danger',
-  })
-
-  const doUnassign = async (inst, app) => {
-    try {
-      await api.unassign(inst.id, app.application.id)
-      toast.success('Application unassigned')
-      refresh()
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      setConfirm(null)
-    }
+  const runAll = (inst, action) => {
+    for (const app of inst?.apps || []) commands.run(inst.id, app.application.id, action)
   }
 
   const projectOptions = useMemo(() => {
@@ -643,14 +412,6 @@ export default function Instances() {
     setView(next)
     localStorage.setItem('helios_instances_view', next)
   }
-
-  const toggleCollapse = (key) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
 
   const toggleSelected = (id) =>
     setSelected((prev) => {
@@ -734,7 +495,7 @@ export default function Instances() {
         <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{stats.offline}</span><span className="stat-label">Offline</span></div>
         <div className="stats-note">
           {stats.bastion ? `${stats.bastion} tunnel via bastion · ` : ''}
-          App states from latest checks · poll every 10s
+          App states from latest checks · live refresh every 30s
         </div>
       </div>
 
@@ -742,7 +503,7 @@ export default function Instances() {
         <input
           type="search"
           className="filter-search"
-          placeholder="Search name, id, project or application…"
+          placeholder="Search name, id, region, project or application…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -939,6 +700,7 @@ export default function Instances() {
             <form className="form-card" onSubmit={addInstance}>
               <label>Instance name<input autoFocus value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="e.g. web-prod-01" /></label>
               <label>Project<select required value={regProject} onChange={(e) => setRegProject(e.target.value)}><option value={DEFAULT_PROJECT}>default (global)</option>{regProject !== DEFAULT_PROJECT && !projects.some((p) => p.name === regProject) && <option value={regProject}>{regProject}</option>}{projects.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}</select><span className="sub">Required · scopes RBAC and the repository allowlist.</span></label>
+              <label>Region<input value={regRegion} onChange={(e) => setRegRegion(e.target.value)} placeholder="e.g. eu-west-1, dc-paris-1" /><span className="sub">Optional · shown on the world map and used by filters.</span></label>
               <label>Registration mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="tunnel">Tunnel · reverse SSH (optional lightweight agent)</option></select><span className="sub">Tunnel mode lets an outbound-only host be managed by the hub runner; the tunnel can be kept open by a lightweight agent.</span></label>
               {regError && <div className="error">{regError}</div>}
               <div className="form-actions">
@@ -967,12 +729,9 @@ export default function Instances() {
             <InstancesCard
               key={inst.id}
               instance={inst}
-              onAction={act}
               onHostAutoHeal={toggleHostAutoHeal}
-              onAppAutoHeal={enableAppAutoHeal}
-              onDiff={(runId) => setDiffModal(runId)}
-              onLogs={(runId) => setRunModal({ runId, view: 'text' })}
-              onVars={setVarsApp}
+              onCheckAll={(i) => runAll(i, 'check')}
+              onApplyAll={(i) => runAll(i, 'apply')}
               selected={selected.has(inst.id)}
               onSelect={toggleSelected}
             />
@@ -981,28 +740,15 @@ export default function Instances() {
       ) : (
         <InstancesTree
           instances={pageItems}
-          onAction={act}
           onHostAutoHeal={toggleHostAutoHeal}
-          onAppAutoHeal={enableAppAutoHeal}
-          onDiff={(runId) => setDiffModal(runId)}
-          onLogs={(runId) => setRunModal({ runId, view: 'text' })}
-          onVars={setVarsApp}
-          onUnassign={confirmUnassign}
+          onCheckAll={(i) => runAll(i, 'check')}
+          onApplyAll={(i) => runAll(i, 'apply')}
           can={can}
-          expanded={expanded}
-          toggle={toggleCollapse}
-          pendingFor={(instId, appId) => commands.pending[`${instId}:${appId}`] || null}
-          appFilter={appFilter}
-          search={search}
-          stateFilter={stateFilter}
           selected={selected}
           onSelect={toggleSelected}
         />
       )}
 
-      {runModal && <LogsModal runId={runModal.runId} initialView={runModal.view} onClose={() => setRunModal(null)} />}
-      {diffModal && <DiffModal runId={diffModal} onClose={() => setDiffModal(null)} />}
-      {varsApp && <VariableEditor title={`Host variables · ${varsApp.inst.name}`} subtitle={`Overrides for ${varsApp.app.application.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(varsApp.inst.id, varsApp.app.application.id)} save={(items) => api.saveAssignmentVariables(varsApp.inst.id, varsApp.app.application.id, items)} onClose={() => setVarsApp(null)} />}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
       {view !== 'topology' && (
         <Pager total={filtered.length} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />

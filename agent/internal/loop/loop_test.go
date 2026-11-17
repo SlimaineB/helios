@@ -251,3 +251,22 @@ func TestJitterDurationStaysWithinBounds(t *testing.T) {
 		t.Fatalf("jitterDuration must never return below 1s, got %v", got)
 	}
 }
+
+func TestApplyScanPolicyOverridesPollAndJitter(t *testing.T) {
+	a := testAgent("http://example.invalid")
+	a.applyScanPolicy(client.CheckinOK{ScanInterval: 15, JitterPercent: 35})
+	if got := a.pollInterval(); got != 15*time.Second {
+		t.Fatalf("pollInterval = %v, want 15s", got)
+	}
+	if got := a.jitterPercent(); got != 35 {
+		t.Fatalf("jitterPercent = %d, want 35", got)
+	}
+
+	a.applyScanPolicy(client.CheckinOK{ScanInterval: 1, JitterPercent: 99})
+	if got := a.pollInterval(); got != 5*time.Second {
+		t.Fatalf("clamped pollInterval = %v, want 5s", got)
+	}
+	if got := a.jitterPercent(); got != 50 {
+		t.Fatalf("clamped jitterPercent = %d, want 50", got)
+	}
+}

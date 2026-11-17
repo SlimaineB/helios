@@ -16,10 +16,7 @@ import (
 	"github.com/slim/helios/agent/internal/tunnel"
 )
 
-const (
-	defaultConfigPath = "/etc/helios/agent.yaml"
-	legacyConfigPath  = "/etc/ansiblehub/agent.yaml"
-)
+const defaultConfigPath = "/etc/helios/agent.yaml"
 
 func main() {
 	var (
@@ -36,14 +33,6 @@ func main() {
 	slog.SetDefault(log)
 
 	path := *configPath
-	if path == defaultConfigPath {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			if _, legacyErr := os.Stat(legacyConfigPath); legacyErr == nil {
-				path = legacyConfigPath
-				log.Warn("using legacy agent config; move it to the new path", "from", legacyConfigPath, "to", defaultConfigPath)
-			}
-		}
-	}
 
 	cfg, err := config.Load(path)
 	if err != nil {

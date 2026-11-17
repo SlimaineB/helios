@@ -19,7 +19,7 @@ ADDR=":8080"
 DB=""
 BASE_URL="http://localhost:8080"
 OP_USER="admin"
-OP_PASS="${HELIOS_OPERATOR_PASSWORD:-${ANSIBLEHUB_OPERATOR_PASSWORD:-${ANH_OPERATOR_PASSWORD:-}}}"
+OP_PASS="${HELIOS_OPERATOR_PASSWORD:-}"
 RBAC=""
 TLS_CERT=""
 TLS_KEY=""
@@ -135,7 +135,6 @@ if ! id helios >/dev/null 2>&1; then
 fi
 
 install -m 0755 "$BINARY" /usr/local/bin/helios-server
-ln -sf /usr/local/bin/helios-server /usr/local/bin/ansiblehub-server
 install -d -m 0755 /usr/share/helios/ui
 cp -a "$UI"/. /usr/share/helios/ui/
 install -d -m 0755 "$DOWNLOAD_DIR"

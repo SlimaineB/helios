@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import HeliosMark from './HeliosMark.jsx'
 import {
   Server, Database, GitBranch, Layers, Clock,
-  ChevronLeft, ChevronRight, FileText, RefreshCw, Globe2, Gauge, Settings as SettingsIcon
+  ChevronLeft, ChevronRight, FileText, RefreshCw, Globe2, Gauge, Settings as SettingsIcon, TriangleAlert
 } from 'lucide-react'
 
 const SidebarContext = createContext(null)
@@ -30,6 +30,7 @@ const NAV_ITEMS = [
   { path: '/', label: 'Overview', icon: Gauge, perm: 'instances.get' },
   { path: '/applications', label: 'Applications', icon: Database, perm: 'applications.get' },
   { path: '/instances', label: 'Instances', icon: Server, perm: 'instances.get' },
+  { path: '/drift', label: 'Drift', icon: TriangleAlert, perm: 'instances.get' },
   { path: '/map', label: 'World map', icon: Globe2, perm: 'instances.get' },
   { path: '/projects', label: 'Projects', icon: Layers, perm: 'projects.get' },
   { path: '/sync-windows', label: 'Sync windows', icon: Clock, perm: 'windows.get' },

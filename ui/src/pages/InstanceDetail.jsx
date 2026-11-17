@@ -37,6 +37,7 @@ export default function InstanceDetail() {
   const [confirm, setConfirm] = useState(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [regionValue, setRegionValue] = useState('')
   const [renaming, setRenaming] = useState(false)
 
   const appNamesById = useMemo(
@@ -144,6 +145,7 @@ export default function InstanceDetail() {
 
   const openRename = () => {
     setRenameValue(inst.name)
+    setRegionValue(inst.region || '')
     setRenameOpen(true)
   }
   const saveRename = async (e) => {
@@ -152,8 +154,8 @@ export default function InstanceDetail() {
     if (!name) return
     setRenaming(true)
     try {
-      await api.updateInstance(inst.id, name, inst.project)
-      toast.success('Instance renamed')
+      await api.updateInstance(inst.id, name, inst.project, regionValue.trim())
+      toast.success('Instance updated')
       setRenameOpen(false)
       refresh()
     } catch (err) {
@@ -234,13 +236,14 @@ export default function InstanceDetail() {
         {isTunnel && <Badge state="tunnel" label="tunnel" small />}
         <span className={`dot ${online ? 'online' : 'offline'}`} />
         <span className="actions" style={{ marginLeft: 12 }}>
-          {can('instances', 'update') && <button className="small" onClick={openRename}>Rename</button>}
+          {can('instances', 'update') && <button className="small" onClick={openRename}>Edit</button>}
           {can('instances', 'delete') && <button className="small danger" onClick={askDelete}>Delete</button>}
         </span>
       </h1>
       <div className="meta">
         <div><b>ID</b> <CopyButton value={String(inst.id)} label="" size="small" title="Copy ID" />{inst.id}</div>
         <div><b>Hostname</b> {inst.hostname || '—'}</div>
+        <div><b>Region</b> {inst.region || '—'}</div>
         <div><b>Platform</b> {inst.platform || '—'}</div>
         <div><b>Version</b> {inst.version || '—'}</div>
         <div><b>Mode</b> {isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div>
@@ -409,10 +412,13 @@ export default function InstanceDetail() {
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
       {varsApp && <VariableEditor title={`Host variables · ${inst.name}`} subtitle={`Overrides for ${varsApp.name} on this host only (≈ host_vars); win over the app defaults.`} load={() => api.assignmentVariables(id, varsApp.id)} save={(items) => api.saveAssignmentVariables(id, varsApp.id, items)} onClose={() => setVarsApp(null)} />}
       {renameOpen && (
-        <Modal title="Rename instance" onClose={() => setRenameOpen(false)}>
+        <Modal title="Edit instance" onClose={() => setRenameOpen(false)}>
           <form className="form-card" onSubmit={saveRename}>
             <label>Instance name
               <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
+            </label>
+            <label>Region
+              <input value={regionValue} onChange={(e) => setRegionValue(e.target.value)} placeholder="e.g. eu-west-1, dc-paris-1" />
             </label>
             <div className="form-actions">
               <button type="button" className="ghost" onClick={() => setRenameOpen(false)}>Cancel</button>

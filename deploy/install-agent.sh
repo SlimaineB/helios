@@ -12,7 +12,7 @@
 #     [--skip-packages] \
 #     [--autoheal 0|1] \
 #     [--max-concurrent 4] \
-#     [--poll-interval 5m] \
+#     [--poll-interval 30s] \
 #     [--mode agent|tunnel] \
 #     [--tunnel-ssh-key /etc/helios/tunnel_id] \
 #     [--tunnel-health-interval 30s] \
@@ -22,8 +22,7 @@
 #
 # --download-url: release tarball from CI (extracts the right arch binary);
 # --binary-url: a single prebuilt binary. Either one works ($HELIOS_DOWNLOAD_URL
-# / $HELIOS_BINARY_URL override the flags; the old ANSIBLEHUB_* / ANH_* /
-# AHUB_* names are accepted as fallbacks). If the installer is run from an
+# / $HELIOS_BINARY_URL override the flags). If the installer is run from an
 # extracted release tarball, the matching binary next to it is used automatically.
 set -eu
 
@@ -35,7 +34,7 @@ INSTANCE_ID=""
 STATE_DIR=/var/lib/helios
 AUTOHEAL=1
 MAX_CONCURRENT_APPS=4
-POLL_INTERVAL=5m
+POLL_INTERVAL=30s
 BINARY=""
 ANSIBLE_BIN=""
 SKIP_PACKAGES=0
@@ -45,8 +44,8 @@ TUNNEL_HEALTH_INTERVAL=30s
 TUNNEL_GATEWAY=""
 TUNNEL_PORT=""
 TUNNEL_LOCAL_TARGET=127.0.0.1:22
-DOWNLOAD_URL="${HELIOS_DOWNLOAD_URL:-${ANSIBLEHUB_DOWNLOAD_URL:-${ANH_DOWNLOAD_URL:-${AHUB_DOWNLOAD_URL:-}}}}"
-BINARY_URL="${HELIOS_BINARY_URL:-${ANSIBLEHUB_BINARY_URL:-${ANH_BINARY_URL:-${AHUB_BINARY_URL:-}}}}"
+DOWNLOAD_URL="${HELIOS_DOWNLOAD_URL:-}"
+BINARY_URL="${HELIOS_BINARY_URL:-}"
 
 usage() {
     cat <<'EOF'
@@ -58,7 +57,7 @@ Usage: install-agent.sh --server URL --token TOKEN [options]
   --state-dir DIR          agent state directory (default: /var/lib/helios)
   --autoheal 0|1           apply on drift (default: 1)
   --max-concurrent N       parallel apps per pass (default: 4)
-  --poll-interval DURATION heartbeat/check cadence (default: 5m)
+  --poll-interval DURATION heartbeat/check cadence (default: 30s)
   --mode MODE              agent (default) or tunnel (no Ansible on host)
   --tunnel-ssh-key PATH    bastion key for tunnel mode (default: /etc/helios/tunnel_id)
   --tunnel-health-interval DURATION tunnel liveness report cadence (default: 30s)
@@ -282,7 +281,6 @@ else
     fi
 fi
 install_binary
-ln -sf /usr/local/bin/helios-agent /usr/local/bin/ansiblehub-agent
 ensure_user
 [ "$MODE" != tunnel ] || prepare_tunnel_key
 write_config

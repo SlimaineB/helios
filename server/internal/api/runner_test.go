@@ -274,3 +274,32 @@ func TestUpdateInstanceRenamesWithoutTouchingLiveness(t *testing.T) {
 			before.PollInterval, got.PollInterval, before.LastSeen, got.LastSeen)
 	}
 }
+
+func TestTunnelCheckinReturnsScanPolicy(t *testing.T) {
+	s, st := newTestServer(t)
+	s.SetRunnerToken("runner-secret")
+	createInstance(t, st, "tunnel-scan", model.ModeTunnel, 22000)
+	if err := st.SetRuntimeSetting(context.Background(), scanIntervalSetting, "15"); err != nil {
+		t.Fatalf("set interval: %v", err)
+	}
+	if err := st.SetRuntimeSetting(context.Background(), scanJitterSetting, "35"); err != nil {
+		t.Fatalf("set jitter: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runner/instances/tunnel-scan/checkin",
+		strings.NewReader(`{}`))
+	req.SetPathValue("id", "tunnel-scan")
+	req.Header.Set("Authorization", "Bearer runner-secret")
+	rec := httptest.NewRecorder()
+	s.runnerInstanceAuth(s.handleCheckin)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("checkin: status %d body %s", rec.Code, rec.Body.String())
+	}
+	var got checkinResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ScanInterval != 15 || got.JitterPercent != 35 {
+		t.Fatalf("scan policy = %d/%d, want 15/35", got.ScanInterval, got.JitterPercent)
+	}
+}

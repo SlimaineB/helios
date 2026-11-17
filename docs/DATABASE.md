@@ -322,6 +322,19 @@ cluster-wide lease; the holder renews it during long syncs.
 Expired leases are reclaimable. This provides failover without a separate
 scheduler or leader-election service.
 
+### `settings`
+
+Operator preferences persisted across restarts and shared by every replica.
+
+| Column | Type | Notes |
+|---|---|---|
+| `key` | `TEXT` PK | Setting name, e.g. `scan_interval_seconds` |
+| `value` | `TEXT NOT NULL` | Serialized value |
+| `updated_at` | `TEXT NOT NULL` | Last write timestamp |
+
+The fleet scan interval and jitter live here (`scan_interval_seconds`,
+`scan_jitter_percent`). Agents receive the policy in their checkin response.
+
 ### `audit_log`
 
 One row per mutating operator action. It is append-only from the server's point
@@ -354,6 +367,7 @@ commands are never pruned. Tune with `HELIOS_RETENTION_*`.
 | `operator_sessions.token_hash` PK | One row per login session |
 | `idx_operator_sessions_expiry` | Expired-session cleanup |
 | `leases.name` PK | One live/reclaimable lease per name |
+| `settings.key` PK | One value per runtime setting |
 | `assignments` PK `(instance_id, app_id)` | One assignment per instance/application pair |
 | `variables` PK `(app_id, key)` | One value per application variable |
 | `assignment_variables` PK `(instance_id, app_id, key)` | One value per per-instance override |

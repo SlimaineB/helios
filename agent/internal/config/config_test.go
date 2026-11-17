@@ -32,28 +32,6 @@ func TestLoadMaxConcurrentAppsFromEnv(t *testing.T) {
 	}
 }
 
-func TestLoadLegacyEnvAliases(t *testing.T) {
-	t.Setenv("HELIOS_SERVER", "")
-	t.Setenv("HELIOS_TOKEN", "")
-	t.Setenv("ANSIBLEHUB_SERVER", "http://legacy.example.test")
-	t.Setenv("ANH_TOKEN", "legacy-token")
-	t.Setenv("AHUB_POLL_INTERVAL", "45s")
-
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Server != "http://legacy.example.test" {
-		t.Fatalf("Server = %q, want legacy alias value", cfg.Server)
-	}
-	if cfg.Token != "legacy-token" {
-		t.Fatalf("Token = %q, want legacy alias value", cfg.Token)
-	}
-	if cfg.PollInterval != 45*time.Second {
-		t.Fatalf("PollInterval = %v, want 45s", cfg.PollInterval)
-	}
-}
-
 func TestLoadRejectsInvalidMaxConcurrentApps(t *testing.T) {
 	t.Setenv("HELIOS_SERVER", "http://hub.example.test")
 	t.Setenv("HELIOS_TOKEN", "token")

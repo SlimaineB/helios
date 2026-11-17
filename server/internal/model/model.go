@@ -57,6 +57,9 @@ type Instance struct {
 	Platform     string `json:"platform,omitempty"`
 	// Project scopes this instance (empty = global/default project).
 	Project string `json:"project"`
+	// Region is the operator-defined location used by the world map and filters
+	// (for example "eu-west-1" or "dc-paris-1"). Free-form.
+	Region string `json:"region,omitempty"`
 	// AutoHeal is the host-level auto-apply switch. When false, no application
 	// on this host is applied automatically; drift checks keep running.
 	AutoHeal bool `json:"autoheal"`

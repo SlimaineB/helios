@@ -360,6 +360,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name          string `json:"name"`
 		Project       string `json:"project"`
+		Region        string `json:"region"`
 		ExecutionMode string `json:"execution_mode"`
 	}
 	if err := readJSON(r, &body); err != nil {
@@ -371,6 +372,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Project = strings.TrimSpace(body.Project)
+	body.Region = strings.TrimSpace(body.Region)
 	body.ExecutionMode = strings.TrimSpace(body.ExecutionMode)
 	if body.ExecutionMode == "" {
 		body.ExecutionMode = model.ModeAgent
@@ -407,6 +409,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		ID:            genInstanceID(),
 		Name:          body.Name,
 		Project:       body.Project,
+		Region:        body.Region,
 		ExecutionMode: body.ExecutionMode,
 		TunnelPort:    tunnelPort,
 		TokenHash:     auth.Hash(token),
@@ -496,6 +499,7 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name    string  `json:"name"`
 		Project *string `json:"project"`
+		Region  *string `json:"region"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -518,6 +522,10 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.Project != nil {
 		project = strings.TrimSpace(*body.Project)
 	}
+	region := inst.Region
+	if body.Region != nil {
+		region = strings.TrimSpace(*body.Region)
+	}
 	if project != inst.Project {
 		if !s.requireObject(w, r, "instances.update", project) {
 			return
@@ -539,12 +547,13 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.store.UpdateInstanceMeta(r.Context(), id, name, project); err != nil {
+	if err := s.store.UpdateInstanceMeta(r.Context(), id, name, project, region); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	inst.Name = name
 	inst.Project = project
+	inst.Region = region
 	writeJSON(w, http.StatusOK, s.decorateInstance(inst))
 }
 
@@ -1365,9 +1374,11 @@ type checkinPayload struct {
 }
 
 type checkinResponse struct {
-	Applications []model.Application `json:"applications"`
-	Commands     []model.Command     `json:"commands"`
-	RepoCache    bool                `json:"repo_cache"`
+	Applications  []model.Application `json:"applications"`
+	Commands      []model.Command     `json:"commands"`
+	RepoCache     bool                `json:"repo_cache"`
+	ScanInterval  int64               `json:"scan_interval"`
+	JitterPercent int                 `json:"jitter_percent"`
 }
 
 // heartbeatPayload is a liveness-only ping. It must not claim commands or
@@ -1431,7 +1442,16 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	metrics.Checkin(inst.ID)
-	resp := checkinResponse{RepoCache: s.repoCache != nil}
+	scanning, err := s.scanningSettings(r.Context())
+	if err != nil {
+		s.log.Warn("failed to load scan policy; using defaults", "error", err)
+		scanning = scanningSettings{IntervalSeconds: defaultScanSeconds, JitterPercent: defaultScanJitter}
+	}
+	resp := checkinResponse{
+		RepoCache:     s.repoCache != nil,
+		ScanInterval:  scanning.IntervalSeconds,
+		JitterPercent: scanning.JitterPercent,
+	}
 	ass, err := s.store.ListAssignments(r.Context(), inst.ID)
 	if err != nil {
 		s.internalError(w, r, err)
@@ -1476,6 +1496,22 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handlePendingCommands is a cheap probe used by the agent's fast command
+// watcher. It does not claim commands or refresh liveness; when true, the agent
+// wakes its main loop immediately and performs a full checkin.
+func (s *Server) handlePendingCommands(w http.ResponseWriter, r *http.Request) {
+	inst := r.Context().Value(ctxInstance).(model.Instance)
+	cmds, err := s.store.PendingCommands(r.Context(), inst.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pending": len(cmds) > 0,
+		"count":   len(cmds),
+	})
 }
 
 // statusPayload is the outcome of a check/apply run performed by the agent.

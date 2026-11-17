@@ -40,6 +40,7 @@ func (s *Server) routes() {
 	// Operator / UI — each route declares the RBAC operation it needs.
 	m.HandleFunc("GET /api/v1/events", s.op("events.get", s.handleEvents))
 	m.HandleFunc("GET /api/v1/settings", s.op("settings.get", s.handleSettings))
+	m.HandleFunc("PUT /api/v1/settings/scanning", s.op("settings.update", s.handleUpdateScanning))
 	m.HandleFunc("POST /api/v1/settings/webhook/test", s.op("settings.update", s.handleTestWebhook))
 
 	m.HandleFunc("GET /api/v1/downloads", s.op("instances.get", s.handleListDownloads))
@@ -97,6 +98,7 @@ func (s *Server) routes() {
 	// Agent (bearer-token authenticated, unchanged)
 	m.HandleFunc("POST /api/v1/agent/checkin", s.agentAuth(s.handleCheckin))
 	m.HandleFunc("POST /api/v1/agent/heartbeat", s.agentAuth(s.handleHeartbeat))
+	m.HandleFunc("GET /api/v1/agent/commands/pending", s.agentAuth(s.handlePendingCommands))
 	m.HandleFunc("GET /api/v1/agent/apps/{appId}/snapshot", s.agentAuth(s.handleAgentSnapshot))
 	m.HandleFunc("POST /api/v1/agent/status", s.agentAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/agent/commands/{cmdId}/result", s.agentAuth(s.handleCommandResult))
@@ -108,6 +110,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/runner/instances", s.runnerAuth(s.handleRunnerInstances))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/checkin", s.runnerInstanceAuth(s.handleCheckin))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/heartbeat", s.runnerInstanceAuth(s.handleHeartbeat))
+	m.HandleFunc("GET /api/v1/runner/instances/{id}/commands/pending", s.runnerInstanceAuth(s.handlePendingCommands))
 	m.HandleFunc("GET /api/v1/runner/instances/{id}/apps/{appId}/snapshot", s.runnerInstanceAuth(s.handleAgentSnapshot))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/status", s.runnerInstanceAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/commands/{cmdId}/result", s.runnerInstanceAuth(s.handleCommandResult))

@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/slim/helios/server/internal/notify"
+	"github.com/slim/helios/server/internal/store"
 )
 
 // ServerSettings is the non-secret runtime configuration rendered on the
@@ -60,6 +63,48 @@ type featureSettings struct {
 	Events        bool   `json:"events"`
 }
 
+const (
+	scanIntervalSetting = "scan_interval_seconds"
+	scanJitterSetting   = "scan_jitter_percent"
+	defaultScanSeconds  = 30
+	defaultScanJitter   = 20
+	minScanSeconds      = 10
+	maxScanSeconds      = 86400
+)
+
+type scanningSettings struct {
+	IntervalSeconds int64 `json:"interval_seconds"`
+	JitterPercent   int   `json:"jitter_percent"`
+	MinSeconds      int   `json:"min_seconds"`
+	MaxSeconds      int   `json:"max_seconds"`
+}
+
+// scanningSettings returns the fleet-wide scan policy, falling back to defaults
+// when the operator has never saved it.
+func (s *Server) scanningSettings(ctx context.Context) (scanningSettings, error) {
+	out := scanningSettings{
+		IntervalSeconds: defaultScanSeconds,
+		JitterPercent:   defaultScanJitter,
+		MinSeconds:      minScanSeconds,
+		MaxSeconds:      maxScanSeconds,
+	}
+	if v, err := s.store.GetRuntimeSetting(ctx, scanIntervalSetting); err == nil {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= minScanSeconds && n <= maxScanSeconds {
+			out.IntervalSeconds = n
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return out, err
+	}
+	if v, err := s.store.GetRuntimeSetting(ctx, scanJitterSetting); err == nil {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 50 {
+			out.JitterPercent = n
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return out, err
+	}
+	return out, nil
+}
+
 type settingsResponse struct {
 	Version   string            `json:"version"`
 	Store     string            `json:"store"`
@@ -69,10 +114,16 @@ type settingsResponse struct {
 	Webhook   webhookSettings   `json:"webhook"`
 	Retention retentionSettings `json:"retention"`
 	Features  featureSettings   `json:"features"`
+	Scanning  scanningSettings  `json:"scanning"`
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.requireGlobal(w, r, "settings.get") {
+		return
+	}
+	scanning, err := s.scanningSettings(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
 		return
 	}
 	resp := settingsResponse{
@@ -91,6 +142,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			TunnelGateway: s.settings.TunnelGateway,
 			Events:        true,
 		},
+		Scanning: scanning,
 	}
 	if s.opAuth != nil {
 		resp.Auth.BasicAdmin = s.opAuth.Basic != nil
@@ -121,6 +173,51 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type scanningUpdate struct {
+	IntervalSeconds *int64 `json:"interval_seconds"`
+	JitterPercent   *int   `json:"jitter_percent"`
+}
+
+func (s *Server) handleUpdateScanning(w http.ResponseWriter, r *http.Request) {
+	if !s.requireGlobal(w, r, "settings.update") {
+		return
+	}
+	var body scanningUpdate
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	cur, err := s.scanningSettings(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if body.IntervalSeconds != nil {
+		cur.IntervalSeconds = *body.IntervalSeconds
+	}
+	if body.JitterPercent != nil {
+		cur.JitterPercent = *body.JitterPercent
+	}
+	if cur.IntervalSeconds < minScanSeconds || cur.IntervalSeconds > maxScanSeconds {
+		writeErr(w, http.StatusBadRequest, "interval_seconds must be between 10 and 86400")
+		return
+	}
+	if cur.JitterPercent < 0 || cur.JitterPercent > 50 {
+		writeErr(w, http.StatusBadRequest, "jitter_percent must be between 0 and 50")
+		return
+	}
+	if err := s.store.SetRuntimeSetting(r.Context(), scanIntervalSetting, strconv.FormatInt(cur.IntervalSeconds, 10)); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.store.SetRuntimeSetting(r.Context(), scanJitterSetting, strconv.Itoa(cur.JitterPercent)); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.publishEvent(hubEvent{Type: "settings", Status: "scanning"})
+	writeJSON(w, http.StatusOK, cur)
 }
 
 func (s *Server) handleTestWebhook(w http.ResponseWriter, r *http.Request) {

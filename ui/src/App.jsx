@@ -11,6 +11,7 @@ import Projects from './pages/Projects.jsx'
 import ConfigRepos from './pages/ConfigRepos.jsx'
 import SettingsPage from './pages/Settings.jsx'
 import WorldMap from './pages/WorldMap.jsx'
+import Drift from './pages/Drift.jsx'
 import { api, setBasic, clearBasic, openEventStream } from './api/client.js'
 import ToastContainer from './components/Toast.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
@@ -145,6 +146,7 @@ export default function App() {
                 <Route path="/" element={<Overview />} />
                 <Route path="/applications" element={<Applications />} />
                 <Route path="/instances" element={<Instances />} />
+                <Route path="/drift" element={<Drift />} />
                 <Route path="/instances/:id" element={<InstanceDetail />} />
                 <Route path="/map" element={<WorldMap />} />
                 <Route path="/topology" element={<Navigate to="/" replace />} />

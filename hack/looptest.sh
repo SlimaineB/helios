@@ -11,11 +11,8 @@
 set -e
 
 env_compat() {
-  for prefix in HELIOS_ ANSIBLEHUB_ ANH_ AHUB_; do
-    eval "value=\${$prefix$1:-}"
-    if [ -n "$value" ]; then printf '%s' "$value"; return; fi
-  done
-  printf '%s' "$2"
+  eval "value=\${HELIOS_$1:-$2}"
+  printf '%s' "$value"
 }
 
 BASE=$(env_compat SERVER http://localhost:8080)

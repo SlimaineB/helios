@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: helios
-      POSTGRES_PASSWORD: ${HELIOS_POSTGRES_PASSWORD:-${ANH_POSTGRES_PASSWORD:-${ANSIBLEHUB_POSTGRES_PASSWORD:-}}}
+      POSTGRES_PASSWORD: ${HELIOS_POSTGRES_PASSWORD:-}
       POSTGRES_DB: helios
     volumes:
       - helios-postgres:/var/lib/postgresql/data
@@ -18,7 +18,7 @@ services:
 
   server:
     environment:
-      HELIOS_DB: postgres://helios:${HELIOS_POSTGRES_PASSWORD:-${ANH_POSTGRES_PASSWORD:-${ANSIBLEHUB_POSTGRES_PASSWORD:-}}}@db:5432/helios?sslmode=disable
+      HELIOS_DB: postgres://helios:${HELIOS_POSTGRES_PASSWORD:-}@db:5432/helios?sslmode=disable
     depends_on:
       db:
         condition: service_healthy

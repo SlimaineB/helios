@@ -328,6 +328,7 @@ GET    /api/v1/instances/{id}/runs?mode=&limit=
 GET    /api/v1/runs/{runId}/log       # run detail: output (json raw), output_text (readable), diff, resources
 GET    /api/v1/events                 # SSE change stream (run, command)
 GET    /api/v1/settings               # effective non-secret runtime configuration
+PUT    /api/v1/settings/scanning       # fleet scan interval + jitter (persisted)
 POST   /api/v1/settings/webhook/test   # deliver a test webhook event
 GET    /api/v1/applications
 POST   /api/v1/applications
@@ -535,7 +536,7 @@ server: http://hub:8080
 token: <bootstrap token>
 instance_id: ""            # empty → auto (EC2 metadata / local fingerprint)
 state_dir: /var/lib/helios
-poll_interval: 5m         # default heartbeat + check cadence
+poll_interval: 30s        # fallback cadence; hub Settings → Scanning overrides it
 jitter_percent: 20        # spread checks/heartbeats by ±20% (0 disables)
 max_concurrent_apps: 4    # parallel app reconciliations per pass
 autoheal: true             # apply automatically when drift is detected
@@ -544,7 +545,9 @@ ansible_bin: ansible-playbook
 ```
 
 Per-application cadence is set on the application (`sync_interval`, seconds;
-`0` inherits `poll_interval`). `jitter_percent` (env
+`0` inherits the fleet scan interval). Operators can change the fleet-wide scan
+interval and jitter in **Settings → Scanning**; agents adopt the policy at
+their next checkin. `jitter_percent` (env
 `HELIOS_JITTER_PERCENT`, default `20`, max `50`) spreads checks and heartbeats
 so a fleet provisioned together does not stampede the hub. `max_concurrent_apps`
 (env `HELIOS_MAX_CONCURRENT_APPS`, default `4`) bounds parallel reconciliations

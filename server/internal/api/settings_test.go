@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,5 +76,48 @@ func TestWebhookTestDeliversEvent(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("webhook was not delivered")
+	}
+}
+
+func TestScanningSettingsDefaultsAndUpdate(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	got, err := s.scanningSettings(t.Context())
+	if err != nil {
+		t.Fatalf("defaults: %v", err)
+	}
+	if got.IntervalSeconds != defaultScanSeconds || got.JitterPercent != defaultScanJitter {
+		t.Fatalf("defaults = %+v", got)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/scanning",
+		strings.NewReader(`{"interval_seconds":15,"jitter_percent":35}`))
+	rec := httptest.NewRecorder()
+	s.handleUpdateScanning(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update scanning: status %d body %s", rec.Code, rec.Body.String())
+	}
+	var resp scanningSettings
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.IntervalSeconds != 15 || resp.JitterPercent != 35 {
+		t.Fatalf("response = %+v", resp)
+	}
+
+	got, err = s.scanningSettings(t.Context())
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.IntervalSeconds != 15 || got.JitterPercent != 35 {
+		t.Fatalf("persisted = %+v", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/settings/scanning",
+		strings.NewReader(`{"interval_seconds":5}`))
+	rec = httptest.NewRecorder()
+	s.handleUpdateScanning(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid interval status = %d, want 400", rec.Code)
 	}
 }

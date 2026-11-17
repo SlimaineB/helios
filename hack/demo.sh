@@ -31,11 +31,8 @@ done
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 env_compat() {
-  for prefix in HELIOS_ ANSIBLEHUB_ ANH_ AHUB_; do
-    eval "value=\${$prefix$1:-}"
-    if [ -n "$value" ]; then printf '%s' "$value"; return; fi
-  done
-  printf '%s' "$2"
+  eval "value=\${HELIOS_$1:-$2}"
+  printf '%s' "$value"
 }
 
 say "Checking prerequisites"

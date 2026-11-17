@@ -10,7 +10,7 @@ name: helios
 
 services:
   server:
-    image: ${HELIOS_IMAGE:-${ANH_IMAGE:-${ANSIBLEHUB_IMAGE:-helios-server:local}}}
+    image: ${HELIOS_IMAGE:-helios-server:local}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -28,11 +28,11 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "${HELIOS_BIND_ADDR:-${ANH_BIND_ADDR:-${ANSIBLEHUB_BIND_ADDR:-127.0.0.1}}}:${HELIOS_PORT:-${ANH_PORT:-${ANSIBLEHUB_PORT:-8080}}}:8080"
+      - "${HELIOS_BIND_ADDR:-127.0.0.1}:${HELIOS_PORT:-8080}:8080"
     environment:
-      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-${ANH_OPERATOR_USER:-${ANSIBLEHUB_OPERATOR_USER:-admin}}}
-      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-${ANH_OPERATOR_PASSWORD:-${ANSIBLEHUB_OPERATOR_PASSWORD:-}}}
-      HELIOS_BASE_URL: ${HELIOS_BASE_URL:-${ANH_BASE_URL:-${ANSIBLEHUB_BASE_URL:-http://localhost:8080}}}
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-admin}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-}
+      HELIOS_BASE_URL: ${HELIOS_BASE_URL:-http://localhost:8080}
       HELIOS_DB: /data/helios.db
       HELIOS_RUNNER_TOKEN: ${HELIOS_RUNNER_TOKEN:-}
       HELIOS_TUNNEL_GATEWAY: ${HELIOS_TUNNEL_GATEWAY:-}

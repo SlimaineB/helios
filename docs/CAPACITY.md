@@ -68,7 +68,7 @@ apps, plan to paginate the UI/API or batch the assignment queries.
 2. Compare pass time to the app `sync_interval`.
 3. Set `max_concurrent_apps` to roughly `CPU cores / 2` on the agent, capped so
    a pass stays below the interval.
-4. Keep `poll_interval` (default `5m`) and per-app `sync_interval` realistic;
+4. Keep the fleet scan interval (default `30s`, editable in **Settings → Scanning**) and per-app `sync_interval` realistic;
    do not poll every app every few seconds unless the host has spare CPU.
    `jitter_percent` (default 20) spreads checks by ±20% so a fleet rollout does
    not hit the hub in one wave.

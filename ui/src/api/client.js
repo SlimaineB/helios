@@ -73,8 +73,8 @@ export const api = {
   downloads: () => request('GET', '/api/v1/downloads'),
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),
-  createInstance: (name, project, executionMode = 'agent') => request('POST', '/api/v1/instances', { name, project, execution_mode: executionMode }),
-  updateInstance: (id, name, project) => request('PUT', `/api/v1/instances/${id}`, { name, project }),
+  createInstance: (name, project, executionMode = 'agent', region = '') => request('POST', '/api/v1/instances', { name, project, region, execution_mode: executionMode }),
+  updateInstance: (id, name, project, region = '') => request('PUT', `/api/v1/instances/${id}`, { name, project, region }),
   deleteInstance: (id) => request('DELETE', `/api/v1/instances/${id}`),
   assign: (id, appId) => request('POST', `/api/v1/instances/${id}/assign`, { app_id: appId }),
   unassign: (id, appId) => request('DELETE', `/api/v1/instances/${id}/assign/${appId}`),
@@ -96,6 +96,7 @@ export const api = {
 
   audit: (query) => request('GET', `/api/v1/audit${query || ''}`),
   settings: () => request('GET', '/api/v1/settings'),
+  updateScanning: (scanning) => request('PUT', '/api/v1/settings/scanning', scanning),
   testWebhook: () => request('POST', '/api/v1/settings/webhook/test'),
   bulkCommands: (action, instanceIds) =>
     request('POST', '/api/v1/bulk/commands', { action, instance_ids: instanceIds }),
