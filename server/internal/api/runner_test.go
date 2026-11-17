@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ func TestCreateTunnelInstanceAllocatesPort(t *testing.T) {
 	s.SetTunnelConfig("helios-tunnel@bastion.example.com", 22000, 22010)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances",
-		strings.NewReader(`{"name":"edge-01","project":"","execution_mode":"tunnel"}`))
+		strings.NewReader(`{"name":"edge-01","project":"","execution_mode":"tunnel","tags":["prod"," team-a ","PROD",""]}`))
 	rec := httptest.NewRecorder()
 	s.handleCreateInstance(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -57,6 +58,9 @@ func TestCreateTunnelInstanceAllocatesPort(t *testing.T) {
 	}
 	if resp.Instance.TunnelGateway != "helios-tunnel@bastion.example.com" {
 		t.Fatalf("gateway = %q", resp.Instance.TunnelGateway)
+	}
+	if want := []string{"prod", "team-a"}; !slices.Equal(resp.Instance.Tags, want) {
+		t.Fatalf("tags = %v, want %v", resp.Instance.Tags, want)
 	}
 
 	// A second tunnel instance gets the next free port.
@@ -254,7 +258,7 @@ func TestUpdateInstanceRenamesWithoutTouchingLiveness(t *testing.T) {
 		t.Fatalf("get instance: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/instances/ren-1", strings.NewReader(`{"name":"renamed"}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/instances/ren-1", strings.NewReader(`{"name":"renamed","region":"eu-west-1","tags":["prod","team-a","prod"]}`))
 	req.SetPathValue("id", "ren-1")
 	rec := httptest.NewRecorder()
 	s.handleUpdateInstance(rec, req)
@@ -268,6 +272,12 @@ func TestUpdateInstanceRenamesWithoutTouchingLiveness(t *testing.T) {
 	}
 	if got.Name != "renamed" {
 		t.Fatalf("name = %q, want renamed", got.Name)
+	}
+	if got.Region != "eu-west-1" {
+		t.Fatalf("region = %q, want eu-west-1", got.Region)
+	}
+	if want := []string{"prod", "team-a"}; !slices.Equal(got.Tags, want) {
+		t.Fatalf("tags = %v, want %v", got.Tags, want)
 	}
 	if got.PollInterval != before.PollInterval || !got.LastSeen.Equal(before.LastSeen) {
 		t.Fatalf("rename touched liveness: poll %d->%d last_seen %v->%v",

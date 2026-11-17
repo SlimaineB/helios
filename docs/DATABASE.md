@@ -85,6 +85,8 @@ is persisted.
 | `hostname` | `TEXT NOT NULL DEFAULT ''` | Reported hostname |
 | `platform` | `TEXT NOT NULL DEFAULT ''` | Reported platform |
 | `project` | `TEXT NOT NULL DEFAULT ''` | Logical project scope |
+| `region` | `TEXT NOT NULL DEFAULT ''` | Operator-defined location label |
+| `tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array of operator labels (`prod`, `team-a`, …) |
 | `created_at` | `TEXT NOT NULL` | Registration timestamp |
 
 ### `applications`

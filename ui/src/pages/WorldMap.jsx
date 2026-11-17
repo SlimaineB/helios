@@ -103,7 +103,7 @@ const GEO = {
 }
 
 function detectLocation(inst) {
-  const hay = `${inst.region || ''} ${inst.name || ''} ${inst.project || ''}`
+  const hay = `${inst.region || ''} ${inst.name || ''} ${inst.project || ''} ${(inst.tags || []).join(' ')}`
   const tokens = hay.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
   let best = null
   for (const t of tokens) {
@@ -230,7 +230,7 @@ export default function WorldMap() {
     if (appFilter && !(inst.apps || []).some((a) => String(a.application.id) === appFilter)) return false
     if (stateFilter && hostState(inst) !== stateFilter) return false
     if (q) {
-      const hay = [inst.name, inst.id, inst.project, inst.region, loc?.label, ...(inst.apps || []).map((a) => a.application.name)]
+      const hay = [inst.name, inst.id, inst.project, inst.region, ...(inst.tags || []), loc?.label, ...(inst.apps || []).map((a) => a.application.name)]
         .filter(Boolean).join(' ').toLowerCase()
       if (!hay.includes(q)) return false
     }

@@ -8,6 +8,7 @@ import Badge from '../components/Badge.jsx'
 import AutoHealChip, { appAutoHealMeta } from '../components/AutoHealChip.jsx'
 import DiffModal from '../components/DiffModal.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
+import TagList from '../components/TagList.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -103,7 +104,7 @@ export default function Drift() {
         if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
       }
       if (appFilter && String(app.application.id) !== appFilter) return false
-      if (q && ![inst.name, inst.id, inst.region, inst.project, app.application.name].filter(Boolean).join(' ').toLowerCase().includes(q)) return false
+      if (q && ![inst.name, inst.id, inst.region, inst.project, ...(inst.tags || []), app.application.name].filter(Boolean).join(' ').toLowerCase().includes(q)) return false
       return true
     })
   }, [rows, search, projectFilter, appFilter])
@@ -253,6 +254,7 @@ export default function Drift() {
                         <span className="cell-sub">
                           <span>{projectLabel(inst.project)}</span>
                           {inst.region && <span>· {inst.region}</span>}
+                          <TagList tags={inst.tags} />
                           {!instanceOnline(inst) && <span className="offline-text">· offline</span>}
                         </span>
                       </div>

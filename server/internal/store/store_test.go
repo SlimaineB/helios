@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -141,13 +142,24 @@ func exerciseStore(t *testing.T, st Store) {
 		t.Fatalf("get repo by url: %v r=%+v", err, r)
 	}
 
-	inst, err := st.CreateInstance(ctx, model.Instance{ID: name, Name: name, TokenHash: "h" + name})
+	inst, err := st.CreateInstance(ctx, model.Instance{
+		ID: name, Name: name, TokenHash: "h" + name,
+		Tags: []string{"prod", "team-a"},
+	})
 	if err != nil {
 		t.Fatalf("create instance: %v", err)
 	}
-	if i, err := st.GetInstanceByToken(ctx, inst.TokenHash); err != nil || i.ID != inst.ID {
+	if i, err := st.GetInstanceByToken(ctx, inst.TokenHash); err != nil || i.ID != inst.ID || !slices.Equal(i.Tags, inst.Tags) {
 		t.Fatalf("get instance by token: %v i=%+v", err, i)
 	}
+	if err := st.UpdateInstanceMeta(ctx, inst.ID, name, inst.Project, "eu-west-1", []string{"prod", "team-b"}); err != nil {
+		t.Fatalf("update instance meta: %v", err)
+	}
+	if i, err := st.GetInstance(ctx, inst.ID); err != nil || i.Region != "eu-west-1" || !slices.Equal(i.Tags, []string{"prod", "team-b"}) {
+		t.Fatalf("tags after meta update: %v i=%+v", err, i)
+	}
+	inst.Region = "eu-west-1"
+	inst.Tags = []string{"prod", "team-b"}
 	inst.State = model.StateDrift
 	if err := st.UpdateInstance(ctx, inst); err != nil {
 		t.Fatalf("update instance: %v", err)

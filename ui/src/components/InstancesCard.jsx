@@ -4,6 +4,7 @@ import Badge from './Badge.jsx'
 import AutoHealChip, { hostAutoHealOn } from './AutoHealChip.jsx'
 import QuickMenu from './QuickMenu.jsx'
 import CopyButton from './CopyButton.jsx'
+import TagList from './TagList.jsx'
 import { stateLabel, instanceOnline } from '../api/client.js'
 import { useAuth } from '../App.jsx'
 
@@ -65,6 +66,7 @@ export default function InstancesCard({ instance, onCheckAll, onApplyAll, onHost
             />
             <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
             {instance.id} · {instance.project || 'global'}{instance.region ? ` · ${instance.region}` : ''}
+            <TagList tags={instance.tags} />
           </span>
         </div>
         <div className="card-actions">

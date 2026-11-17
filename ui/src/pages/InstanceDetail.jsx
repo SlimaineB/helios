@@ -13,6 +13,7 @@ import Pager from '../components/Pager.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Modal from '../components/Modal.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import TagList, { formatTags, parseTags } from '../components/TagList.jsx'
 import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard, SkeletonTable, SkeletonEmpty } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
@@ -38,6 +39,7 @@ export default function InstanceDetail() {
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [regionValue, setRegionValue] = useState('')
+  const [tagsValue, setTagsValue] = useState('')
   const [renaming, setRenaming] = useState(false)
 
   const appNamesById = useMemo(
@@ -146,6 +148,7 @@ export default function InstanceDetail() {
   const openRename = () => {
     setRenameValue(inst.name)
     setRegionValue(inst.region || '')
+    setTagsValue(formatTags(inst.tags))
     setRenameOpen(true)
   }
   const saveRename = async (e) => {
@@ -154,7 +157,7 @@ export default function InstanceDetail() {
     if (!name) return
     setRenaming(true)
     try {
-      await api.updateInstance(inst.id, name, inst.project, regionValue.trim())
+      await api.updateInstance(inst.id, name, inst.project, regionValue.trim(), parseTags(tagsValue))
       toast.success('Instance updated')
       setRenameOpen(false)
       refresh()
@@ -244,6 +247,7 @@ export default function InstanceDetail() {
         <div><b>ID</b> <CopyButton value={String(inst.id)} label="" size="small" title="Copy ID" />{inst.id}</div>
         <div><b>Hostname</b> {inst.hostname || '—'}</div>
         <div><b>Region</b> {inst.region || '—'}</div>
+        <div><b>Tags</b> {inst.tags?.length ? <TagList tags={inst.tags} /> : '—'}</div>
         <div><b>Platform</b> {inst.platform || '—'}</div>
         <div><b>Version</b> {inst.version || '—'}</div>
         <div><b>Mode</b> {isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div>
@@ -419,6 +423,10 @@ export default function InstanceDetail() {
             </label>
             <label>Region
               <input value={regionValue} onChange={(e) => setRegionValue(e.target.value)} placeholder="e.g. eu-west-1, dc-paris-1" />
+            </label>
+            <label>Tags
+              <input value={tagsValue} onChange={(e) => setTagsValue(e.target.value)} placeholder="e.g. prod, team-a" />
+              <span className="sub">Comma-separated labels for search and grouping.</span>
             </label>
             <div className="form-actions">
               <button type="button" className="ghost" onClick={() => setRenameOpen(false)}>Cancel</button>

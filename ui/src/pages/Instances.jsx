@@ -14,6 +14,7 @@ import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import TopologyView from '../components/TopologyView.jsx'
 import InstancesCard from '../components/InstancesCard.jsx'
+import TagList, { parseTags } from '../components/TagList.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -47,7 +48,7 @@ function appState(app) {
 }
 
 function instanceMatches(inst, q) {
-  return !q || [inst.name, inst.id, inst.project, inst.region].join(' ').toLowerCase().includes(q)
+  return !q || [inst.name, inst.id, inst.project, inst.region, ...(inst.tags || [])].join(' ').toLowerCase().includes(q)
 }
 
 function appMatches(inst, app, { appFilter, stateFilter, q }) {
@@ -147,6 +148,7 @@ function InstancesTree({ instances, onCheckAll, onApplyAll, onHostAutoHeal, can,
                       />
                       <span className="mono">{inst.id}</span>
                       {inst.region && <span>· {inst.region}</span>}
+                      <TagList tags={inst.tags} />
                     </span>
                   </div>
                 </td>
@@ -203,6 +205,7 @@ export default function Instances() {
   const [regName, setRegName] = useState('')
   const [regProject, setRegProject] = useState(DEFAULT_PROJECT)
   const [regRegion, setRegRegion] = useState('')
+  const [regTags, setRegTags] = useState('')
   const [regMode, setRegMode] = useState('agent')
   const [projects, setProjects] = useState([])
   const [regResult, setRegResult] = useState(null)
@@ -224,6 +227,7 @@ export default function Instances() {
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [appFilter, setAppFilter] = useState(searchParams.get('app') || '')
   const [modeFilter, setModeFilter] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
   const [onlineOnly, setOnlineOnly] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -275,17 +279,18 @@ export default function Instances() {
 
   useEffect(() => {
     setPageOff(0)
-  }, [search, stateFilter, projectFilter, appFilter, modeFilter, onlineOnly])
+  }, [search, stateFilter, projectFilter, appFilter, modeFilter, tagFilter, onlineOnly])
 
   const addInstance = async (e) => {
     e.preventDefault()
     setRegError('')
     try {
-      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regMode, regRegion.trim())
+      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regMode, regRegion.trim(), parseTags(regTags))
       setRegResult(res)
       setRegName('')
       setRegProject(DEFAULT_PROJECT)
       setRegRegion('')
+      setRegTags('')
       setRegMode('agent')
       toast.success('Instance registered')
       refresh()
@@ -299,6 +304,7 @@ export default function Instances() {
     setRegResult(null)
     setRegName('')
     setRegRegion('')
+    setRegTags('')
     setRegError('')
     setRegMode('agent')
   }
@@ -368,6 +374,12 @@ export default function Instances() {
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
   }, [instances])
 
+  const tagOptions = useMemo(() => {
+    const set = new Set()
+    for (const i of instances) for (const t of i.tags || []) set.add(t)
+    return [...set].sort((a, b) => a.localeCompare(b))
+  }, [instances])
+
   const q = search.trim().toLowerCase()
 
   const filtered = useMemo(() => {
@@ -380,12 +392,13 @@ export default function Instances() {
       }
       if (appFilter && !inst.apps.some((a) => String(a.application.id) === appFilter)) return false
       if (modeFilter && (inst.execution_mode || 'agent') !== modeFilter) return false
+      if (tagFilter && !(inst.tags || []).some((t) => t.toLowerCase() === tagFilter.toLowerCase())) return false
       if (onlineOnly && !online(inst)) return false
       if (q && !instanceMatches(inst, q)
         && !inst.apps.some((a) => a.application.name.toLowerCase().includes(q))) return false
       return true
     })
-  }, [instances, q, stateFilter, projectFilter, appFilter, modeFilter, onlineOnly])
+  }, [instances, q, stateFilter, projectFilter, appFilter, modeFilter, tagFilter, onlineOnly])
 
   const visibleApps = useMemo(
     () => filtered.flatMap((inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))),
@@ -462,13 +475,14 @@ export default function Instances() {
     variant: 'warn',
     onConfirm: () => { setConfirm(null); bulk('apply') },
   })
-  const filtersActive = !!(search || stateFilter || projectFilter || appFilter || modeFilter || onlineOnly)
+  const filtersActive = !!(search || stateFilter || projectFilter || appFilter || modeFilter || tagFilter || onlineOnly)
   const clearFilters = () => {
     setSearch('')
     setStateFilter('')
     setProjectFilter('')
     setAppFilter('')
     setModeFilter('')
+    setTagFilter('')
     setOnlineOnly(false)
     setSearchParams({}, { replace: true })
   }
@@ -503,7 +517,7 @@ export default function Instances() {
         <input
           type="search"
           className="filter-search"
-          placeholder="Search name, id, region, project or application…"
+          placeholder="Search name, id, region, tag, project or application…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -531,6 +545,12 @@ export default function Instances() {
           <option value="agent">Agent</option>
           <option value="tunnel">Tunnel · bastion</option>
         </select>
+        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
+          <option value="">All tags</option>
+          {tagOptions.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
         <select value={appFilter} onChange={(e) => applyAppFilter(e.target.value)} aria-label="Application">
           <option value="">All applications</option>
           {appOptions.map(([id, name]) => (
@@ -554,7 +574,7 @@ export default function Instances() {
         </button>
       </div>
 
-      {(appFilter || projectFilter || stateFilter || modeFilter) && (
+      {(appFilter || projectFilter || stateFilter || modeFilter || tagFilter) && (
         <div className="active-filter">
           <span>Showing</span>
           {modeFilter && (
@@ -574,6 +594,9 @@ export default function Instances() {
           )}
           {stateFilter && (
             <span className="filter-chip">State: {stateLabel(stateFilter)}</span>
+          )}
+          {tagFilter && (
+            <span className="filter-chip">Tag: {tagFilter}</span>
           )}
           <span className="spacer" />
           <button type="button" className="ghost small" onClick={clearFilters}>Clear filters</button>
@@ -701,6 +724,7 @@ export default function Instances() {
               <label>Instance name<input autoFocus value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="e.g. web-prod-01" /></label>
               <label>Project<select required value={regProject} onChange={(e) => setRegProject(e.target.value)}><option value={DEFAULT_PROJECT}>default (global)</option>{regProject !== DEFAULT_PROJECT && !projects.some((p) => p.name === regProject) && <option value={regProject}>{regProject}</option>}{projects.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}</select><span className="sub">Required · scopes RBAC and the repository allowlist.</span></label>
               <label>Region<input value={regRegion} onChange={(e) => setRegRegion(e.target.value)} placeholder="e.g. eu-west-1, dc-paris-1" /><span className="sub">Optional · shown on the world map and used by filters.</span></label>
+              <label>Tags<input value={regTags} onChange={(e) => setRegTags(e.target.value)} placeholder="e.g. prod, team-a" /><span className="sub">Optional · comma-separated labels for search and grouping.</span></label>
               <label>Registration mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="tunnel">Tunnel · reverse SSH (optional lightweight agent)</option></select><span className="sub">Tunnel mode lets an outbound-only host be managed by the hub runner; the tunnel can be kept open by a lightweight agent.</span></label>
               {regError && <div className="error">{regError}</div>}
               <div className="form-actions">

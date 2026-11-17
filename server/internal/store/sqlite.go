@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS instances (
   platform    TEXT NOT NULL DEFAULT '',
   project     TEXT NOT NULL DEFAULT '',
   region      TEXT NOT NULL DEFAULT '',
+  tags        TEXT NOT NULL DEFAULT '[]',
   execution_mode TEXT NOT NULL DEFAULT 'agent',
   tunnel_port INTEGER NOT NULL DEFAULT 0,
   last_tunnel_at TEXT NOT NULL DEFAULT '',
@@ -228,6 +229,7 @@ CREATE TABLE IF NOT EXISTS instances (
   platform    TEXT NOT NULL DEFAULT '',
   project     TEXT NOT NULL DEFAULT '',
   region      TEXT NOT NULL DEFAULT '',
+  tags        TEXT NOT NULL DEFAULT '[]',
   execution_mode TEXT NOT NULL DEFAULT 'agent',
   tunnel_port INTEGER NOT NULL DEFAULT 0,
   last_tunnel_at TEXT NOT NULL DEFAULT '',
@@ -543,6 +545,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'agent'`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tunnel_port INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
@@ -684,6 +687,7 @@ func migrate(db *sql.DB) error {
 		{"applications", "project", "ALTER TABLE applications ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 		{"instances", "project", "ALTER TABLE instances ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 		{"instances", "region", "ALTER TABLE instances ADD COLUMN region TEXT NOT NULL DEFAULT ''"},
+		{"instances", "tags", "ALTER TABLE instances ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"},
 		{"instances", "execution_mode", "ALTER TABLE instances ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent'"},
 		{"instances", "tunnel_port", "ALTER TABLE instances ADD COLUMN tunnel_port INTEGER NOT NULL DEFAULT 0"},
 		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
@@ -756,20 +760,47 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, region, execution_mode, tunnel_port, last_tunnel_at, autoheal, poll_interval, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, region, tags, execution_mode, tunnel_port, last_tunnel_at, autoheal, poll_interval, created_at`
+
+func decodeTags(raw string) []string {
+	tags := []string{}
+	if raw == "" {
+		return tags
+	}
+	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
+		return []string{}
+	}
+	if tags == nil {
+		return []string{}
+	}
+	return tags
+}
+
+func encodeTags(tags []string) string {
+	if len(tags) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
 		inst                          model.Instance
 		lastSeen, lastTunnel, created string
+		tags                          string
 		autoheal                      int
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
-		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &inst.Region,
+		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &inst.Region, &tags,
 		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &inst.PollInterval, &created)
 	if err != nil {
 		return inst, err
 	}
+	inst.Tags = decodeTags(tags)
 	inst.LastSeen = parseTime(lastSeen)
 	inst.LastTunnelAt = parseTime(lastTunnel)
 	inst.AutoHeal = autoheal != 0
@@ -848,9 +879,12 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 	if in.ExecutionMode == "" {
 		in.ExecutionMode = model.ModeAgent
 	}
+	if in.Tags == nil {
+		in.Tags = []string{}
+	}
 	res, err := s.exec(ctx,
-		`INSERT INTO instances (id, name, token_hash, state, project, region, execution_mode, tunnel_port, autoheal, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.Region, in.ExecutionMode, in.TunnelPort, 1, tm(in.CreatedAt))
+		`INSERT INTO instances (id, name, token_hash, state, project, region, tags, execution_mode, tunnel_port, autoheal, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.Region, encodeTags(in.Tags), in.ExecutionMode, in.TunnelPort, 1, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create instance: %w", err)
 	}
@@ -860,8 +894,8 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 
 func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error {
 	_, err := s.exec(ctx,
-		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, region=?, execution_mode=?, tunnel_port=?, last_tunnel_at=?, poll_interval=? WHERE id=?`,
-		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project, in.Region,
+		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, region=?, tags=?, execution_mode=?, tunnel_port=?, last_tunnel_at=?, poll_interval=? WHERE id=?`,
+		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project, in.Region, encodeTags(in.Tags),
 		in.ExecutionMode, in.TunnelPort, tm(in.LastTunnelAt), in.PollInterval, in.ID)
 	if err != nil {
 		return fmt.Errorf("update instance: %w", err)
@@ -902,8 +936,8 @@ func (s *sqlstore) UpdateInstanceState(ctx context.Context, id, state, lastCommi
 }
 
 // UpdateInstanceMeta updates only the editable metadata fields.
-func (s *sqlstore) UpdateInstanceMeta(ctx context.Context, id, name, project, region string) error {
-	_, err := s.exec(ctx, `UPDATE instances SET name=?, project=?, region=? WHERE id=?`, name, project, region, id)
+func (s *sqlstore) UpdateInstanceMeta(ctx context.Context, id, name, project, region string, tags []string) error {
+	_, err := s.exec(ctx, `UPDATE instances SET name=?, project=?, region=?, tags=? WHERE id=?`, name, project, region, encodeTags(tags), id)
 	if err != nil {
 		return fmt.Errorf("update instance meta: %w", err)
 	}

@@ -51,8 +51,8 @@ type Store interface {
 	TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time, tunnel bool) error
 	// UpdateInstanceState updates the aggregated drift state only.
 	UpdateInstanceState(ctx context.Context, id, state, lastCommit string) error
-	// UpdateInstanceMeta updates the editable name, project and region.
-	UpdateInstanceMeta(ctx context.Context, id, name, project, region string) error
+	// UpdateInstanceMeta updates the editable name, project, region and tags.
+	UpdateInstanceMeta(ctx context.Context, id, name, project, region string, tags []string) error
 	DeleteInstance(ctx context.Context, id string) error
 	SetInstanceAutoHeal(ctx context.Context, id string, enabled bool) error
 

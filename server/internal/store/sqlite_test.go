@@ -60,6 +60,13 @@ func TestMigrateOldDatabase(t *testing.T) {
 	if app.Project != "" || app.IgnorePaths != "" || app.SyncInterval != 0 {
 		t.Fatalf("new app columns not defaulted: %+v", app)
 	}
+	inst, err := st.GetInstance(context.Background(), "ins-old")
+	if err != nil {
+		t.Fatalf("get legacy instance: %v", err)
+	}
+	if inst.Tags == nil || len(inst.Tags) != 0 {
+		t.Fatalf("tags = %v, want empty non-nil slice", inst.Tags)
+	}
 	a, err := st.GetAssignment(context.Background(), "ins-old", 1)
 	if err != nil {
 		t.Fatalf("get legacy assignment: %v", err)

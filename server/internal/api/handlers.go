@@ -355,13 +355,45 @@ func effectiveAutoHeal(hostAutoHeal bool, app model.Application, a model.Assignm
 	return true
 }
 
+const (
+	maxInstanceTags    = 64
+	maxInstanceTagSize = 64
+)
+
+// normalizeInstanceTags trims, de-duplicates (case-insensitively) and caps
+// operator labels before they are persisted.
+func normalizeInstanceTags(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		tag := strings.TrimSpace(raw)
+		if tag == "" {
+			continue
+		}
+		if r := []rune(tag); len(r) > maxInstanceTagSize {
+			tag = string(r[:maxInstanceTagSize])
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+		if len(out) == maxInstanceTags {
+			break
+		}
+	}
+	return out
+}
+
 // handleCreateInstance registers a new instance and returns its bootstrap token once.
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name          string `json:"name"`
-		Project       string `json:"project"`
-		Region        string `json:"region"`
-		ExecutionMode string `json:"execution_mode"`
+		Name          string   `json:"name"`
+		Project       string   `json:"project"`
+		Region        string   `json:"region"`
+		Tags          []string `json:"tags"`
+		ExecutionMode string   `json:"execution_mode"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -373,6 +405,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Project = strings.TrimSpace(body.Project)
 	body.Region = strings.TrimSpace(body.Region)
+	body.Tags = normalizeInstanceTags(body.Tags)
 	body.ExecutionMode = strings.TrimSpace(body.ExecutionMode)
 	if body.ExecutionMode == "" {
 		body.ExecutionMode = model.ModeAgent
@@ -410,6 +443,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		Name:          body.Name,
 		Project:       body.Project,
 		Region:        body.Region,
+		Tags:          body.Tags,
 		ExecutionMode: body.ExecutionMode,
 		TunnelPort:    tunnelPort,
 		TokenHash:     auth.Hash(token),
@@ -497,9 +531,10 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 	id, _ := idParam(r, "id")
 	var body struct {
-		Name    string  `json:"name"`
-		Project *string `json:"project"`
-		Region  *string `json:"region"`
+		Name    string    `json:"name"`
+		Project *string   `json:"project"`
+		Region  *string   `json:"region"`
+		Tags    *[]string `json:"tags"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -526,6 +561,10 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.Region != nil {
 		region = strings.TrimSpace(*body.Region)
 	}
+	tags := inst.Tags
+	if body.Tags != nil {
+		tags = normalizeInstanceTags(*body.Tags)
+	}
 	if project != inst.Project {
 		if !s.requireObject(w, r, "instances.update", project) {
 			return
@@ -547,13 +586,14 @@ func (s *Server) handleUpdateInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.store.UpdateInstanceMeta(r.Context(), id, name, project, region); err != nil {
+	if err := s.store.UpdateInstanceMeta(r.Context(), id, name, project, region, tags); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	inst.Name = name
 	inst.Project = project
 	inst.Region = region
+	inst.Tags = tags
 	writeJSON(w, http.StatusOK, s.decorateInstance(inst))
 }
 

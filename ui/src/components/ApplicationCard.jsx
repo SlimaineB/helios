@@ -35,12 +35,12 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
     { label: 'View nodes', icon: Network, to: `/instances?app=${app.id}` },
     { label: 'Check all nodes', icon: ClipboardCheck, onClick: onCheckAll, disabled: !canRun },
     { label: 'Apply to all nodes', icon: Play, onClick: onApplyAll, disabled: !canRun },
-    { label: 'History', icon: History, onClick: onHistory },
+    { label: 'History', icon: History, onClick: () => onHistory(app) },
     { separator: true },
-    { label: 'Edit', icon: Pencil, onClick: onEdit, disabled: !can('applications', 'update') },
-    { label: 'Variables', icon: Variable, onClick: onVars, disabled: !can('applications', 'update') },
+    { label: 'Edit', icon: Pencil, onClick: () => onEdit(app), disabled: !can('applications', 'update') },
+    { label: 'Variables', icon: Variable, onClick: () => onVars(app), disabled: !can('applications', 'update') },
     { separator: true },
-    { label: 'Delete', icon: Trash2, onClick: onDelete, disabled: !can('applications', 'delete'), danger: true },
+    { label: 'Delete', icon: Trash2, onClick: () => onDelete(app), disabled: !can('applications', 'delete'), danger: true },
   ]
 
   return (
@@ -102,7 +102,7 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
               <button
                 type="button"
                 className="rev-link"
-                onClick={onHistory}
+                onClick={() => onHistory(app)}
                 title={s.revisionMsg || 'View revision history'}
               >
                 <GitCommit size={12} />
@@ -114,14 +114,14 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
         </div>
       </div>
 
-      <footer className="card-foot">
+      <footer className="card-foot app-card-foot">
+        <AutoHealChip
+          enabled={!!app.autoheal}
+          scope="app"
+          label={app.autoheal ? `auto-heal · ${s.autoheal}/${s.instances} hosts` : 'auto-heal off'}
+          reason={app.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
+        />
         <div className="actions">
-          <AutoHealChip
-            enabled={!!app.autoheal}
-            scope="app"
-            label={app.autoheal ? `auto-heal · ${s.autoheal}/${s.instances} hosts` : 'auto-heal off'}
-            reason={app.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
-          />
           <button type="button" className="btn ghost small" disabled={!canRun} onClick={onCheckAll} title="Check every node running this application">
             <ClipboardCheck size={13} /> Check
           </button>

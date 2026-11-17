@@ -60,6 +60,9 @@ type Instance struct {
 	// Region is the operator-defined location used by the world map and filters
 	// (for example "eu-west-1" or "dc-paris-1"). Free-form.
 	Region string `json:"region,omitempty"`
+	// Tags are free-form operator labels (for example "prod" or "team-a")
+	// used for search and grouping. Stored as a JSON array in the database.
+	Tags []string `json:"tags"`
 	// AutoHeal is the host-level auto-apply switch. When false, no application
 	// on this host is applied automatically; drift checks keep running.
 	AutoHeal bool `json:"autoheal"`

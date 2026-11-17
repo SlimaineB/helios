@@ -272,8 +272,12 @@ can do the same through the API:
 
 ```sh
 curl -su admin:$PW -X POST https://hub.example.com/api/v1/instances \
-  -H 'Content-Type: application/json' -d '{"name":"web-01"}'
+  -H 'Content-Type: application/json' \
+  -d '{"name":"web-01","region":"eu-west-1","tags":["prod","team-a"]}'
 ```
+
+Tags are free-form labels (shown and editable in the instance detail dialog)
+used by search and the Instances tag filter.
 
 ### 2. Run the installer (recommended)
 
