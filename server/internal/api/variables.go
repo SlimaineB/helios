@@ -173,9 +173,6 @@ func redactVars(vars []model.Variable) []model.Variable {
 // mergedVars builds the extra-vars map sent to an agent for one assignment:
 // legacy vars < app defaults < host overrides.
 func (s *Server) mergedVars(ctx context.Context, instanceID string, appID int64, legacy string) (string, error) {
-	out := map[string]any{}
-	_ = json.Unmarshal([]byte(legacy), &out)
-
 	appVars, err := s.store.AppVariables(ctx, appID)
 	if err != nil {
 		return "", err
@@ -184,7 +181,13 @@ func (s *Server) mergedVars(ctx context.Context, instanceID string, appID int64,
 	if err != nil {
 		return "", err
 	}
-	for _, vars := range [][]model.Variable{appVars, hostVars} {
+	return mergeVarsJSON(legacy, appVars, hostVars)
+}
+
+func mergeVarsJSON(legacy string, groups ...[]model.Variable) (string, error) {
+	out := map[string]any{}
+	_ = json.Unmarshal([]byte(legacy), &out)
+	for _, vars := range groups {
 		for _, v := range vars {
 			out[v.Key] = parseVarValue(v.Value)
 		}

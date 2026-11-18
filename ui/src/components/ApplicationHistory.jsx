@@ -13,8 +13,9 @@ const PAGE = 25
 const fmt = (t) => (t ? new Date(t).toLocaleString() : '—')
 const short = (c) => (c ? c.slice(0, 7) : '—')
 
-export default function ApplicationHistory({ app, instancesById, onClose }) {
+export default function ApplicationHistory({ app, onClose }) {
   const [rows, setRows] = useState([])
+  const [instanceNames, setInstanceNames] = useState(new Map())
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -31,6 +32,7 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
         if (cancelled) return
         setRows(d.items || [])
         setTotal(d.total)
+        setInstanceNames(new Map(Object.entries(d.instance_names || {})))
       })
       .catch((e) => { if (!cancelled) setError(e.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -75,7 +77,7 @@ export default function ApplicationHistory({ app, instancesById, onClose }) {
                     </td>
                     <td>
                       <Link to={`/instances/${r.instance_id}`} className="entity-link mono">
-                        {instancesById?.get(r.instance_id) || r.instance_id}
+                        {instanceNames.get(r.instance_id) || r.instance_id}
                       </Link>
                     </td>
                     <td>

@@ -18,22 +18,23 @@ import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 
-const FETCH_ALL = 500
-const MAX_INSTANCES = 10000
+const TOPOLOGY_LIMIT = 300
+const DETAIL_INSTANCE_LIMIT = 500
+const ASSIGN_CHOICE_LIMIT = 200
 
-async function fetchAllInstances() {
-  const all = []
+async function fetchAppInstanceIDs(appId) {
+  const ids = []
   let offset = 0
   let total = Infinity
-  while (all.length < total && all.length < MAX_INSTANCES) {
-    const d = await api.instances(`?limit=${FETCH_ALL}&offset=${offset}`)
+  while (ids.length < total) {
+    const d = await api.instances(`?app_id=${appId}&compact=1&limit=1000&offset=${offset}`)
     const items = Array.isArray(d.items) ? d.items : []
     if (!items.length) break
-    all.push(...items)
-    total = Number.isFinite(Number(d.total)) ? Number(d.total) : all.length
+    for (const inst of items) ids.push(inst.id)
+    total = Number.isFinite(Number(d.total)) ? Number(d.total) : ids.length
     offset += items.length
   }
-  return all
+  return ids
 }
 
 const emptyApp = { name: '', branch: 'main', path: 'site.yml', autoheal: false, sync_interval: 0, ignore_paths: '', project: DEFAULT_PROJECT }
@@ -44,7 +45,7 @@ export default function Applications() {
   const { can } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const [apps, setApps] = useState([])
-  const [instances, setInstances] = useState([])
+  const [appStats, setAppStats] = useState(new Map())
   const [repos, setRepos] = useState([])
   const [projects, setProjects] = useState([])
   const [showForm, setShowForm] = useState(false)
@@ -61,6 +62,13 @@ export default function Applications() {
   const [confirm, setConfirm] = useState(null)
   const [historyApp, setHistoryApp] = useState(null)
   const [detailApp, setDetailApp] = useState(null)
+  const [detailInstances, setDetailInstances] = useState([])
+  const [detailTotal, setDetailTotal] = useState(0)
+  const [detailAvailable, setDetailAvailable] = useState([])
+  const [detailAvailableTotal, setDetailAvailableTotal] = useState(0)
+  const [detailNonce, setDetailNonce] = useState(0)
+  const [topologyInstances, setTopologyInstances] = useState([])
+  const [topologyTotal, setTopologyTotal] = useState(0)
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [repoFilter, setRepoFilter] = useState(searchParams.get('repo') || '')
@@ -77,15 +85,25 @@ export default function Applications() {
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     try {
-      const [a, r, inst] = await Promise.all([
+      const [a, r, stats, projectList] = await Promise.all([
         api.applications(),
         api.repositories().catch(() => []),
-        fetchAllInstances().catch(() => []),
+        api.applicationStats().catch(() => ({ items: [] })),
+        api.projects().catch(() => []),
       ])
       setApps(a)
       setRepos(r)
-      setInstances(inst)
-      setProjects(await api.projects().catch(() => []))
+      setProjects(projectList)
+      const byId = new Map()
+      for (const st of stats.items || []) {
+        byId.set(st.id, {
+          ...st,
+          revisionMsg: st.revision_msg || '',
+          revisionAt: st.revision_at ? new Date(st.revision_at).getTime() : 0,
+          lastAt: st.last_at ? new Date(st.last_at).getTime() : 0,
+        })
+      }
+      setAppStats(byId)
     } catch (e) {
       if (!loadedRef.current) toast.error(e.message)
     } finally {
@@ -221,27 +239,41 @@ export default function Applications() {
 
   const openDetail = (app) => setDetailApp(app)
 
-  const appNodeIDs = (appID) =>
-    instances.filter((i) => (i.apps || []).some((a) => a.application.id === appID)).map((i) => i.id)
-
   const runApp = async (app, action) => {
-    const ids = appNodeIDs(app.id)
+    let ids = []
+    try {
+      ids = await fetchAppInstanceIDs(app.id)
+    } catch (e) {
+      toast.error(e.message)
+      return
+    }
     if (!ids.length) {
       toast.info('No node is running this application')
       return
     }
     const label = action === 'apply' ? 'Apply' : 'Check'
     try {
+      const chunks = []
+      for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200))
       const results = await Promise.allSettled(
-        ids.map((id) => (action === 'apply' ? api.sync(id, app.id) : api.check(id, app.id))),
+        chunks.map((chunk) => api.bulkCommands(action, chunk, app.id)),
       )
-      const ok = results.filter((r) => r.status === 'fulfilled').length
-      const failed = results.length - ok
-      if (ok) toast.success(`${label} queued on ${ok} node${ok === 1 ? '' : 's'}`)
-      if (failed) {
-        const first = results.find((r) => r.status === 'rejected')
-        toast.error(`${failed} node${failed === 1 ? '' : 's'} failed: ${first?.reason?.message || 'request failed'}`)
-      }
+      let queued = 0
+      let failed = 0
+      let firstError = ''
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          failed += chunks[i].length
+          firstError = firstError || result.reason?.message || 'request failed'
+          return
+        }
+        queued += result.value.queued || 0
+        const errors = result.value.errors || []
+        failed += errors.length
+        if (!firstError && errors.length) firstError = errors[0].error
+      })
+      if (queued) toast.success(`${label} queued on ${queued} node${queued === 1 ? '' : 's'}`)
+      if (failed) toast.error(`${failed} node${failed === 1 ? '' : 's'} failed: ${firstError}`)
       setTimeout(refresh, 800)
     } catch (e) {
       toast.error(e.message)
@@ -274,6 +306,7 @@ export default function Applications() {
       await api.unassign(inst.id, app.id)
       toast.success('Application unassigned')
       refresh()
+      setDetailNonce((n) => n + 1)
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -285,6 +318,7 @@ export default function Applications() {
       await api.assign(inst.id, app.id)
       toast.success('Application assigned')
       refresh()
+      setDetailNonce((n) => n + 1)
     } catch (e) {
       toast.error(e.message)
     }
@@ -298,39 +332,6 @@ export default function Applications() {
     value: repo[k],
     onChange: (e) => setRepo((p) => ({ ...p, [k]: e.target.value })),
   })
-
-  const instanceNames = useMemo(() => new Map(instances.map((i) => [i.id, i.name])), [instances])
-
-  const appStats = useMemo(() => {
-    const map = new Map()
-    for (const app of apps) map.set(app.id, { instances: 0, synced: 0, unknown: 0, drift: 0, error: 0, stuck: 0, autoheal: 0, revision: '', revisionMsg: '', revisionAt: 0, lastAt: 0 })
-    for (const inst of instances) {
-      for (const a of inst.apps || []) {
-        const s = map.get(a.application.id)
-        if (!s) continue
-        s.instances++
-        if (a.stuck) s.stuck++
-        if (a.autoheal) s.autoheal++
-        const st = a.latest_check?.status
-        if (st === 'ok') s.synced++
-        else if (st === 'drift') s.drift++
-        else if (st === 'failed' || st === 'error') s.error++
-        else s.unknown++
-        const checkedAt = new Date(a.last_check_at || a.latest_check?.finished_at || 0).getTime()
-        if (checkedAt > s.lastAt) s.lastAt = checkedAt
-        const run = a.latest_check
-        if (run?.commit_after) {
-          const at = new Date(run.finished_at || 0).getTime()
-          if (at >= s.revisionAt) {
-            s.revision = run.commit_after
-            s.revisionMsg = run.commit_msg || ''
-            s.revisionAt = at
-          }
-        }
-      }
-    }
-    return map
-  }, [apps, instances])
 
   const totals = useMemo(() => {
     let assigned = 0
@@ -363,15 +364,55 @@ export default function Applications() {
     })
   }, [apps, search, projectFilter, repoFilter, focusAppId])
 
-  const topologyInstances = useMemo(() => {
-    const appIds = new Set(filteredApps.map((a) => a.id))
-    return instances
-      .map((inst) => ({
-        ...inst,
-        apps: (inst.apps || []).filter((a) => appIds.has(a.application.id)),
-      }))
-      .filter((inst) => inst.apps.length > 0)
-  }, [instances, filteredApps])
+  useEffect(() => {
+    if (!detailApp) {
+      setDetailInstances([])
+      setDetailTotal(0)
+      setDetailAvailable([])
+      setDetailAvailableTotal(0)
+      return undefined
+    }
+    let cancelled = false
+    const project = detailApp.project ? `project=${encodeURIComponent(detailApp.project)}` : 'project=__global__'
+    Promise.all([
+      api.instances(`?app_id=${detailApp.id}&limit=${DETAIL_INSTANCE_LIMIT}`),
+      api.instances(`?${project}&not_app_id=${detailApp.id}&limit=${ASSIGN_CHOICE_LIMIT}&compact=1`),
+    ]).then(([page, available]) => {
+      if (cancelled) return
+      setDetailInstances(page.items || [])
+      setDetailTotal(Number(page.total) || 0)
+      setDetailAvailable(available.items || [])
+      setDetailAvailableTotal(Number(available.total) || 0)
+    }).catch((e) => {
+      if (!cancelled) toast.error(e.message)
+    })
+    return () => { cancelled = true }
+  }, [detailApp, detailNonce])
+
+  useEffect(() => {
+    if (view !== 'topology' || filteredApps.length === 0) return undefined
+    let cancelled = false
+    const params = new URLSearchParams({ limit: String(TOPOLOGY_LIMIT) })
+    if (projectFilter) params.set('project', projectFilter)
+    if (repoFilter) params.set('repo', repoFilter)
+    if (search.trim()) params.set('q', search.trim())
+    if (focusAppId) params.set('app_id', String(focusAppId))
+    api.instances(`?${params}`).then((page) => {
+      if (cancelled) return
+      const appIds = new Set(filteredApps.map((a) => a.id))
+      const items = (page.items || [])
+        .map((inst) => ({
+          ...inst,
+          apps: (inst.apps || []).filter((a) => appIds.has(a.application.id)),
+        }))
+        .filter((inst) => inst.apps.length > 0)
+      setTopologyInstances(items)
+      setTopologyTotal(Number(page.total) || 0)
+    }).catch((e) => {
+      if (!cancelled) toast.error(e.message)
+    })
+    return () => { cancelled = true }
+  }, [view, projectFilter, repoFilter, search, focusAppId, filteredApps])
 
   if (loading) {
     return (
@@ -589,10 +630,17 @@ export default function Applications() {
           </p>
         </div>
       ) : view === 'topology' ? (
-        <TopologyView
-          instances={topologyInstances}
-          emptyMessage="No assignment matches these filters."
-        />
+        <>
+          {topologyTotal > topologyInstances.length && (
+            <p className="muted">
+              Showing the first {topologyInstances.length} of {topologyTotal} matching hosts to keep the topology responsive.
+            </p>
+          )}
+          <TopologyView
+            instances={topologyInstances}
+            emptyMessage="No assignment matches these filters."
+          />
+        </>
       ) : view === 'cards' ? (
         <div className="cards-grid">
           {filteredApps.map((a) => (
@@ -722,7 +770,10 @@ export default function Applications() {
           app={detailApp}
           stats={appStats.get(detailApp.id)}
           repo={repos.find((r) => r.url === detailApp.repo_url)}
-          instances={instances}
+          instances={detailInstances}
+          instancesTotal={detailTotal}
+          availableInstances={detailAvailable}
+          availableTotal={detailAvailableTotal}
           can={can}
           onClose={() => setDetailApp(null)}
           onEdit={editFromDetail}
@@ -737,7 +788,6 @@ export default function Applications() {
       {historyApp && (
         <ApplicationHistory
           app={historyApp}
-          instancesById={instanceNames}
           onClose={() => setHistoryApp(null)}
         />
       )}

@@ -17,6 +17,11 @@ var (
 	ErrLeaseLost    = errors.New("lease lost")
 )
 
+type AssignmentWithApplication struct {
+	Assignment  model.Assignment
+	Application model.Application
+}
+
 // Store is the persistence contract. The SQLite implementation lives in
 // sqlite.go; a Postgres implementation can be swapped in later without
 // touching the API layer.
@@ -37,18 +42,33 @@ type Store interface {
 
 	// Instances
 	ListInstances(ctx context.Context, limit, offset int) ([]model.Instance, error)
+	ListInstancesFiltered(ctx context.Context, f model.InstanceListFilter) ([]model.Instance, error)
+	CountInstancesFiltered(ctx context.Context, f model.InstanceListFilter) (int, error)
+	InstanceFacets(ctx context.Context, all bool, projects []string) (model.InstanceFacets, error)
+	InstanceListStats(ctx context.Context, f model.InstanceListFilter) (model.InstanceListStats, error)
+	InstanceOverviewStats(ctx context.Context, all bool, projects []string, now time.Time) (model.OverviewStats, error)
+	ApplicationAssignmentStats(ctx context.Context, all bool, projects []string) ([]model.ApplicationStats, error)
+	ListDriftAssignments(ctx context.Context, f model.AssignmentFilter) ([]model.AssignmentKey, error)
+	CountDriftAssignments(ctx context.Context, f model.AssignmentFilter) (int, error)
+	DriftAssignmentStats(ctx context.Context, f model.AssignmentFilter) (model.AssignmentStats, error)
+	DriftAssignmentFacets(ctx context.Context, all bool, projects []string) (model.AssignmentFacets, error)
 	ListTunnelInstances(ctx context.Context) ([]model.Instance, error)
 	CountInstances(ctx context.Context) (int, error)
 	// Scoped variants restrict by project names (RBAC visibility).
 	ListInstancesScoped(ctx context.Context, projects []string, limit, offset int) ([]model.Instance, error)
 	CountInstancesScoped(ctx context.Context, projects []string) (int, error)
 	GetInstance(ctx context.Context, id string) (model.Instance, error)
+	InstancesByIDs(ctx context.Context, ids []string) ([]model.Instance, error)
 	GetInstanceByToken(ctx context.Context, tokenHash string) (model.Instance, error)
 	CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error)
 	UpdateInstance(ctx context.Context, in model.Instance) error
 	// TouchInstance updates only heartbeat metadata, so concurrent checkins and
 	// state refreshes cannot clobber each other's columns.
 	TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time, tunnel bool) error
+	// SetInstanceHostInfo stores the best-effort host inventory reported by an
+	// agent. It is separate from TouchInstance so liveness and inventory can be
+	// written independently.
+	SetInstanceHostInfo(ctx context.Context, id string, info model.HostInfo) error
 	// UpdateInstanceState updates the aggregated drift state only.
 	UpdateInstanceState(ctx context.Context, id, state, lastCommit string) error
 	// UpdateInstanceMeta updates the editable name, project, region and tags.
@@ -60,6 +80,7 @@ type Store interface {
 	ListApplications(ctx context.Context) ([]model.Application, error)
 	ListApplicationsScoped(ctx context.Context, projects []string) ([]model.Application, error)
 	GetApplication(ctx context.Context, id int64) (model.Application, error)
+	ApplicationsByIDs(ctx context.Context, ids []int64) ([]model.Application, error)
 	GetApplicationByName(ctx context.Context, name string) (model.Application, error)
 	CreateApplication(ctx context.Context, in model.Application) (model.Application, error)
 	UpdateApplication(ctx context.Context, in model.Application) error
@@ -68,6 +89,7 @@ type Store interface {
 
 	// Repositories (git connections registry)
 	ListRepositories(ctx context.Context) ([]model.Repository, error)
+	RepositoriesByURLs(ctx context.Context, urls []string) (map[string]model.Repository, error)
 	GetRepository(ctx context.Context, id int64) (model.Repository, error)
 	GetRepositoryByURL(ctx context.Context, url string) (model.Repository, error)
 	CreateRepository(ctx context.Context, in model.Repository) (model.Repository, error)
@@ -86,6 +108,7 @@ type Store interface {
 
 	// Assignments (instance <-> application)
 	ListAssignments(ctx context.Context, instanceID string) ([]model.Assignment, error)
+	ListAssignmentsWithApplications(ctx context.Context, instanceIDs []string) ([]AssignmentWithApplication, error)
 	AssignmentsForApp(ctx context.Context, appID int64) ([]model.Assignment, error)
 	GetAssignment(ctx context.Context, instanceID string, appID int64) (model.Assignment, error)
 	Assign(ctx context.Context, instanceID string, appID int64) error
@@ -106,16 +129,20 @@ type Store interface {
 
 	// Runs
 	ListRuns(ctx context.Context, f model.RunFilter) ([]model.Run, error)
+	ListRunsScoped(ctx context.Context, all bool, projects, modes []string, limit int) ([]model.Run, error)
 	CountRuns(ctx context.Context, f model.RunFilter) (int, error)
 	GetRun(ctx context.Context, id int64) (model.Run, error)
 	CreateRun(ctx context.Context, r model.Run) (model.Run, error)
 	LatestRun(ctx context.Context, instanceID string, appID int64, mode string) (model.Run, error)
+	ListLatestRuns(ctx context.Context, instanceIDs, modes []string) ([]model.Run, error)
 	PruneRuns(ctx context.Context, before time.Time) (int64, error)
 
 	// Variables: app defaults + per-assignment (host) overrides.
 	AppVariables(ctx context.Context, appID int64) ([]model.Variable, error)
+	ListAppVariablesForApps(ctx context.Context, appIDs []int64) (map[int64][]model.Variable, error)
 	SaveAppVariables(ctx context.Context, appID int64, vars []model.Variable) error
 	AssignmentVariables(ctx context.Context, instanceID string, appID int64) ([]model.Variable, error)
+	ListAssignmentVariablesForApps(ctx context.Context, instanceID string, appIDs []int64) (map[int64][]model.Variable, error)
 	SaveAssignmentVariables(ctx context.Context, instanceID string, appID int64, vars []model.Variable) error
 
 	// Commands

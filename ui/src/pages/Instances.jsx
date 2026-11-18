@@ -20,27 +20,11 @@ import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
 const PAGE_SIZE = 20
-const FETCH_ALL = 500
-const MAX_INSTANCES = 10000
+const TOPOLOGY_LIMIT = 300
 
 const online = (inst) => instanceOnline(inst)
 
 const fmtTime = (t) => (t ? new Date(t).toLocaleTimeString() : '—')
-
-async function fetchAllInstances() {
-  const all = []
-  let offset = 0
-  let total = Infinity
-  while (all.length < total && all.length < MAX_INSTANCES) {
-    const d = await api.instances(`?limit=${FETCH_ALL}&offset=${offset}`)
-    const items = Array.isArray(d.items) ? d.items : []
-    if (!items.length) break
-    all.push(...items)
-    total = Number.isFinite(Number(d.total)) ? Number(d.total) : all.length
-    offset += items.length
-  }
-  return all
-}
 
 function appState(app) {
   const s = app?.latest_check?.status
@@ -199,8 +183,15 @@ export default function Instances() {
   const { can } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const [instances, setInstances] = useState([])
+  const [total, setTotal] = useState(0)
+  const [facets, setFacets] = useState({ projects: [], tags: [], apps: [] })
+  const [serverStats, setServerStats] = useState(null)
+  const [topologyInstances, setTopologyInstances] = useState([])
+  const [topologyTotal, setTopologyTotal] = useState(0)
+  const [topologyFetched, setTopologyFetched] = useState(0)
   const [loading, setLoading] = useState(true)
   const loadedRef = useRef(false)
+  const reqSeq = useRef(0)
   const [showReg, setShowReg] = useState(false)
   const [regName, setRegName] = useState('')
   const [regProject, setRegProject] = useState(DEFAULT_PROJECT)
@@ -222,6 +213,7 @@ export default function Instances() {
     return 'cards'
   })
 
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [stateFilter, setStateFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
@@ -230,18 +222,48 @@ export default function Instances() {
   const [tagFilter, setTagFilter] = useState('')
   const [onlineOnly, setOnlineOnly] = useState(false)
 
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
   const refresh = useCallback(async () => {
+    const seq = ++reqSeq.current
     if (!loadedRef.current) setLoading(true)
     try {
-      setInstances(await fetchAllInstances())
-      setProjects(await api.projects().catch(() => []))
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(pageOff), facets: '1', stats: '1' })
+      if (search) params.set('q', search)
+      if (stateFilter) params.set('state', stateFilter)
+      if (projectFilter) params.set('project', projectFilter)
+      if (appFilter) params.set('app_id', appFilter)
+      if (modeFilter) params.set('mode', modeFilter)
+      if (tagFilter) params.set('tag', tagFilter)
+      if (onlineOnly) params.set('online', '1')
+      const [d, projectList] = await Promise.all([
+        api.instances(`?${params}`),
+        api.projects().catch(() => []),
+      ])
+      if (seq !== reqSeq.current) return
+      const items = Array.isArray(d.items) ? d.items : []
+      const nextTotal = Number(d.total) || 0
+      setInstances(items)
+      setTotal(nextTotal)
+      setFacets(d.facets || { projects: [], tags: [], apps: [] })
+      setServerStats(d.stats || null)
+      setProjects(projectList)
+      if (!items.length && pageOff > 0 && nextTotal > 0) {
+        const last = Math.floor((nextTotal - 1) / PAGE_SIZE) * PAGE_SIZE
+        setPageOff(last)
+      }
     } catch (e) {
-      if (!loadedRef.current) toast.error(e.message)
+      if (seq === reqSeq.current && !loadedRef.current) toast.error(e.message)
     } finally {
-      loadedRef.current = true
-      setLoading(false)
+      if (seq === reqSeq.current) {
+        loadedRef.current = true
+        setLoading(false)
+      }
     }
-  }, [])
+  }, [appFilter, modeFilter, onlineOnly, pageOff, projectFilter, search, stateFilter, tagFilter])
 
   const commands = useCommandRunner(refresh)
   const modalOpen = showReg || !!confirm
@@ -249,19 +271,6 @@ export default function Instances() {
     refresh()
   }, [refresh])
   useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
-
-  useEffect(() => {
-    const ids = new Set(instances.map((i) => i.id))
-    setSelected((prev) => {
-      let changed = false
-      const next = new Set()
-      for (const id of prev) {
-        if (ids.has(id)) next.add(id)
-        else changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [instances])
 
   useEffect(() => {
     setAppFilter(searchParams.get('app') || '')
@@ -361,64 +370,59 @@ export default function Instances() {
   }
 
   const projectOptions = useMemo(() => {
-    const set = new Set()
-    for (const i of instances) set.add(i.project || '')
-    return [...set].sort()
-  }, [instances])
+    const set = new Set(facets.projects || [])
+    if (projectFilter && projectFilter !== '__global__') set.add(projectFilter)
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b))
+  }, [facets.projects, projectFilter])
 
   const appOptions = useMemo(() => {
-    const map = new Map()
-    for (const i of instances) {
-      for (const a of i.apps) map.set(a.application.id, a.application.name)
+    const list = (facets.apps || []).map((a) => ({ id: a.id, name: a.name }))
+    if (appFilter && !list.some((a) => String(a.id) === appFilter)) {
+      list.unshift({ id: Number(appFilter), name: `#${appFilter}` })
     }
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [instances])
+    return list
+  }, [facets.apps, appFilter])
 
   const tagOptions = useMemo(() => {
-    const set = new Set()
-    for (const i of instances) for (const t of i.tags || []) set.add(t)
+    const set = new Set(facets.tags || [])
+    if (tagFilter) set.add(tagFilter)
     return [...set].sort((a, b) => a.localeCompare(b))
-  }, [instances])
+  }, [facets.tags, tagFilter])
 
   const q = search.trim().toLowerCase()
 
-  const filtered = useMemo(() => {
-    return instances.filter((inst) => {
-      if (stateFilter && inst.state !== stateFilter
-        && !inst.apps.some((a) => appState(a) === stateFilter)) return false
-      if (projectFilter) {
-        const p = inst.project || ''
-        if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
-      }
-      if (appFilter && !inst.apps.some((a) => String(a.application.id) === appFilter)) return false
-      if (modeFilter && (inst.execution_mode || 'agent') !== modeFilter) return false
-      if (tagFilter && !(inst.tags || []).some((t) => t.toLowerCase() === tagFilter.toLowerCase())) return false
-      if (onlineOnly && !online(inst)) return false
-      if (q && !instanceMatches(inst, q)
-        && !inst.apps.some((a) => a.application.name.toLowerCase().includes(q))) return false
-      return true
+  useEffect(() => {
+    if (view !== 'topology') return undefined
+    let cancelled = false
+    const params = new URLSearchParams({ limit: String(TOPOLOGY_LIMIT) })
+    if (search) params.set('q', search)
+    if (stateFilter) params.set('state', stateFilter)
+    if (projectFilter) params.set('project', projectFilter)
+    if (appFilter) params.set('app_id', appFilter)
+    if (modeFilter) params.set('mode', modeFilter)
+    if (tagFilter) params.set('tag', tagFilter)
+    if (onlineOnly) params.set('online', '1')
+    api.instances(`?${params}`).then((d) => {
+      if (cancelled) return
+      const items = Array.isArray(d.items) ? d.items : []
+      setTopologyInstances(items.map((inst) => ({
+        ...inst,
+        apps: (inst.apps || []).filter((a) => appMatches(inst, a, { appFilter, stateFilter, q })),
+      })))
+      setTopologyTotal(Number(d.total) || 0)
+      setTopologyFetched(items.length)
+    }).catch((e) => {
+      if (!cancelled) toast.error(e.message)
     })
-  }, [instances, q, stateFilter, projectFilter, appFilter, modeFilter, tagFilter, onlineOnly])
-
-  const visibleApps = useMemo(
-    () => filtered.flatMap((inst) => inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q }))),
-    [filtered, appFilter, stateFilter, q]
-  )
-
-  const topologyInstances = useMemo(
-    () => filtered.map((inst) => ({
-      ...inst,
-      apps: inst.apps.filter((a) => appMatches(inst, a, { appFilter, stateFilter, q })),
-    })),
-    [filtered, appFilter, stateFilter, q]
-  )
+    return () => { cancelled = true }
+  }, [view, search, stateFilter, projectFilter, appFilter, modeFilter, tagFilter, onlineOnly, q])
 
   const stats = {
-    total: filtered.length,
-    ok: visibleApps.filter((a) => appState(a) === 'ok').length,
-    drift: visibleApps.filter((a) => appState(a) === 'drift').length,
-    offline: filtered.filter((i) => !online(i)).length,
-    bastion: filtered.filter((i) => i.execution_mode === 'tunnel').length,
+    total: serverStats?.total ?? total,
+    ok: serverStats?.synced ?? 0,
+    drift: serverStats?.drift ?? 0,
+    offline: serverStats?.offline ?? instances.filter((i) => !online(i)).length,
+    bastion: serverStats?.tunnel ?? instances.filter((i) => i.execution_mode === 'tunnel').length,
   }
 
   const changeView = (next) => {
@@ -434,7 +438,7 @@ export default function Instances() {
       return next
     })
 
-  const pageItems = filtered.slice(pageOff, pageOff + PAGE_SIZE)
+  const pageItems = instances
   const pageAllSelected = pageItems.length > 0 && pageItems.every((i) => selected.has(i.id))
   const togglePageSelection = () => {
     const ids = pageItems.map((i) => i.id)
@@ -447,8 +451,6 @@ export default function Instances() {
       return next
     })
   }
-  const selectedInstances = instances.filter((i) => selected.has(i.id))
-  const selectedApps = selectedInstances.reduce((n, i) => n + (i.apps?.length || 0), 0)
 
   const bulk = async (action) => {
     const ids = [...selected]
@@ -471,12 +473,13 @@ export default function Instances() {
 
   const confirmBulkApply = () => setConfirm({
     title: 'Apply to selected hosts',
-    message: `Queue an apply for ${selectedApps} assigned application${selectedApps === 1 ? '' : 's'} across ${selected.size} selected host${selected.size === 1 ? '' : 's'}? This changes the managed hosts now.`,
+    message: `Queue an apply for every assigned application across ${selected.size} selected host${selected.size === 1 ? '' : 's'}? This changes the managed hosts now.`,
     variant: 'warn',
     onConfirm: () => { setConfirm(null); bulk('apply') },
   })
   const filtersActive = !!(search || stateFilter || projectFilter || appFilter || modeFilter || tagFilter || onlineOnly)
   const clearFilters = () => {
+    setSearchInput('')
     setSearch('')
     setStateFilter('')
     setProjectFilter('')
@@ -518,8 +521,8 @@ export default function Instances() {
           type="search"
           className="filter-search"
           placeholder="Search name, id, region, tag, project or application…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
         />
         <select
           value={stateFilter}
@@ -553,8 +556,8 @@ export default function Instances() {
         </select>
         <select value={appFilter} onChange={(e) => applyAppFilter(e.target.value)} aria-label="Application">
           <option value="">All applications</option>
-          {appOptions.map(([id, name]) => (
-            <option key={id} value={String(id)}>{name}</option>
+          {appOptions.map((a) => (
+            <option key={a.id} value={String(a.id)}>{a.name}</option>
           ))}
         </select>
         <label className="row small filter-check">
@@ -584,7 +587,7 @@ export default function Instances() {
           )}
           {appFilter && (
             <span className="filter-chip">
-              Application: {appOptions.find(([id]) => String(id) === appFilter)?.[1] || `#${appFilter}`}
+              Application: {appOptions.find((a) => String(a.id) === appFilter)?.name || `#${appFilter}`}
             </span>
           )}
           {projectFilter && (
@@ -605,7 +608,7 @@ export default function Instances() {
 
       <div className="row-toolbar">
         <span className="muted">
-          {filtered.length} of {instances.length} instance{instances.length === 1 ? '' : 's'}
+          {pageItems.length} of {total} instance{total === 1 ? '' : 's'}
         </span>
         {view !== 'topology' && pageItems.length > 0 && (
           <label className="bulk-select-page">
@@ -646,12 +649,12 @@ export default function Instances() {
       {selected.size > 0 && (
         <div className="bulk-bar">
           <strong>{selected.size} selected</strong>
-          <span className="muted">{selectedApps} assigned app{selectedApps === 1 ? '' : 's'}</span>
+          <span className="muted">across {selected.size} host{selected.size === 1 ? '' : 's'}</span>
           <span className="spacer" />
           <button
             type="button"
             className="btn small"
-            disabled={!can('commands', 'create') || !!bulkBusy || !selectedApps}
+            disabled={!can('commands', 'create') || !!bulkBusy || !selected.size}
             onClick={() => bulk('check')}
           >
             {bulkBusy === 'check' ? 'Queueing…' : 'Check selected'}
@@ -659,7 +662,7 @@ export default function Instances() {
           <button
             type="button"
             className="btn small warn"
-            disabled={!can('commands', 'create') || !!bulkBusy || !selectedApps}
+            disabled={!can('commands', 'create') || !!bulkBusy || !selected.size}
             onClick={confirmBulkApply}
           >
             {bulkBusy === 'apply' ? 'Queueing…' : 'Apply selected'}
@@ -736,17 +739,24 @@ export default function Instances() {
         </Modal>
       )}
 
-      {filtered.length === 0 ? (
+      {total === 0 ? (
         <div className="empty">
           <p className="muted">
             {filtersActive ? 'No instances match these filters.' : 'No instances yet. Register one to get started.'}
           </p>
         </div>
       ) : view === 'topology' ? (
-        <TopologyView
-          instances={topologyInstances}
-          emptyMessage="No instances match these filters."
-        />
+        <>
+          {topologyTotal > topologyFetched && (
+            <p className="muted">
+              Showing the first {topologyFetched} of {topologyTotal} matching hosts to keep the topology responsive.
+            </p>
+          )}
+          <TopologyView
+            instances={topologyInstances}
+            emptyMessage="No instances match these filters."
+          />
+        </>
       ) : view === 'cards' ? (
         <div className="cards-grid">
           {pageItems.map((inst) => (
@@ -775,7 +785,7 @@ export default function Instances() {
 
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
       {view !== 'topology' && (
-        <Pager total={filtered.length} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
+        <Pager total={total} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
       )}
     </section>
   )

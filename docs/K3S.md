@@ -19,6 +19,7 @@ miniPC cluster (`192.168.1.x`).
 | Git-over-HTTP sink | `repo` (`hack/repo-server`)           | `repo.yaml` (Deployment + ClusterIP) |
 | Container registry | n/a                       | `registry.yaml` (in-cluster `registry:2`, NodePort) |
 | Agents             | `agent-N`                 | `helm/helios-agent` (Deployment or DaemonSet mode) |
+| Tunnel hosts + runner | n/a                    | `deploy/examples/runner-tunnel/` (systemd on the bastion, or a `hostNetwork` Deployment) |
 
 Hosts outside the cluster (bare-metal, VMs) re-use the same agent binary/unit
 (`deploy/install-agent.sh`) and simply point at the hub's LoadBalancer URL.
@@ -180,7 +181,44 @@ reconciling the miniPC hosts themselves; safety requirements (playbooks must
 stay idempotent; drive state — see the root README's convergence notes) still
 apply.
 
-## 6. Validation
+## 6. Tunnel hosts and the bastion runner (optional)
+
+The k3s stack above reconciles normal agents directly. Outbound-only hosts need
+**tunnel mode** instead: the host opens a reverse SSH tunnel to a bastion, and
+`helios-runner` on that bastion is the **only** process that runs Ansible. The
+managed host needs only `sshd`, `python3` and the tunnel-only agent (or a manual
+`ssh -R`); it does not need `ansible-core`.
+
+Enable the runner API on the hub and define the gateway and port range:
+
+```sh
+helm upgrade --install helios-server helm/helios-server -n helios   -f deploy/k3s/server-values.yaml   --set runner.token="$RUNNER_TOKEN"   --set runner.tunnelGateway=helios-tunnel@bastion.example.com   --set runner.tunnelPortMin=22000   --set runner.tunnelPortMax=22999
+```
+
+Run the runner on the bastion with systemd (recommended; see
+`deploy/examples/runner-tunnel/README.md` for the full SSH-key and
+`authorized_keys` setup), or build the example runner image and apply the
+`hostNetwork` Deployment:
+
+```sh
+docker build -f deploy/examples/runner-tunnel/Dockerfile   -t registry.example.com/helios/runner:latest .
+docker push registry.example.com/helios/runner:latest
+
+kubectl -n helios create secret generic helios-runner   --from-literal=runner-token="$RUNNER_TOKEN"   --from-file=runner_id=/etc/helios/runner_id
+kubectl apply -f deploy/examples/runner-tunnel/runner-k8s.yaml
+```
+
+> The reverse tunnel terminates on the **bastion node's loopback** interface.
+> A runner pod must use `hostNetwork: true` and be pinned to that node; a
+> normal pod network namespace would make `127.0.0.1:<port>` point at the pod,
+> not the bastion. The manifest in the example already does this.
+
+Register the host as **Tunnel · reverse SSH**, install the tunnel agent on the
+managed host, and authorize its key on the bastion with the allocated
+`permitlisten` port. The topology then shows `hub → helios-runner → tunnel host
+→ applications`; the runner logs show discovery and per-instance checks.
+
+## 7. Validation
 
 Watch the drift → autoheal → converged loop in the agent/hub logs and via the
 API:

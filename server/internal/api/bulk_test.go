@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -46,5 +47,45 @@ func TestBulkCommandsQueuesEveryAssignment(t *testing.T) {
 	}
 	if len(cmds) != 1 || cmds[0].Action != model.ActionCheck {
 		t.Fatalf("commands = %+v", cmds)
+	}
+}
+
+func TestBulkCommandsScopesToApp(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	if _, err := st.CreateInstance(ctx, model.Instance{ID: "i1", Name: "host1", TokenHash: "h1"}); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	first, err := st.CreateApplication(ctx, model.Application{
+		Name: "first", RepoURL: "http://repo/first.git", Branch: "main", Path: "site.yml", Vars: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create first app: %v", err)
+	}
+	second, err := st.CreateApplication(ctx, model.Application{
+		Name: "second", RepoURL: "http://repo/second.git", Branch: "main", Path: "site.yml", Vars: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create second app: %v", err)
+	}
+	if err := st.Assign(ctx, "i1", first.ID); err != nil {
+		t.Fatalf("assign first: %v", err)
+	}
+	if err := st.Assign(ctx, "i1", second.ID); err != nil {
+		t.Fatalf("assign second: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/bulk/commands", strings.NewReader(`{"action":"check","instance_ids":["i1"],"app_id":`+strconv.FormatInt(first.ID, 10)+`}`))
+	rec := httptest.NewRecorder()
+	s.handleBulkCommands(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bulk: status %d body %s", rec.Code, rec.Body.String())
+	}
+	cmds, err := st.PendingCommands(ctx, "i1")
+	if err != nil {
+		t.Fatalf("pending commands: %v", err)
+	}
+	if len(cmds) != 1 || cmds[0].AppID != first.ID {
+		t.Fatalf("commands = %+v, want only app %d", cmds, first.ID)
 	}
 }

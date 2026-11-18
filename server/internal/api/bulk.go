@@ -27,6 +27,7 @@ func (s *Server) handleBulkCommands(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action      string   `json:"action"`
 		InstanceIDs []string `json:"instance_ids"`
+		AppID       int64    `json:"app_id"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -68,6 +69,15 @@ func (s *Server) handleBulkCommands(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			out.Errors = append(out.Errors, bulkCommandError{InstanceID: id, Error: err.Error()})
 			continue
+		}
+		if body.AppID > 0 {
+			scoped := assignments[:0]
+			for _, a := range assignments {
+				if a.AppID == body.AppID {
+					scoped = append(scoped, a)
+				}
+			}
+			assignments = scoped
 		}
 		if len(assignments) == 0 {
 			out.Skipped++

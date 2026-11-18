@@ -1619,6 +1619,44 @@ details summary { cursor: pointer; color: var(--muted); }
 }
 .topology-hub-stats b { color: #fff; font-family: var(--font-num); font-size: 12px; }
 
+.topology-runner {
+  gap: 10px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(90deg, rgba(234, 241, 255, .8), var(--panel) 58%);
+  cursor: default;
+}
+.topology-runner.is-offline { background: #fcfcfd; }
+.topology-runner-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.topology-runner-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.topology-runner-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.topology-runner-title strong { font-size: 13px; font-weight: 650; }
+.topology-runner-gateway {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.topology-runner-foot { color: var(--muted-2); font-size: 10.5px; }
+.topology-runner-hint {
+  color: var(--accent);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
 .topology-agent {
   gap: 10px;
   padding: 10px 12px;

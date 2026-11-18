@@ -75,10 +75,14 @@ journalctl -u helios-agent -f
 ```
 
 > **Outbound-only host?** When registering, choose **Tunnel · reverse SSH
-> tunnel** instead. The host opens a reverse tunnel to a bastion; a Helios
-> runner there executes Ansible. A lightweight tunnel agent can keep it open
-> without installing Ansible. See
-> [Tunnel mode](INSTALL.md#tunnel-mode--reverse-ssh).
+> tunnel** instead. The managed host only needs `sshd` and `python3`; **only
+> `helios-runner` on the bastion runs Ansible**. The host opens a reverse SSH
+> tunnel to the bastion, and the runner executes `ansible-playbook` over
+> `ssh 127.0.0.1:<port>`. A lightweight tunnel agent can keep the tunnel open
+> without installing Ansible, or you can run `ssh -R` manually. The UI shows the
+> mode and the topology includes an explicit `hub → runner → tunnel host` node.
+> See [Tunnel mode](INSTALL.md#tunnel-mode--reverse-ssh) and the complete
+> `deploy/examples/runner-tunnel/` example.
 
 ## 3. Add an application
 

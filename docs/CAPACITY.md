@@ -58,9 +58,14 @@ package installs, reboots, downloads) needs proportionally fewer apps per agent
 or more workers/CPU. The limiting factor is usually **total Ansible runtime per
 pass**, not the hub.
 
-The hub is not the bottleneck at 150 apps, but `GET /instances` is an N+1 query:
-latency and payload grow with the number of assignments. For a few hundred
-apps, plan to paginate the UI/API or batch the assignment queries.
+The hub is not the bottleneck at 150 apps. The original `GET /instances`
+N+1 query has been replaced by batched assignment/run/variable loaders, and the
+endpoint now supports server-side search, filters, pagination, facets and
+fleet stats. The dashboard overview and applications catalog use dedicated
+aggregate endpoints instead of paging through every instance. Drift and world
+map pages use server-side filters/pagination, and topology views cap the number
+of rendered hosts. Validate topology-heavy views with a few thousand instances
+before treating the hub as unbounded.
 
 ## Tuning checklist
 

@@ -105,13 +105,24 @@ type TunnelConfig struct {
 	Port       int    `json:"port"`
 }
 
+// HostInfo is the best-effort inventory reported by an agent.
+type HostInfo struct {
+	CPUCount int    `json:"cpu_count,omitempty"`
+	MemoryMB int    `json:"memory_mb,omitempty"`
+	Arch     string `json:"arch,omitempty"`
+	OS       string `json:"os,omitempty"`
+	Python   string `json:"python,omitempty"`
+	Ansible  string `json:"ansible,omitempty"`
+}
+
 // TunnelHealth is the tunnel agent liveness report.
 type TunnelHealth struct {
-	Connected bool   `json:"connected"`
-	Hostname  string `json:"hostname,omitempty"`
-	Platform  string `json:"platform,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Connected bool     `json:"connected"`
+	Hostname  string   `json:"hostname,omitempty"`
+	Platform  string   `json:"platform,omitempty"`
+	Version   string   `json:"version,omitempty"`
+	HostInfo  HostInfo `json:"host_info,omitempty"`
+	Error     string   `json:"error,omitempty"`
 }
 
 // TunnelConfig fetches the gateway and allocated loopback port for this
@@ -180,10 +191,11 @@ func (c *Client) Snapshot(ctx context.Context, appID int64, current string) (Sna
 }
 
 type CheckinIn struct {
-	InstanceID string `json:"instance_id"`
-	Version    string `json:"version"`
-	Hostname   string `json:"hostname"`
-	Platform   string `json:"platform"`
+	InstanceID string   `json:"instance_id"`
+	Version    string   `json:"version"`
+	Hostname   string   `json:"hostname"`
+	Platform   string   `json:"platform"`
+	HostInfo   HostInfo `json:"host_info,omitempty"`
 	// PollInterval is the heartbeat period in seconds. The server uses it to
 	// detect a dead agent instead of waiting for a fixed, conservative timeout.
 	PollInterval int64 `json:"poll_interval,omitempty"`

@@ -4,28 +4,16 @@ import {
   Activity, ArrowRight, CircleAlert, CircleCheck, Clock3, Gauge,
   LayoutGrid, RefreshCw, Server, TriangleAlert, WifiOff,
 } from 'lucide-react'
-import { api, instanceOnline, stateLabel } from '../api/client.js'
+import { api, stateLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 
-const FETCH_ALL = 500
-const MAX_INSTANCES = 10000
-
 const appState = (app) => {
   const s = app?.latest_check?.status
   return s === 'failed' ? 'error' : s || 'unknown'
-}
-
-const hostState = (inst) => {
-  if (!instanceOnline(inst)) return 'offline'
-  const states = (inst.apps || []).map(appState)
-  if (states.includes('error')) return 'error'
-  if (states.includes('drift')) return 'drift'
-  if (states.includes('ok')) return 'ok'
-  return 'unknown'
 }
 
 const isZeroTime = (value) => {
@@ -47,24 +35,9 @@ function fmtAgo(value) {
 
 const fmtDate = (value) => (isZeroTime(value) ? 'never' : new Date(value).toLocaleString())
 
-async function fetchAllInstances() {
-  const all = []
-  let offset = 0
-  let total = Infinity
-  while (all.length < total && all.length < MAX_INSTANCES) {
-    const data = await api.instances(`?limit=${FETCH_ALL}&offset=${offset}`)
-    const items = Array.isArray(data.items) ? data.items : []
-    if (!items.length) break
-    all.push(...items)
-    total = Number.isFinite(Number(data.total)) ? Number(data.total) : all.length
-    offset += items.length
-  }
-  return all
-}
-
 export default function Overview() {
   const { can } = useAuth()
-  const [instances, setInstances] = useState(null)
+  const [overview, setOverview] = useState(null)
   const [apps, setApps] = useState([])
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
@@ -73,12 +46,12 @@ export default function Overview() {
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     try {
-      const [inst, appList, projectList] = await Promise.all([
-        fetchAllInstances(),
+      const [data, appList, projectList] = await Promise.all([
+        api.overview(),
         can('applications', 'get') ? api.applications().catch(() => []) : Promise.resolve([]),
         can('projects', 'get') ? api.projects().catch(() => []) : Promise.resolve([]),
       ])
-      setInstances(inst)
+      setOverview(data)
       setApps(appList)
       setProjects(projectList)
     } catch (e) {
@@ -93,57 +66,45 @@ export default function Overview() {
   useLiveRefresh(refresh, { interval: 30000 })
 
   const model = useMemo(() => {
-    const list = instances || []
-    const assignments = []
-    for (const inst of list) {
-      for (const app of inst.apps || []) assignments.push({ inst, app })
-    }
-    const online = list.filter(instanceOnline).length
-    const hostCounts = { ok: 0, drift: 0, error: 0, unknown: 0, offline: 0 }
-    for (const inst of list) hostCounts[hostState(inst)]++
-    const appCounts = { ok: 0, drift: 0, error: 0, unknown: 0 }
-    for (const { app } of assignments) appCounts[appState(app)]++
-    const recent = assignments
-      .filter(({ app }) => app.latest_check?.id || app.latest_apply?.id)
-      .map(({ inst, app }) => {
-        const run = app.latest_check?.id ? app.latest_check : app.latest_apply
-        return { inst, app, run }
-      })
-      .sort((a, b) => new Date(b.run.finished_at || 0) - new Date(a.run.finished_at || 0))
-      .slice(0, 9)
-    const attention = []
-    for (const inst of list) {
-      if (!instanceOnline(inst)) {
-        attention.push({ kind: 'offline', inst, at: inst.last_seen })
-        continue
-      }
-      for (const app of inst.apps || []) {
-        if (appState(app) === 'error') attention.push({ kind: 'failed', inst, app, at: app.latest_check?.finished_at })
-        else if (app.stuck) attention.push({ kind: 'stuck', inst, app, at: app.stuck_at || app.latest_check?.finished_at })
-        else if (appState(app) === 'drift') attention.push({ kind: 'drift', inst, app, at: app.latest_check?.finished_at })
-      }
-    }
-    attention.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
-    const versions = new Map()
-    for (const inst of list) {
-      const v = inst.version || 'unknown'
-      versions.set(v, (versions.get(v) || 0) + 1)
-    }
+    const data = overview || {}
+    const stats = data.stats || {}
+    const recent = (data.recent || []).map(({ instance, application, run }) => ({
+      inst: instance,
+      app: { application, latest_check: run },
+      run,
+    }))
+    const attention = (data.attention || []).map((item) => ({
+      kind: item.kind,
+      inst: item.instance,
+      app: item.application ? { application: item.application } : null,
+      at: item.at,
+    }))
     return {
-      list,
-      assignments,
-      online,
-      offline: list.length - online,
-      hostCounts,
-      appCounts,
+      total: stats.total || 0,
+      assignments: stats.apps || 0,
+      online: stats.online || 0,
+      offline: stats.offline || 0,
+      hostCounts: {
+        ok: stats.host_ok || 0,
+        drift: stats.host_drift || 0,
+        error: stats.host_error || 0,
+        unknown: stats.host_unknown || 0,
+        offline: stats.host_offline || 0,
+      },
+      appCounts: {
+        ok: stats.synced || 0,
+        drift: stats.drift || 0,
+        error: stats.failed || 0,
+        unknown: stats.unknown || 0,
+      },
       recent,
-      attention: attention.slice(0, 7),
-      versions: [...versions.entries()].sort((a, b) => b[1] - a[1]),
-      tunnel: list.filter((i) => i.execution_mode === 'tunnel').length,
+      attention,
+      versions: (stats.versions || []).map(({ version, count }) => [version, count]),
+      tunnel: stats.tunnel || 0,
     }
-  }, [instances])
+  }, [overview])
 
-  if (loading && !instances) {
+  if (loading && !overview) {
     return (
       <section>
         <h1>Overview</h1>
@@ -154,7 +115,7 @@ export default function Overview() {
     )
   }
 
-  const totalHosts = model.list.length || 1
+  const totalHosts = model.total || 1
   const pct = (n) => `${Math.round((n / totalHosts) * 100)}%`
 
   return (
@@ -173,7 +134,7 @@ export default function Overview() {
       </div>
 
       <div className="stats ov-stats">
-        <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{model.list.length}</span><span className="stat-label">Instances</span></div>
+        <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{model.total}</span><span className="stat-label">Instances</span></div>
         <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{model.online}</span><span className="stat-label">Online</span></div>
         <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{model.offline}</span><span className="stat-label">Offline</span></div>
         <div className="stat-card"><span className="stat-dot apps" /><span className="stat-num">{apps.length}</span><span className="stat-label">Applications</span></div>
@@ -209,7 +170,7 @@ export default function Overview() {
             <div className="ov-split">
               <div>
                 <span className="ov-kicker">Assigned apps</span>
-                <strong>{model.assignments.length}</strong>
+                <strong>{model.assignments}</strong>
                 <span className="sub">{apps.length ? `${apps.length} defined in the catalog` : 'no application catalog access'}</span>
               </div>
               <div>

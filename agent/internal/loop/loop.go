@@ -20,6 +20,7 @@ import (
 	"github.com/slim/helios/agent/internal/client"
 	"github.com/slim/helios/agent/internal/config"
 	"github.com/slim/helios/agent/internal/gitops"
+	"github.com/slim/helios/agent/internal/hostinfo"
 	"github.com/slim/helios/agent/internal/metadata"
 )
 
@@ -33,6 +34,7 @@ type Agent struct {
 	hostname   string
 	version    string
 	platform   string
+	hostInfo   client.HostInfo
 
 	mu        sync.Mutex
 	states    map[int64]*appState
@@ -68,6 +70,14 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 			CommonArgs: cfg.SSHCommonArgs,
 		}
 	}
+	// The runner executes this loop for a remote tunnel host. Its local host
+	// inventory would describe the bastion, not the managed host, so only a
+	// local agent reports it. The tunnel-only agent reports its own inventory
+	// through the tunnel health endpoint.
+	var info client.HostInfo
+	if cfg.TargetPort == 0 {
+		info = hostinfo.Collect(cfg.AnsibleBin)
+	}
 	return &Agent{
 		cfg:          cfg,
 		client:       c,
@@ -76,6 +86,7 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 		hostname:     hostname,
 		version:      agentversion.Version,
 		platform:     platform,
+		hostInfo:     info,
 		states:       map[int64]*appState{},
 		scanInterval: cfg.PollInterval,
 		scanJitter:   cfg.JitterPercent,
@@ -292,6 +303,7 @@ func (a *Agent) checkinPayload() client.CheckinIn {
 		Version:      a.version,
 		Hostname:     a.hostname,
 		Platform:     a.platform,
+		HostInfo:     a.hostInfo,
 		PollInterval: pollSecs,
 	}
 }

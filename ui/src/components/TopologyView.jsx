@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ChevronUp, Network, Server } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, Network, Server, Terminal } from 'lucide-react'
 import { projectLabel, stateLabel, instanceOnline } from '../api/client.js'
 
 const MAX_APPS = 6
@@ -9,6 +9,8 @@ const L = {
   pad: 28,
   hubW: 214,
   hubH: 116,
+  runnerW: 214,
+  runnerH: 92,
   agentW: 248,
   agentH: 88,
   appW: 292,
@@ -17,9 +19,6 @@ const L = {
   rowGap: 56,
   appGap: 8,
 }
-const AGENT_X = L.pad + L.hubW + L.colGap
-const APP_X = AGENT_X + L.agentW + L.colGap
-const CANVAS_W = APP_X + L.appW + L.pad
 const MIN_CANVAS_H = 380
 
 const TONES = ['accent', 'ok', 'drift', 'error', 'stuck', 'unknown', 'muted']
@@ -69,6 +68,8 @@ const relTime = (value) => {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
+const runnerKeyFor = (inst) => inst?.tunnel_gateway || 'bastion'
+
 const edgePath = (edge) => {
   const bend = Math.max(36, (edge.x2 - edge.x1) * 0.48)
   return `M ${edge.x1} ${edge.y1} C ${edge.x1 + bend} ${edge.y1}, ${edge.x2 - bend} ${edge.y2}, ${edge.x2} ${edge.y2}`
@@ -79,12 +80,20 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
   const [expanded, setExpanded] = useState(() => new Set())
   const [focus, setFocus] = useState(null)
 
+  const hasTunnels = instances.some((inst) => inst.execution_mode === 'tunnel')
+  const runnerX = L.pad + L.hubW + L.colGap
+  const agentX = hasTunnels ? runnerX + L.runnerW + L.colGap : L.pad + L.hubW + L.colGap
+  const appX = agentX + L.agentW + L.colGap
+  const canvasW = appX + L.appW + L.pad
+
   const stats = useMemo(() => {
     const apps = instances.flatMap((inst) => inst.apps || [])
     const online = instances.filter(isOnline).length
+    const tunnels = instances.filter((inst) => inst.execution_mode === 'tunnel')
     return {
       instances: instances.length,
-      tunnels: instances.filter((inst) => inst.execution_mode === 'tunnel').length,
+      tunnels: tunnels.length,
+      runners: new Set(tunnels.map(runnerKeyFor)).size,
       online,
       offline: instances.length - online,
       links: apps.length,
@@ -121,6 +130,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
       y += row.groupH + L.rowGap
       return {
         ...row,
+        runnerKey: row.inst.execution_mode === 'tunnel' ? runnerKeyFor(row.inst) : null,
         groupTop,
         agentTop,
         agentCenter,
@@ -131,15 +141,55 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
 
     const hubCenter = groups.length ? Math.min(height / 2, groups[0].agentCenter) : height / 2
     const hubTop = hubCenter - L.hubH / 2
-    const edges = []
+
+    const runnerMap = new Map()
     for (const group of groups) {
+      if (!group.runnerKey) continue
+      let runner = runnerMap.get(group.runnerKey)
+      if (!runner) {
+        runner = {
+          key: group.runnerKey,
+          gateway: group.inst.tunnel_gateway || 'bastion (gateway not configured)',
+          groups: [],
+          online: 0,
+          count: 0,
+        }
+        runnerMap.set(group.runnerKey, runner)
+      }
+      runner.groups.push(group)
+      runner.count += 1
+      if (isOnline(group.inst)) runner.online += 1
+    }
+    const runners = [...runnerMap.values()].map((runner) => {
+      const center = runner.groups.reduce((sum, group) => sum + group.agentCenter, 0) / runner.groups.length
+      return { ...runner, center, top: center - L.runnerH / 2 }
+    })
+    const runnerByKey = new Map(runners.map((runner) => [runner.key, runner]))
+
+    const edges = []
+    for (const runner of runners) {
       edges.push({
-        key: `hub-${group.inst.id}`,
-        kind: 'hub',
-        instanceId: group.inst.id,
+        key: `hub-runner-${runner.key}`,
+        kind: 'runner-hub',
+        runnerKey: runner.key,
+        instanceIds: runner.groups.map((group) => group.inst.id),
         x1: L.pad + L.hubW,
         y1: hubCenter,
-        x2: AGENT_X,
+        x2: runnerX,
+        y2: runner.center,
+        tone: runner.online > 0 ? 'accent' : 'muted',
+      })
+    }
+    for (const group of groups) {
+      const runner = group.runnerKey ? runnerByKey.get(group.runnerKey) : null
+      edges.push({
+        key: `${runner ? 'runner' : 'hub'}-${group.inst.id}`,
+        kind: runner ? 'runner' : 'hub',
+        runnerKey: group.runnerKey,
+        instanceId: group.inst.id,
+        x1: runner ? runnerX + L.runnerW : L.pad + L.hubW,
+        y1: runner ? runner.center : hubCenter,
+        x2: agentX,
         y2: group.agentCenter,
         tone: isOnline(group.inst) ? 'accent' : 'muted',
       })
@@ -149,26 +199,37 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
           kind: 'app',
           instanceId: group.inst.id,
           appId: app.application.id,
-          x1: AGENT_X + L.agentW,
+          x1: agentX + L.agentW,
           y1: group.agentCenter,
-          x2: APP_X,
+          x2: appX,
           y2: top + L.appH / 2,
           tone: appState(app),
         })
       }
     }
 
-    return { groups, height, hubTop, hubCenter, edges }
-  }, [instances, expanded])
+    return { groups, runners, height, hubTop, hubCenter, edges, runnerX, agentX, appX, canvasW }
+  }, [instances, expanded, runnerX, agentX, appX, canvasW])
 
   const edgeActive = (edge) => {
     if (!focus) return true
+    if (focus.kind === 'runner') return edge.runnerKey === focus.runnerKey
+    if (edge.kind === 'runner-hub') return (edge.instanceIds || []).includes(focus.instanceId)
     if (edge.instanceId !== focus.instanceId) return false
-    if (edge.kind === 'hub') return true
+    if (edge.kind === 'hub' || edge.kind === 'runner') return true
     return focus.kind === 'agent' || focus.appId === edge.appId
   }
 
-  const agentActive = (id) => !focus || focus.instanceId === id
+  const agentActive = (id, runnerKey) => {
+    if (!focus) return true
+    if (focus.kind === 'runner') return focus.runnerKey === runnerKey
+    return focus.instanceId === id
+  }
+  const runnerActive = (runner) => {
+    if (!focus) return true
+    if (focus.kind === 'runner') return focus.runnerKey === runner.key
+    return runner.groups.some((group) => group.inst.id === focus.instanceId)
+  }
   const appActive = (instanceId, appId) =>
     !focus || (focus.instanceId === instanceId
       && (focus.kind === 'agent' || focus.appId === appId))
@@ -211,7 +272,9 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
           <span><span className="legend-dot unknown" />No check</span>
           <span className="legend-divider" />
           <span><span className="legend-line" />Assignment</span>
-          <span><Network size={12} /> Bastion runner</span>
+          <span><Terminal size={12} /> Bastion runner</span>
+          <span className="legend-divider" />
+          <span>Tunnel path: hub → runner → host</span>
         </div>
         <div className="topology-toolbar-actions">
           {hasExpandable && (
@@ -229,7 +292,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
         <div
           className={`topology-canvas ${focus ? 'has-focus' : ''}`}
           style={{
-            width: CANVAS_W,
+            width: layout.canvasW,
             height: layout.height,
             '--hub-y': `${layout.hubCenter}px`,
           }}
@@ -237,9 +300,9 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
         >
           <svg
             className="topology-edges"
-            width={CANVAS_W}
+            width={layout.canvasW}
             height={layout.height}
-            viewBox={`0 0 ${CANVAS_W} ${layout.height}`}
+            viewBox={`0 0 ${layout.canvasW} ${layout.height}`}
             aria-hidden="true"
           >
             <defs>
@@ -266,7 +329,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                 markerEnd={`url(#topo-arrow-${edge.tone})`}
               />
             ))}
-            {layout.edges.filter((edge) => edge.kind === 'hub').map((edge) => (
+            {layout.edges.filter((edge) => edge.kind !== 'app').map((edge) => (
               <path
                 key={`flow-${edge.key}`}
                 d={edgePath(edge)}
@@ -286,10 +349,39 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
             </span>
             <span className="topology-hub-stats">
               <span><b>{stats.instances}</b> instances</span>
-              <span><b>{stats.tunnels}</b> via bastion</span>
+              <span><b>{stats.runners}</b> runner{stats.runners === 1 ? '' : 's'}</span>
+              <span><b>{stats.tunnels}</b> tunnel{stats.tunnels === 1 ? '' : 's'}</span>
               <span><b>{stats.links}</b> assignments</span>
             </span>
           </div>
+
+          {layout.runners.map((runner) => (
+            <div
+              key={runner.key}
+              className={`topology-node topology-runner ${runner.online === 0 ? 'is-offline' : ''} ${runnerActive(runner) ? 'is-active' : ''}`}
+              style={{ left: layout.runnerX, top: runner.top, width: L.runnerW, height: L.runnerH }}
+              onMouseEnter={() => setFocus({ kind: 'runner', runnerKey: runner.key })}
+              onFocus={() => setFocus({ kind: 'runner', runnerKey: runner.key })}
+              onBlur={() => setFocus(null)}
+              tabIndex={0}
+              role="group"
+              title={`helios-runner on ${runner.gateway} · executes Ansible through ${plural(runner.count, 'reverse SSH tunnel')}`}
+              aria-label={`Bastion runner ${runner.gateway}, ${plural(runner.count, 'tunnel instance')}`}
+            >
+              <span className="topology-runner-icon"><Terminal size={18} /></span>
+              <span className="topology-runner-main">
+                <span className="topology-runner-title">
+                  <strong>helios-runner</strong>
+                  <span className="topology-mode-badge is-tunnel">bastion</span>
+                </span>
+                <span className="topology-runner-gateway">{runner.gateway}</span>
+                <span className="topology-runner-foot">
+                  {plural(runner.count, 'tunnel')} · {runner.online}/{runner.count} online
+                </span>
+                <span className="topology-runner-hint">Ansible over reverse SSH</span>
+              </span>
+            </div>
+          ))}
 
           {layout.groups.map((group) => {
             const online = isOnline(group.inst)
@@ -298,8 +390,8 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
               <Fragment key={group.inst.id}>
                 <button
                   type="button"
-                  className={`topology-node topology-agent agent-${aState} ${group.inst.execution_mode === 'tunnel' ? 'is-tunnel' : ''} ${online ? '' : 'is-offline'} ${agentActive(group.inst.id) ? 'is-active' : ''}`}
-                  style={{ left: AGENT_X, top: group.agentTop, width: L.agentW, height: L.agentH }}
+                  className={`topology-node topology-agent agent-${aState} ${group.inst.execution_mode === 'tunnel' ? 'is-tunnel' : ''} ${online ? '' : 'is-offline'} ${agentActive(group.inst.id, group.runnerKey) ? 'is-active' : ''}`}
+                  style={{ left: layout.agentX, top: group.agentTop, width: L.agentW, height: L.agentH }}
                   onMouseEnter={() => setFocus({ kind: 'agent', instanceId: group.inst.id })}
                   onFocus={() => setFocus({ kind: 'agent', instanceId: group.inst.id })}
                   onBlur={() => setFocus(null)}
@@ -341,7 +433,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                       type="button"
                       key={`${group.inst.id}-${app.application.id}`}
                       className={`topology-node topology-app tone-${state} ${appActive(group.inst.id, app.application.id) ? 'is-active' : ''}`}
-                      style={{ left: APP_X, top, width: L.appW, height: L.appH }}
+                      style={{ left: layout.appX, top, width: L.appW, height: L.appH }}
                       onMouseEnter={() => setFocus({ kind: 'app', instanceId: group.inst.id, appId: app.application.id })}
                       onFocus={() => setFocus({ kind: 'app', instanceId: group.inst.id, appId: app.application.id })}
                       onBlur={() => setFocus(null)}
@@ -369,7 +461,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                   <button
                     type="button"
                     className="topology-more"
-                    style={{ left: APP_X, top: group.moreTop, width: L.appW, height: L.appH }}
+                    style={{ left: layout.appX, top: group.moreTop, width: L.appW, height: L.appH }}
                     onClick={() => toggleExpanded(group.inst.id)}
                   >
                     {group.isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -381,7 +473,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                   <div
                     className="topology-app-empty"
                     style={{
-                      left: APP_X,
+                      left: layout.appX,
                       top: group.groupTop + (group.groupH - L.appH) / 2,
                       width: L.appW,
                       height: L.appH,

@@ -16,11 +16,12 @@ type tunnelConfigResponse struct {
 }
 
 type tunnelHealthPayload struct {
-	Connected bool   `json:"connected"`
-	Hostname  string `json:"hostname,omitempty"`
-	Platform  string `json:"platform,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Connected bool           `json:"connected"`
+	Hostname  string         `json:"hostname,omitempty"`
+	Platform  string         `json:"platform,omitempty"`
+	Version   string         `json:"version,omitempty"`
+	HostInfo  model.HostInfo `json:"host_info,omitempty"`
+	Error     string         `json:"error,omitempty"`
 }
 
 func (s *Server) handleAgentTunnelConfig(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +75,7 @@ func (s *Server) handleAgentTunnelHealth(w http.ResponseWriter, r *http.Request)
 			s.internalError(w, r, err)
 			return
 		}
+		s.saveHostInfo(r.Context(), inst.ID, body.HostInfo)
 	} else {
 		s.log.Warn("tunnel agent reported disconnected", "instance", inst.ID, "error", body.Error)
 	}

@@ -115,10 +115,8 @@ function detectLocation(inst) {
 
 const hostState = (inst) => {
   if (!instanceOnline(inst)) return 'offline'
-  const sts = (inst.apps || []).map((a) => a.latest_check?.status).filter(Boolean)
-  if (sts.includes('failed')) return 'error'
-  if (sts.includes('drift')) return 'drift'
-  if (sts.includes('ok')) return 'ok'
+  const state = inst.state
+  if (state === 'ok' || state === 'drift' || state === 'error') return state
   return 'unknown'
 }
 
@@ -158,36 +156,52 @@ function layoutMarkers(instances) {
 
 export default function WorldMap() {
   const [instances, setInstances] = useState(null)
+  const [apps, setApps] = useState([])
   const [loading, setLoading] = useState(true)
   const [appFilter, setAppFilter] = useState('')
   const [stateFilter, setStateFilter] = useState('')
+  const [queryInput, setQueryInput] = useState('')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(null)
   const [hover, setHover] = useState(null) // { inst, sx, sy }
   const [view, setView] = useState({ k: 1, x: 0, y: 0 })
   const svgRef = useRef(null)
   const drag = useRef(null)
+  const requestSeq = useRef(0)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(queryInput.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [queryInput])
 
   const load = useCallback(async () => {
+    const seq = ++requestSeq.current
     try {
       const all = []
       let offset = 0
       let total = Infinity
-      while (all.length < total && all.length < 5000) {
-        const d = await api.instances(`?limit=500&offset=${offset}`)
+      while (all.length < total && all.length < 20000) {
+        const params = new URLSearchParams({ limit: '1000', offset: String(offset), compact: '1' })
+        if (query) params.set('q', query)
+        if (appFilter) params.set('app_id', appFilter)
+        if (stateFilter) params.set('state', stateFilter)
+        if (offset === 0) params.set('facets', '1')
+        const d = await api.instances(`?${params}`)
+        if (seq !== requestSeq.current) return
         const items = Array.isArray(d.items) ? d.items : []
+        if (offset === 0) setApps(d.facets?.apps || [])
         if (!items.length) break
         all.push(...items)
         total = Number.isFinite(Number(d.total)) ? Number(d.total) : all.length
         offset += items.length
       }
-      setInstances(all)
+      if (seq === requestSeq.current) setInstances(all)
     } catch (e) {
-      toast.error(e.message)
+      if (seq === requestSeq.current) toast.error(e.message)
     } finally {
-      setLoading(false)
+      if (seq === requestSeq.current) setLoading(false)
     }
-  }, [])
+  }, [appFilter, query, stateFilter])
 
   useEffect(() => { load() }, [load])
   useLiveRefresh(load, { interval: 30000 })
@@ -217,28 +231,13 @@ export default function WorldMap() {
     [instances]
   )
 
-  const appOptions = useMemo(() => {
-    const map = new Map()
-    for (const inst of instances || []) {
-      for (const a of inst.apps || []) map.set(a.application.id, a.application.name)
-    }
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [instances])
+  const appOptions = useMemo(
+    () => [...apps].sort((a, b) => a.name.localeCompare(b.name)),
+    [apps],
+  )
 
-  const q = query.trim().toLowerCase()
-  const matches = useCallback((inst, loc) => {
-    if (appFilter && !(inst.apps || []).some((a) => String(a.application.id) === appFilter)) return false
-    if (stateFilter && hostState(inst) !== stateFilter) return false
-    if (q) {
-      const hay = [inst.name, inst.id, inst.project, inst.region, ...(inst.tags || []), loc?.label, ...(inst.apps || []).map((a) => a.application.name)]
-        .filter(Boolean).join(' ').toLowerCase()
-      if (!hay.includes(q)) return false
-    }
-    return true
-  }, [appFilter, stateFilter, q])
-
-  const visible = located.filter((m) => matches(m.inst, m.loc))
-  const visibleUnknown = unknown.filter((inst) => matches(inst, null))
+  const visible = located
+  const visibleUnknown = unknown
   const stats = useMemo(() => {
     const s = { ok: 0, drift: 0, error: 0, unknown: 0 }
     for (const m of visible) s[hostState(m.inst)]++
@@ -318,14 +317,14 @@ export default function WorldMap() {
           <input
             type="search"
             placeholder="Filter host, id, project, app or region…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={queryInput}
+            onChange={(e) => setQueryInput(e.target.value)}
           />
-          {query && <button type="button" className="wm-clear" onClick={() => setQuery('')} aria-label="Clear search"><X size={13} /></button>}
+          {queryInput && <button type="button" className="wm-clear" onClick={() => setQueryInput('')} aria-label="Clear search"><X size={13} /></button>}
         </div>
         <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)} aria-label="Application filter">
           <option value="">All applications</option>
-          {appOptions.map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
+          {appOptions.map((app) => <option key={app.id} value={String(app.id)}>{app.name}</option>)}
         </select>
         <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} aria-label="State filter">
           <option value="">All states</option>
@@ -334,8 +333,8 @@ export default function WorldMap() {
           <option value="error">Failed</option>
           <option value="unknown">No check</option>
         </select>
-        {(query || appFilter || stateFilter) && (
-          <button type="button" className="btn ghost small" onClick={() => { setQuery(''); setAppFilter(''); setStateFilter('') }}>Clear</button>
+        {(queryInput || appFilter || stateFilter) && (
+          <button type="button" className="btn ghost small" onClick={() => { setQueryInput(''); setAppFilter(''); setStateFilter('') }}>Clear</button>
         )}
         <span className="wm-count">{visible.length + visibleUnknown.length} host{visible.length + visibleUnknown.length === 1 ? '' : 's'}</span>
       </div>

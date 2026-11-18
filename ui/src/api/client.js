@@ -71,6 +71,8 @@ export const api = {
   logout: () => request('GET', '/api/v1/auth/logout'),
 
   downloads: () => request('GET', '/api/v1/downloads'),
+  overview: () => request('GET', '/api/v1/overview'),
+  drift: (query) => request('GET', `/api/v1/drift${query || ''}`),
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),
   createInstance: (name, project, executionMode = 'agent', region = '', tags = []) => request('POST', '/api/v1/instances', { name, project, region, tags, execution_mode: executionMode }),
@@ -98,8 +100,8 @@ export const api = {
   settings: () => request('GET', '/api/v1/settings'),
   updateScanning: (scanning) => request('PUT', '/api/v1/settings/scanning', scanning),
   testWebhook: () => request('POST', '/api/v1/settings/webhook/test'),
-  bulkCommands: (action, instanceIds) =>
-    request('POST', '/api/v1/bulk/commands', { action, instance_ids: instanceIds }),
+  bulkCommands: (action, instanceIds, appId) =>
+    request('POST', '/api/v1/bulk/commands', { action, instance_ids: instanceIds, app_id: appId || 0 }),
 
   syncWindows: () => request('GET', '/api/v1/sync-windows'),
   createSyncWindow: (w) => request('POST', '/api/v1/sync-windows', w),
@@ -112,6 +114,7 @@ export const api = {
   deleteProject: (id) => request('DELETE', `/api/v1/projects/${id}`),
 
   applications: () => request('GET', '/api/v1/applications'),
+  applicationStats: () => request('GET', '/api/v1/application-stats'),
   createApplication: (app) => request('POST', '/api/v1/applications', app),
   updateApplication: (app) => request('PUT', `/api/v1/applications/${app.id}`, app),
   deleteApplication: (id) => request('DELETE', `/api/v1/applications/${id}`),

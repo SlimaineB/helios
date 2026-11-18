@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS instances (
   last_tunnel_at TEXT NOT NULL DEFAULT '',
   autoheal    INTEGER NOT NULL DEFAULT 1,
   poll_interval INTEGER NOT NULL DEFAULT 0,
+  host_info   TEXT NOT NULL DEFAULT '{}',
   created_at  TEXT NOT NULL
 );
 
@@ -118,7 +119,10 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_instance ON runs(instance_id);
 CREATE INDEX IF NOT EXISTS idx_runs_app ON runs(app_id);
-
+CREATE INDEX IF NOT EXISTS idx_runs_latest ON runs(instance_id, app_id, mode, id DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_app_latest ON runs(app_id, mode, id DESC);
+CREATE INDEX IF NOT EXISTS idx_instances_name ON instances(name, id);
+CREATE INDEX IF NOT EXISTS idx_assignments_app ON assignments(app_id);
 CREATE TABLE IF NOT EXISTS commands (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   instance_id TEXT NOT NULL,
@@ -132,6 +136,7 @@ CREATE TABLE IF NOT EXISTS commands (
   claimed_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
+CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(instance_id, status);
 
 CREATE TABLE IF NOT EXISTS projects (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,6 +240,7 @@ CREATE TABLE IF NOT EXISTS instances (
   last_tunnel_at TEXT NOT NULL DEFAULT '',
   autoheal    INTEGER NOT NULL DEFAULT 1,
   poll_interval INTEGER NOT NULL DEFAULT 0,
+  host_info   TEXT NOT NULL DEFAULT '{}',
   created_at  TEXT NOT NULL
 );
 
@@ -315,7 +321,10 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_instance ON runs(instance_id);
 CREATE INDEX IF NOT EXISTS idx_runs_app ON runs(app_id);
-
+CREATE INDEX IF NOT EXISTS idx_runs_latest ON runs(instance_id, app_id, mode, id DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_app_latest ON runs(app_id, mode, id DESC);
+CREATE INDEX IF NOT EXISTS idx_instances_name ON instances(name, id);
+CREATE INDEX IF NOT EXISTS idx_assignments_app ON assignments(app_id);
 CREATE TABLE IF NOT EXISTS commands (
   id          BIGSERIAL PRIMARY KEY,
   instance_id TEXT NOT NULL,
@@ -329,6 +338,7 @@ CREATE TABLE IF NOT EXISTS commands (
   claimed_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
+CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(instance_id, status);
 
 CREATE TABLE IF NOT EXISTS projects (
   id            BIGSERIAL PRIMARY KEY,
@@ -551,12 +561,19 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS autoheal INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS poll_interval INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS host_info TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 	} {
 		if _, err := conn.ExecContext(ctx, ddl); err != nil {
 			return fmt.Errorf("postgres migrate: %w", err)
 		}
+	}
+	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_instances_project_name ON instances(project, name, id)`); err != nil {
+		return fmt.Errorf("postgres instance project index: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_assignments_stuck ON assignments(stuck, stuck_at)`); err != nil {
+		return fmt.Errorf("postgres stuck assignment index: %w", err)
 	}
 	return nil
 }
@@ -693,6 +710,7 @@ func migrate(db *sql.DB) error {
 		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
 		{"instances", "autoheal", "ALTER TABLE instances ADD COLUMN autoheal INTEGER NOT NULL DEFAULT 1"},
 		{"instances", "poll_interval", "ALTER TABLE instances ADD COLUMN poll_interval INTEGER NOT NULL DEFAULT 0"},
+		{"instances", "host_info", "ALTER TABLE instances ADD COLUMN host_info TEXT NOT NULL DEFAULT '{}'"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
@@ -711,6 +729,12 @@ func migrate(db *sql.DB) error {
 				return fmt.Errorf("migrate %s.%s: %w", c.table, c.name, err)
 			}
 		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_instances_project_name ON instances(project, name, id)`); err != nil {
+		return fmt.Errorf("migrate instance project index: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_assignments_stuck ON assignments(stuck, stuck_at)`); err != nil {
+		return fmt.Errorf("migrate stuck assignment index: %w", err)
 	}
 	return nil
 }
@@ -760,7 +784,7 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, region, tags, execution_mode, tunnel_port, last_tunnel_at, autoheal, poll_interval, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, region, tags, execution_mode, tunnel_port, last_tunnel_at, autoheal, poll_interval, host_info, created_at`
 
 func decodeTags(raw string) []string {
 	tags := []string{}
@@ -792,15 +816,19 @@ func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 		inst                          model.Instance
 		lastSeen, lastTunnel, created string
 		tags                          string
+		hostInfo                      string
 		autoheal                      int
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
 		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &inst.Region, &tags,
-		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &inst.PollInterval, &created)
+		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &inst.PollInterval, &hostInfo, &created)
 	if err != nil {
 		return inst, err
 	}
 	inst.Tags = decodeTags(tags)
+	if hostInfo != "" && hostInfo != "{}" {
+		_ = json.Unmarshal([]byte(hostInfo), &inst.HostInfo)
+	}
 	inst.LastSeen = parseTime(lastSeen)
 	inst.LastTunnelAt = parseTime(lastTunnel)
 	inst.AutoHeal = autoheal != 0
@@ -837,6 +865,491 @@ func (s *sqlstore) CountInstances(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+func instanceOnlineExpr(s *sqlstore, now time.Time) (string, []any) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if s.driver == "pgx" {
+		return `(instances.last_seen <> '' AND EXTRACT(EPOCH FROM (?::timestamptz - instances.last_seen::timestamptz)) <= CASE WHEN instances.poll_interval <= 0 THEN 420 WHEN instances.poll_interval*3 < 30 THEN 30 WHEN instances.poll_interval*3 > 900 THEN 900 ELSE instances.poll_interval*3 END)`, []any{tm(now)}
+	}
+	return `(instances.last_seen <> '' AND (julianday(?) - julianday(instances.last_seen))*86400.0 <= CASE WHEN instances.poll_interval <= 0 THEN 420 WHEN instances.poll_interval*3 < 30 THEN 30 WHEN instances.poll_interval*3 > 900 THEN 900 ELSE instances.poll_interval*3 END)`, []any{tm(now)}
+}
+
+func instanceWhere(s *sqlstore, f model.InstanceListFilter) (string, []any) {
+	where := []string{}
+	args := []any{}
+	if !f.AllProjects {
+		if len(f.Projects) == 0 {
+			return "1=0", nil
+		}
+		where = append(where, "instances.project IN ("+placeholders(len(f.Projects))+")")
+		args = append(args, anyArgs(f.Projects)...)
+	}
+	if f.HasProject {
+		where = append(where, "instances.project=?")
+		args = append(args, f.Project)
+	}
+	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
+		like := "%" + q + "%"
+		where = append(where, `(lower(instances.name) LIKE ? OR lower(instances.id) LIKE ? OR lower(instances.project) LIKE ? OR lower(instances.region) LIKE ? OR lower(instances.hostname) LIKE ? OR lower(instances.tags) LIKE ? OR EXISTS (SELECT 1 FROM assignments sa JOIN applications sap ON sap.id=sa.app_id WHERE sa.instance_id=instances.id AND lower(sap.name) LIKE ?))`)
+		args = append(args, like, like, like, like, like, like, like)
+	}
+	if f.Tag != "" {
+		if s.driver == "pgx" {
+			where = append(where, `EXISTS (SELECT 1 FROM jsonb_array_elements_text(instances.tags::jsonb) AS tag(value) WHERE lower(tag.value)=lower(?))`)
+		} else {
+			where = append(where, `EXISTS (SELECT 1 FROM json_each(instances.tags) AS tag WHERE lower(tag.value)=lower(?))`)
+		}
+		args = append(args, f.Tag)
+	}
+	if f.AppID > 0 {
+		where = append(where, `EXISTS (SELECT 1 FROM assignments af WHERE af.instance_id=instances.id AND af.app_id=?)`)
+		args = append(args, f.AppID)
+	}
+	if len(f.AppIDs) > 0 {
+		where = append(where, `EXISTS (SELECT 1 FROM assignments af WHERE af.instance_id=instances.id AND af.app_id IN (`+placeholders(len(f.AppIDs))+`))`)
+		args = append(args, int64Args(f.AppIDs)...)
+	}
+	if f.NotAppID > 0 {
+		where = append(where, `NOT EXISTS (SELECT 1 FROM assignments an WHERE an.instance_id=instances.id AND an.app_id=?)`)
+		args = append(args, f.NotAppID)
+	}
+	if f.RepoURL != "" {
+		where = append(where, `EXISTS (SELECT 1 FROM assignments ar JOIN applications ara ON ara.id=ar.app_id WHERE ar.instance_id=instances.id AND ara.repo_url=?)`)
+		args = append(args, f.RepoURL)
+	}
+	if f.UnassignedOnly {
+		where = append(where, `NOT EXISTS (SELECT 1 FROM assignments au WHERE au.instance_id=instances.id)`)
+	}
+	if f.StuckOnly {
+		where = append(where, `EXISTS (SELECT 1 FROM assignments ast WHERE ast.instance_id=instances.id AND ast.stuck=1)`)
+	}
+	if f.Mode != "" {
+		where = append(where, "instances.execution_mode=?")
+		args = append(args, f.Mode)
+	}
+	online, onlineArgs := instanceOnlineExpr(s, f.Now)
+	if f.OnlineOnly {
+		where = append(where, online)
+		args = append(args, onlineArgs...)
+	}
+	switch f.State {
+	case model.StateOffline:
+		where = append(where, "NOT "+online)
+		args = append(args, onlineArgs...)
+	case "", "all":
+	case model.StateUnknown:
+		where = append(where, `(instances.state=? OR EXISTS (SELECT 1 FROM assignments ua WHERE ua.instance_id=instances.id AND NOT EXISTS (SELECT 1 FROM runs ur WHERE ur.instance_id=ua.instance_id AND ur.app_id=ua.app_id AND ur.mode='check')))`)
+		args = append(args, model.StateUnknown)
+	case model.StateOK, model.StateDrift, model.StateError:
+		status := f.State
+		if status == model.StateError {
+			status = model.RunFailed
+		}
+		where = append(where, `(instances.state=? OR EXISTS (SELECT 1 FROM runs sr WHERE sr.instance_id=instances.id AND sr.mode='check' AND sr.status=? AND sr.id=(SELECT MAX(sr2.id) FROM runs sr2 WHERE sr2.instance_id=sr.instance_id AND sr2.app_id=sr.app_id AND sr2.mode='check')))`)
+		args = append(args, f.State, status)
+	}
+	if len(where) == 0 {
+		return "1=1", nil
+	}
+	return strings.Join(where, " AND "), args
+}
+
+func (s *sqlstore) ListInstancesFiltered(ctx context.Context, f model.InstanceListFilter) ([]model.Instance, error) {
+	where, args := instanceWhere(s, f)
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	order := ` ORDER BY name, id`
+	if f.RecentFirst {
+		order = ` ORDER BY last_seen DESC, name, id`
+	}
+	q := `SELECT ` + instanceCols + ` FROM instances WHERE ` + where + order + ` LIMIT ? OFFSET ?`
+	args = append(args, limit, f.Offset)
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "list filtered instances")
+	}
+	defer rows.Close()
+	out := []model.Instance{}
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, wrap(err, "scan instance")
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) CountInstancesFiltered(ctx context.Context, f model.InstanceListFilter) (int, error) {
+	where, args := instanceWhere(s, f)
+	var n int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM instances WHERE `+where, args...).Scan(&n); err != nil {
+		return 0, wrap(err, "count filtered instances")
+	}
+	return n, nil
+}
+
+func (s *sqlstore) InstanceFacets(ctx context.Context, all bool, projects []string) (model.InstanceFacets, error) {
+	out := model.InstanceFacets{Projects: []string{}, Tags: []string{}, Apps: []model.AppRef{}}
+	where, args := instanceWhere(s, model.InstanceListFilter{AllProjects: all, Projects: projects})
+	rows, err := s.query(ctx, `SELECT DISTINCT project FROM instances WHERE `+where+` ORDER BY project`, args...)
+	if err != nil {
+		return out, wrap(err, "list instance projects")
+	}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return out, wrap(err, "scan instance project")
+		}
+		out.Projects = append(out.Projects, p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+
+	tagQ := `SELECT DISTINCT tag.value FROM instances, json_each(instances.tags) AS tag WHERE ` + where + ` ORDER BY tag.value`
+	if s.driver == "pgx" {
+		tagQ = `SELECT DISTINCT tag.value FROM instances CROSS JOIN LATERAL jsonb_array_elements_text(instances.tags::jsonb) AS tag(value) WHERE ` + where + ` ORDER BY tag.value`
+	}
+	rows, err = s.query(ctx, tagQ, args...)
+	if err != nil {
+		return out, wrap(err, "list instance tags")
+	}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			rows.Close()
+			return out, wrap(err, "scan instance tag")
+		}
+		out.Tags = append(out.Tags, tag)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+
+	appQ := `SELECT DISTINCT ap.id, ap.name FROM assignments a JOIN applications ap ON ap.id=a.app_id JOIN instances ON instances.id=a.instance_id WHERE ` + where + ` ORDER BY ap.name, ap.id`
+	rows, err = s.query(ctx, appQ, args...)
+	if err != nil {
+		return out, wrap(err, "list instance apps")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var app model.AppRef
+		if err := rows.Scan(&app.ID, &app.Name); err != nil {
+			return out, wrap(err, "scan instance app")
+		}
+		out.Apps = append(out.Apps, app)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) InstanceListStats(ctx context.Context, f model.InstanceListFilter) (model.InstanceListStats, error) {
+	out := model.InstanceListStats{}
+	where, whereArgs := instanceWhere(s, f)
+	online, onlineArgs := instanceOnlineExpr(s, f.Now)
+	q := `SELECT COUNT(*), COALESCE(SUM(CASE WHEN ` + online + ` THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN execution_mode=? THEN 1 ELSE 0 END),0) FROM instances WHERE ` + where
+	args := append(onlineArgs, model.ModeTunnel)
+	args = append(args, whereArgs...)
+	if err := s.queryRow(ctx, q, args...).Scan(&out.Total, &out.Online, &out.Tunnel); err != nil {
+		return out, wrap(err, "instance stats")
+	}
+	out.Offline = out.Total - out.Online
+
+	appWhere := where
+	appArgs := append([]any{}, whereArgs...)
+	if f.AppID > 0 {
+		appWhere += " AND a.app_id=?"
+		appArgs = append(appArgs, f.AppID)
+	}
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM assignments a JOIN instances ON instances.id=a.instance_id WHERE `+appWhere, appArgs...).Scan(&out.Apps); err != nil {
+		return out, wrap(err, "instance app stats")
+	}
+	runWhere := appWhere
+	runArgs := append([]any{}, appArgs...)
+	status := ""
+	switch f.State {
+	case model.StateOK, model.StateDrift:
+		status = f.State
+	case model.StateError:
+		status = model.RunFailed
+	}
+	if status != "" {
+		runWhere += " AND r.status=?"
+		runArgs = append(runArgs, status)
+	}
+	rows, err := s.query(ctx, `SELECT r.status, COUNT(*) FROM assignments a JOIN instances ON instances.id=a.instance_id JOIN runs r ON r.instance_id=a.instance_id AND r.app_id=a.app_id AND r.mode='check' AND r.id=(SELECT MAX(r2.id) FROM runs r2 WHERE r2.instance_id=r.instance_id AND r2.app_id=r.app_id AND r2.mode='check') WHERE `+runWhere+` GROUP BY r.status`, runArgs...)
+	if err != nil {
+		return out, wrap(err, "instance run stats")
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return out, wrap(err, "scan run stats")
+		}
+		seen += n
+		switch st {
+		case model.RunOK:
+			out.Synced = n
+		case model.RunDrift:
+			out.Drift = n
+		case model.RunFailed:
+			out.Failed = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	out.Unknown = out.Apps - seen
+	if status != "" {
+		out.Unknown = 0
+	}
+	if out.Unknown < 0 {
+		out.Unknown = 0
+	}
+	return out, nil
+}
+
+// InstanceOverviewStats aggregates fleet health in a bounded number of
+// queries so the dashboard does not page through every instance.
+func (s *sqlstore) InstanceOverviewStats(ctx context.Context, all bool, projects []string, now time.Time) (model.OverviewStats, error) {
+	out := model.OverviewStats{Versions: []model.VersionCount{}}
+	base := model.InstanceListFilter{AllProjects: all, Projects: projects, Now: now}
+	stats, err := s.InstanceListStats(ctx, base)
+	if err != nil {
+		return out, err
+	}
+	out.InstanceListStats = stats
+
+	where, whereArgs := instanceWhere(s, base)
+	online, onlineArgs := instanceOnlineExpr(s, now)
+	hostQ := `SELECT CASE
+		WHEN NOT (` + online + `) THEN 'offline'
+		WHEN EXISTS (SELECT 1 FROM assignments ha JOIN runs hr ON hr.instance_id=ha.instance_id AND hr.app_id=ha.app_id AND hr.mode='check' AND hr.status='failed' WHERE ha.instance_id=instances.id AND hr.id=(SELECT MAX(hr2.id) FROM runs hr2 WHERE hr2.instance_id=hr.instance_id AND hr2.app_id=hr.app_id AND hr2.mode='check')) THEN 'error'
+		WHEN EXISTS (SELECT 1 FROM assignments ha JOIN runs hr ON hr.instance_id=ha.instance_id AND hr.app_id=ha.app_id AND hr.mode='check' AND hr.status='drift' WHERE ha.instance_id=instances.id AND hr.id=(SELECT MAX(hr2.id) FROM runs hr2 WHERE hr2.instance_id=hr.instance_id AND hr2.app_id=hr.app_id AND hr2.mode='check')) THEN 'drift'
+		WHEN EXISTS (SELECT 1 FROM assignments ha JOIN runs hr ON hr.instance_id=ha.instance_id AND hr.app_id=ha.app_id AND hr.mode='check' AND hr.status='ok' WHERE ha.instance_id=instances.id AND hr.id=(SELECT MAX(hr2.id) FROM runs hr2 WHERE hr2.instance_id=hr.instance_id AND hr2.app_id=hr.app_id AND hr2.mode='check')) THEN 'ok'
+		ELSE 'unknown' END AS hs, COUNT(*) FROM instances WHERE ` + where + ` GROUP BY hs`
+	args := append(onlineArgs, whereArgs...)
+	rows, err := s.query(ctx, hostQ, args...)
+	if err != nil {
+		return out, wrap(err, "overview host stats")
+	}
+	for rows.Next() {
+		var hs string
+		var n int
+		if err := rows.Scan(&hs, &n); err != nil {
+			rows.Close()
+			return out, wrap(err, "scan overview host stats")
+		}
+		switch hs {
+		case model.StateOK:
+			out.HostOK = n
+		case model.StateDrift:
+			out.HostDrift = n
+		case model.StateError:
+			out.HostError = n
+		case model.StateOffline:
+			out.HostOffline = n
+		default:
+			out.HostUnknown = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+
+	vq := `SELECT COALESCE(NULLIF(version,''),'unknown') AS ver, COUNT(*) FROM instances WHERE ` + where + ` GROUP BY ver ORDER BY COUNT(*) DESC, ver`
+	rows, err = s.query(ctx, vq, whereArgs...)
+	if err != nil {
+		return out, wrap(err, "overview versions")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var vc model.VersionCount
+		if err := rows.Scan(&vc.Version, &vc.Count); err != nil {
+			return out, wrap(err, "scan overview version")
+		}
+		out.Versions = append(out.Versions, vc)
+	}
+	return out, rows.Err()
+}
+
+// ApplicationAssignmentStats aggregates assignment health per application so
+// the applications page does not have to walk every instance.
+func (s *sqlstore) ApplicationAssignmentStats(ctx context.Context, all bool, projects []string) ([]model.ApplicationStats, error) {
+	out := []model.ApplicationStats{}
+	where := "1=1"
+	args := []any{}
+	if !all {
+		if len(projects) == 0 {
+			return out, nil
+		}
+		where = "ap.project IN (" + placeholders(len(projects)) + ")"
+		args = append(args, anyArgs(projects)...)
+	}
+	q := `SELECT ap.id,
+		COUNT(a.instance_id),
+		COALESCE(SUM(CASE WHEN r.status='ok' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN a.instance_id IS NOT NULL AND (r.status IS NULL OR r.status NOT IN ('ok','drift','failed')) THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='drift' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN r.status='failed' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN a.stuck=1 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN a.instance_id IS NOT NULL AND i.autoheal<>0 AND ap.autoheal<>0 AND (a.autoheal IS NULL OR a.autoheal<>0) THEN 1 ELSE 0 END),0),
+		COALESCE(MAX(lr.commit_after),''),
+		COALESCE(MAX(lr.commit_msg),''),
+		COALESCE(MAX(lr.finished_at),''),
+		COALESCE(MAX(COALESCE(NULLIF(a.last_check_at,''), r.finished_at, '')),'')
+		FROM applications ap
+		LEFT JOIN assignments a ON a.app_id=ap.id
+		LEFT JOIN instances i ON i.id=a.instance_id
+		LEFT JOIN runs r ON r.id=(SELECT MAX(r2.id) FROM runs r2 WHERE r2.instance_id=a.instance_id AND r2.app_id=a.app_id AND r2.mode='check')
+		LEFT JOIN runs lr ON lr.id=(SELECT MAX(lr2.id) FROM runs lr2 WHERE lr2.app_id=ap.id AND lr2.mode='check' AND lr2.commit_after<>'')
+		WHERE ` + where + `
+		GROUP BY ap.id`
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "application assignment stats")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st model.ApplicationStats
+		var revisionAt, lastAt string
+		if err := rows.Scan(&st.ID, &st.Instances, &st.Synced, &st.Unknown, &st.Drift, &st.Error, &st.Stuck, &st.AutoHeal, &st.Revision, &st.RevisionMsg, &revisionAt, &lastAt); err != nil {
+			return nil, wrap(err, "scan application assignment stats")
+		}
+		st.RevisionAt = parseTime(revisionAt)
+		st.LastAt = parseTime(lastAt)
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+func driftAssignmentFrom() string {
+	return ` FROM assignments a
+		JOIN instances i ON i.id=a.instance_id
+		JOIN applications ap ON ap.id=a.app_id
+		LEFT JOIN runs r ON r.id=(SELECT MAX(r2.id) FROM runs r2 WHERE r2.instance_id=a.instance_id AND r2.app_id=a.app_id AND r2.mode='check')`
+}
+
+func driftAssignmentWhere(f model.AssignmentFilter) (string, []any) {
+	where := []string{`(a.stuck=1 OR r.status='drift')`}
+	args := []any{}
+	if !f.AllProjects {
+		if len(f.Projects) == 0 {
+			return "1=0", nil
+		}
+		where = append(where, "i.project IN ("+placeholders(len(f.Projects))+")")
+		args = append(args, anyArgs(f.Projects)...)
+	}
+	if f.HasProject {
+		where = append(where, "i.project=?")
+		args = append(args, f.Project)
+	}
+	if f.AppID > 0 {
+		where = append(where, "a.app_id=?")
+		args = append(args, f.AppID)
+	}
+	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
+		like := "%" + q + "%"
+		where = append(where, `(lower(i.name) LIKE ? OR lower(i.id) LIKE ? OR lower(i.project) LIKE ? OR lower(i.region) LIKE ? OR lower(i.hostname) LIKE ? OR lower(i.tags) LIKE ? OR lower(ap.name) LIKE ?)`)
+		args = append(args, like, like, like, like, like, like, like)
+	}
+	return strings.Join(where, " AND "), args
+}
+
+func (s *sqlstore) ListDriftAssignments(ctx context.Context, f model.AssignmentFilter) ([]model.AssignmentKey, error) {
+	where, args := driftAssignmentWhere(f)
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `SELECT a.instance_id, a.app_id, CASE WHEN a.stuck=1 THEN a.stuck_at ELSE COALESCE(r.finished_at,'') END AS at` + driftAssignmentFrom() + ` WHERE ` + where + ` ORDER BY at DESC, i.name, a.app_id LIMIT ? OFFSET ?`
+	args = append(args, limit, f.Offset)
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "list drift assignments")
+	}
+	defer rows.Close()
+	out := []model.AssignmentKey{}
+	for rows.Next() {
+		var row model.AssignmentKey
+		var at string
+		if err := rows.Scan(&row.InstanceID, &row.AppID, &at); err != nil {
+			return nil, wrap(err, "scan drift assignment")
+		}
+		row.At = parseTime(at)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) CountDriftAssignments(ctx context.Context, f model.AssignmentFilter) (int, error) {
+	where, args := driftAssignmentWhere(f)
+	var n int
+	if err := s.queryRow(ctx, `SELECT COUNT(*)`+driftAssignmentFrom()+` WHERE `+where, args...).Scan(&n); err != nil {
+		return 0, wrap(err, "count drift assignments")
+	}
+	return n, nil
+}
+
+func (s *sqlstore) DriftAssignmentStats(ctx context.Context, f model.AssignmentFilter) (model.AssignmentStats, error) {
+	out := model.AssignmentStats{}
+	where, args := driftAssignmentWhere(f)
+	q := `SELECT COUNT(*), COUNT(DISTINCT a.instance_id), COUNT(DISTINCT a.app_id),
+		COALESCE(SUM(CASE WHEN i.autoheal<>0 AND ap.autoheal<>0 AND (a.autoheal IS NULL OR a.autoheal<>0) THEN 1 ELSE 0 END),0)` + driftAssignmentFrom() + ` WHERE ` + where
+	if err := s.queryRow(ctx, q, args...).Scan(&out.Total, &out.Instances, &out.Apps, &out.AutoHeal); err != nil {
+		return out, wrap(err, "drift assignment stats")
+	}
+	return out, nil
+}
+
+func (s *sqlstore) DriftAssignmentFacets(ctx context.Context, all bool, projects []string) (model.AssignmentFacets, error) {
+	out := model.AssignmentFacets{Projects: []string{}, Apps: []model.AppRef{}}
+	where, args := driftAssignmentWhere(model.AssignmentFilter{AllProjects: all, Projects: projects})
+	rows, err := s.query(ctx, `SELECT DISTINCT i.project`+driftAssignmentFrom()+` WHERE `+where+` ORDER BY i.project`, args...)
+	if err != nil {
+		return out, wrap(err, "drift project facets")
+	}
+	for rows.Next() {
+		var project string
+		if err := rows.Scan(&project); err != nil {
+			rows.Close()
+			return out, wrap(err, "scan drift project facet")
+		}
+		out.Projects = append(out.Projects, project)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+	rows, err = s.query(ctx, `SELECT DISTINCT ap.id, ap.name`+driftAssignmentFrom()+` WHERE `+where+` ORDER BY ap.name, ap.id`, args...)
+	if err != nil {
+		return out, wrap(err, "drift app facets")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var app model.AppRef
+		if err := rows.Scan(&app.ID, &app.Name); err != nil {
+			return out, wrap(err, "scan drift app facet")
+		}
+		out.Apps = append(out.Apps, app)
+	}
+	return out, rows.Err()
+}
+
 // ListTunnelInstances returns every agentless (reverse SSH) instance so a
 // runner can discover the loopback ports it should reach.
 func (s *sqlstore) ListTunnelInstances(ctx context.Context) ([]model.Instance, error) {
@@ -850,6 +1363,27 @@ func (s *sqlstore) ListTunnelInstances(ctx context.Context) ([]model.Instance, e
 		inst, err := scanInstance(rows)
 		if err != nil {
 			return nil, wrap(err, "scan tunnel instance")
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) InstancesByIDs(ctx context.Context, ids []string) ([]model.Instance, error) {
+	out := []model.Instance{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	q := `SELECT ` + instanceCols + ` FROM instances WHERE id IN (` + placeholders(len(ids)) + `)`
+	rows, err := s.query(ctx, q, anyArgs(ids)...)
+	if err != nil {
+		return nil, wrap(err, "instances by ids")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, wrap(err, "scan instance by id")
 		}
 		out = append(out, inst)
 	}
@@ -925,6 +1459,18 @@ func (s *sqlstore) TouchInstance(ctx context.Context, id, version, hostname, pla
 	return nil
 }
 
+// SetInstanceHostInfo stores the best-effort inventory reported by an agent.
+func (s *sqlstore) SetInstanceHostInfo(ctx context.Context, id string, info model.HostInfo) error {
+	b, err := json.Marshal(info)
+	if err != nil {
+		return fmt.Errorf("marshal host info: %w", err)
+	}
+	if _, err := s.exec(ctx, `UPDATE instances SET host_info=? WHERE id=?`, string(b), id); err != nil {
+		return fmt.Errorf("set instance host info: %w", err)
+	}
+	return nil
+}
+
 // UpdateInstanceState is the narrow update used by refreshInstanceState so a
 // run report never rewrites the heartbeat timestamp.
 func (s *sqlstore) UpdateInstanceState(ctx context.Context, id, state, lastCommit string) error {
@@ -993,6 +1539,31 @@ func (s *sqlstore) ListApplications(ctx context.Context) ([]model.Application, e
 		app, err := scanApp(rows)
 		if err != nil {
 			return nil, wrap(err, "scan app")
+		}
+		out = append(out, app)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) ApplicationsByIDs(ctx context.Context, ids []int64) ([]model.Application, error) {
+	out := []model.Application{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	q := `SELECT ` + appCols + ` FROM applications WHERE id IN (` + placeholders(len(ids)) + `)`
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "applications by ids")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		app, err := scanApp(rows)
+		if err != nil {
+			return nil, wrap(err, "scan application by id")
 		}
 		out = append(out, app)
 	}
@@ -1108,6 +1679,38 @@ func (s *sqlstore) ListRepositories(ctx context.Context) ([]model.Repository, er
 			return nil, wrap(err, "scan repo")
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) RepositoriesByURLs(ctx context.Context, urls []string) (map[string]model.Repository, error) {
+	out := map[string]model.Repository{}
+	uniq := make([]string, 0, len(urls))
+	seen := map[string]struct{}{}
+	for _, url := range urls {
+		if url == "" {
+			continue
+		}
+		if _, ok := seen[url]; ok {
+			continue
+		}
+		seen[url] = struct{}{}
+		uniq = append(uniq, url)
+	}
+	if len(uniq) == 0 {
+		return out, nil
+	}
+	rows, err := s.query(ctx, `SELECT `+repoCols+` FROM repositories WHERE url IN (`+placeholders(len(uniq))+`)`, anyArgs(uniq)...)
+	if err != nil {
+		return nil, wrap(err, "list repos by url")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		r, err := s.scanRepo(rows)
+		if err != nil {
+			return nil, wrap(err, "scan repo")
+		}
+		out[r.URL] = r
 	}
 	return out, rows.Err()
 }
@@ -1251,6 +1854,47 @@ func (s *sqlstore) ListAssignments(ctx context.Context, instanceID string) ([]mo
 			return nil, wrap(err, "scan assignment")
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) ListAssignmentsWithApplications(ctx context.Context, instanceIDs []string) ([]AssignmentWithApplication, error) {
+	if len(instanceIDs) == 0 {
+		return []AssignmentWithApplication{}, nil
+	}
+	q := `SELECT a.instance_id, a.app_id, a.autoheal, a.last_check_at, a.consecutive_drift, a.stuck, a.stuck_at, a.target_revision, a.created_at,
+		ap.id, ap.name, ap.repo_url, ap.branch, ap.path, ap.vars, ap.autoheal, ap.sync_interval, ap.ignore_paths, ap.project, ap.created_at
+		FROM assignments a JOIN applications ap ON ap.id=a.app_id
+		WHERE a.instance_id IN (` + placeholders(len(instanceIDs)) + `)
+		ORDER BY a.instance_id, ap.name, ap.id`
+	rows, err := s.query(ctx, q, anyArgs(instanceIDs)...)
+	if err != nil {
+		return nil, wrap(err, "list assignments with apps")
+	}
+	defer rows.Close()
+	out := []AssignmentWithApplication{}
+	for rows.Next() {
+		var (
+			a            model.Assignment
+			autoheal     *bool
+			stuck        int
+			last, sa, cr string
+			app          model.Application
+			appAuto      int
+			appCreated   string
+		)
+		if err := rows.Scan(&a.InstanceID, &a.AppID, &autoheal, &last, &a.ConsecutiveDrift, &stuck, &sa, &a.TargetRevision, &cr,
+			&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.Vars, &appAuto, &app.SyncInterval, &app.IgnorePaths, &app.Project, &appCreated); err != nil {
+			return nil, wrap(err, "scan assignment with app")
+		}
+		a.AutoHeal = autoheal
+		a.LastCheckAt = parseTime(last)
+		a.Stuck = stuck != 0
+		a.StuckAt = parseTime(sa)
+		a.CreatedAt = parseTime(cr)
+		app.AutoHeal = appAuto != 0
+		app.CreatedAt = parseTime(appCreated)
+		out = append(out, AssignmentWithApplication{Assignment: a, Application: app})
 	}
 	return out, rows.Err()
 }
@@ -1413,6 +2057,38 @@ func (s *sqlstore) AppVariables(ctx context.Context, appID int64) ([]model.Varia
 		`SELECT key, value, is_secret FROM variables WHERE app_id=? ORDER BY key`, appID)
 }
 
+func (s *sqlstore) ListAppVariablesForApps(ctx context.Context, appIDs []int64) (map[int64][]model.Variable, error) {
+	out := map[int64][]model.Variable{}
+	if len(appIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.query(ctx,
+		`SELECT app_id, key, value, is_secret FROM variables WHERE app_id IN (`+placeholders(len(appIDs))+`) ORDER BY app_id, key`,
+		int64Args(appIDs)...)
+	if err != nil {
+		return nil, wrap(err, "list app variables")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			appID int64
+			v     model.Variable
+			flag  int
+		)
+		if err := rows.Scan(&appID, &v.Key, &v.Value, &flag); err != nil {
+			return nil, wrap(err, "scan app variable")
+		}
+		v.IsSecret = flag != 0
+		if v.IsSecret {
+			if v.Value, err = s.unseal(v.Value); err != nil {
+				return nil, wrap(err, "decrypt variable")
+			}
+		}
+		out[appID] = append(out[appID], v)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqlstore) SaveAppVariables(ctx context.Context, appID int64, vars []model.Variable) error {
 	return s.replaceVariables(ctx, vars,
 		`DELETE FROM variables WHERE app_id=?`,
@@ -1423,6 +2099,39 @@ func (s *sqlstore) SaveAppVariables(ctx context.Context, appID int64, vars []mod
 func (s *sqlstore) AssignmentVariables(ctx context.Context, instanceID string, appID int64) ([]model.Variable, error) {
 	return s.listVariables(ctx,
 		`SELECT key, value, is_secret FROM assignment_variables WHERE instance_id=? AND app_id=? ORDER BY key`, instanceID, appID)
+}
+
+func (s *sqlstore) ListAssignmentVariablesForApps(ctx context.Context, instanceID string, appIDs []int64) (map[int64][]model.Variable, error) {
+	out := map[int64][]model.Variable{}
+	if instanceID == "" || len(appIDs) == 0 {
+		return out, nil
+	}
+	args := append([]any{instanceID}, int64Args(appIDs)...)
+	rows, err := s.query(ctx,
+		`SELECT app_id, key, value, is_secret FROM assignment_variables WHERE instance_id=? AND app_id IN (`+placeholders(len(appIDs))+`) ORDER BY app_id, key`,
+		args...)
+	if err != nil {
+		return nil, wrap(err, "list assignment variables")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			appID int64
+			v     model.Variable
+			flag  int
+		)
+		if err := rows.Scan(&appID, &v.Key, &v.Value, &flag); err != nil {
+			return nil, wrap(err, "scan assignment variable")
+		}
+		v.IsSecret = flag != 0
+		if v.IsSecret {
+			if v.Value, err = s.unseal(v.Value); err != nil {
+				return nil, wrap(err, "decrypt variable")
+			}
+		}
+		out[appID] = append(out[appID], v)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqlstore) SaveAssignmentVariables(ctx context.Context, instanceID string, appID int64, vars []model.Variable) error {
@@ -1549,6 +2258,45 @@ func (s *sqlstore) ListRuns(ctx context.Context, f model.RunFilter) ([]model.Run
 	return out, rows.Err()
 }
 
+// ListRunsScoped returns recent runs the caller may see. Project scoping is
+// applied through the run's instance so deleted or reassigned objects cannot
+// leak activity across tenants.
+func (s *sqlstore) ListRunsScoped(ctx context.Context, all bool, projects, modes []string, limit int) ([]model.Run, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	where := []string{"instance_id IN (SELECT id FROM instances"}
+	args := []any{}
+	if !all {
+		if len(projects) == 0 {
+			return []model.Run{}, nil
+		}
+		where[0] += " WHERE project IN (" + placeholders(len(projects)) + ")"
+		args = append(args, anyArgs(projects)...)
+	}
+	where[0] += ")"
+	if len(modes) > 0 {
+		where = append(where, "mode IN ("+placeholders(len(modes))+")")
+		args = append(args, anyArgs(modes)...)
+	}
+	q := `SELECT ` + runColsLight + ` FROM runs WHERE ` + strings.Join(where, " AND ") + ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "list scoped runs")
+	}
+	defer rows.Close()
+	out := []model.Run{}
+	for rows.Next() {
+		run, err := scanRunLight(rows)
+		if err != nil {
+			return nil, wrap(err, "scan scoped run")
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqlstore) CountRuns(ctx context.Context, f model.RunFilter) (int, error) {
 	wh, args := runWhere(f)
 	var n int
@@ -1639,6 +2387,32 @@ func (s *sqlstore) LatestRun(ctx context.Context, instanceID string, appID int64
 		return r, wrap(err, "latest run")
 	}
 	return r, nil
+}
+
+func (s *sqlstore) ListLatestRuns(ctx context.Context, instanceIDs, modes []string) ([]model.Run, error) {
+	if len(instanceIDs) == 0 || len(modes) == 0 {
+		return []model.Run{}, nil
+	}
+	q := `SELECT ` + runColsLight + ` FROM runs
+		WHERE instance_id IN (` + placeholders(len(instanceIDs)) + `)
+		  AND mode IN (` + placeholders(len(modes)) + `)
+		  AND id = (SELECT MAX(r2.id) FROM runs r2 WHERE r2.instance_id=runs.instance_id AND r2.app_id=runs.app_id AND r2.mode=runs.mode)
+		ORDER BY instance_id, app_id, mode`
+	args := append(anyArgs(instanceIDs), anyArgs(modes)...)
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "list latest runs")
+	}
+	defer rows.Close()
+	out := []model.Run{}
+	for rows.Next() {
+		r, err := scanRunLight(rows)
+		if err != nil {
+			return nil, wrap(err, "scan latest run")
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // PruneRuns deletes check/apply history older than before.
@@ -1822,6 +2596,14 @@ func anyArgs(projects []string) []any {
 	out := make([]any, len(projects))
 	for i, p := range projects {
 		out[i] = p
+	}
+	return out
+}
+
+func int64Args(ids []int64) []any {
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = id
 	}
 	return out
 }

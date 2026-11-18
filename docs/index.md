@@ -36,8 +36,10 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
   the hub and read access to Git.
-- **Tunnel mode** — outbound-only hosts can use a lightweight tunnel agent or stay agent-free: a runner on a
-  bastion executes Ansible through a reverse SSH tunnel opened by the host.
+- **Tunnel mode** — outbound-only hosts can use a lightweight tunnel agent or
+  stay agent-free: **only** the runner on a bastion executes Ansible, through a
+  reverse SSH tunnel opened by the host. The topology shows an explicit
+  `hub → runner → tunnel host` path.
 
 ## Architecture
 
@@ -45,7 +47,7 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
 |-----------|------|
 | **Hub** | Go API + React dashboard + SQLite/PostgreSQL. Stores desired state, runs, commands and audit history. |
 | **Agent** | One static Go binary per managed host. Polls the hub, clones the playbooks, runs Ansible, reports results. |
-| **Bastion runner** | Optional runner for tunnel hosts. Polls the hub and executes Ansible through a reverse SSH tunnel. |
+| **Bastion runner** | `helios-runner`: polls the hub, discovers tunnel instances, and is the **only** Ansible executor for them. Reaches the host over a reverse SSH tunnel. |
 | **Git** | Source of truth for playbooks and variables. |
 | **Managed hosts** | Machines reconciled by the agents, or reached through the bastion runner. |
 
@@ -66,6 +68,13 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
               │  host A   │    │  host B   │
               └───────────┘    └───────────┘
 ```
+
+Agent mode connects the hub directly to an agent that runs Ansible locally.
+Tunnel mode adds the bastion runner in the middle: the runner runs
+`ansible-playbook` over SSH to `127.0.0.1:<port>`, and the managed host only
+runs `sshd`, `python3` and optionally the tunnel-only agent. A complete
+walkthrough is in `deploy/examples/runner-tunnel/`; see also
+[Tunnel mode](INSTALL.md#tunnel-mode--reverse-ssh).
 
 ## Install in 5 minutes
 

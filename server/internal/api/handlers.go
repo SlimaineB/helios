@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -270,51 +271,437 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	limit, offset := paginate(r, 20)
 	all, scopes := s.visibleProjects(r, "instances", "get")
-	var (
-		total int
-		insts []model.Instance
-		err   error
-	)
-	if all {
-		total, err = s.store.CountInstances(r.Context())
-		if err == nil {
-			insts, err = s.store.ListInstances(r.Context(), limit, offset)
-		}
-	} else {
-		total, err = s.store.CountInstancesScoped(r.Context(), scopes)
-		if err == nil {
-			insts, err = s.store.ListInstancesScoped(r.Context(), scopes, limit, offset)
+	f := model.InstanceListFilter{
+		AllProjects:    all,
+		Projects:       scopes,
+		Query:          strings.TrimSpace(r.URL.Query().Get("q")),
+		Tag:            strings.TrimSpace(r.URL.Query().Get("tag")),
+		Mode:           strings.TrimSpace(r.URL.Query().Get("mode")),
+		State:          strings.TrimSpace(r.URL.Query().Get("state")),
+		OnlineOnly:     r.URL.Query().Get("online") == "1" || r.URL.Query().Get("online") == "true",
+		RepoURL:        strings.TrimSpace(r.URL.Query().Get("repo")),
+		UnassignedOnly: r.URL.Query().Get("unassigned") == "1",
+		Limit:          limit,
+		Offset:         offset,
+		Now:            time.Now().UTC(),
+	}
+	if v := r.URL.Query().Get("project"); v != "" {
+		f.HasProject = true
+		if v != "__global__" {
+			f.Project = v
 		}
 	}
+	f.AppID, _ = strconv.ParseInt(r.URL.Query().Get("app_id"), 10, 64)
+	f.NotAppID, _ = strconv.ParseInt(r.URL.Query().Get("not_app_id"), 10, 64)
+	for _, raw := range strings.Split(r.URL.Query().Get("app_ids"), ",") {
+		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err == nil && id > 0 {
+			f.AppIDs = append(f.AppIDs, id)
+		}
+	}
+	total, err := s.store.CountInstancesFiltered(r.Context(), f)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	insts, err := s.store.ListInstancesFiltered(r.Context(), f)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	compact := r.URL.Query().Get("compact") == "1"
+	apps := map[string][]AppStatus{}
+	if !compact {
+		windows, _ := s.store.ListSyncWindows(r.Context())
+		apps, err = s.appsForInstances(r.Context(), insts, windows)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+	}
+	appFilter := f.AppID
+	if appFilter == 0 && len(f.AppIDs) > 0 {
+		appFilter = f.AppIDs[0]
+	}
+	out := make([]InstanceWithApps, 0, len(insts))
+	for _, inst := range insts {
+		inst = s.decorateInstance(inst)
+		as := apps[inst.ID]
+		if as == nil {
+			as = []AppStatus{}
+		}
+		if appFilter > 0 {
+			filtered := as[:0]
+			for _, status := range as {
+				if status.Application.ID == appFilter || containsInt64(f.AppIDs, status.Application.ID) {
+					filtered = append(filtered, status)
+				}
+			}
+			as = filtered
+		}
+		out = append(out, InstanceWithApps{Instance: inst, Apps: as})
+	}
+	facets := model.InstanceFacets{Projects: []string{}, Tags: []string{}, Apps: []model.AppRef{}}
+	if r.URL.Query().Get("facets") == "1" {
+		facets, err = s.store.InstanceFacets(r.Context(), all, scopes)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+	}
+	stats := model.InstanceListStats{}
+	if r.URL.Query().Get("stats") == "1" {
+		stats, err = s.store.InstanceListStats(r.Context(), f)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items  []InstanceWithApps      `json:"items"`
+		Total  int                     `json:"total"`
+		Limit  int                     `json:"limit"`
+		Offset int                     `json:"offset"`
+		Facets model.InstanceFacets    `json:"facets"`
+		Stats  model.InstanceListStats `json:"stats"`
+	}{Items: out, Total: total, Limit: limit, Offset: offset, Facets: facets, Stats: stats})
+}
+
+func containsInt64(ids []int64, id int64) bool {
+	for _, candidate := range ids {
+		if candidate == id {
+			return true
+		}
+	}
+	return false
+}
+
+// DriftRow is one drifting or stuck assignment hydrated for the drift page.
+type DriftRow struct {
+	Instance model.Instance `json:"instance"`
+	App      AppStatus      `json:"app"`
+}
+
+func (s *Server) handleApplicationStats(w http.ResponseWriter, r *http.Request) {
+	all, scopes := s.visibleProjects(r, "applications", "get")
+	stats, err := s.store.ApplicationAssignmentStats(r.Context(), all, scopes)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items []model.ApplicationStats `json:"items"`
+	}{Items: stats})
+}
+
+func (s *Server) handleListDrift(w http.ResponseWriter, r *http.Request) {
+	limit, offset := paginate(r, 50)
+	all, scopes := s.visibleProjects(r, "instances", "get")
+	f := model.AssignmentFilter{
+		AllProjects: all,
+		Projects:    scopes,
+		Query:       strings.TrimSpace(r.URL.Query().Get("q")),
+		AppID:       0,
+		Limit:       limit,
+		Offset:      offset,
+	}
+	if v := r.URL.Query().Get("project"); v != "" {
+		f.HasProject = true
+		if v != "__global__" {
+			f.Project = v
+		}
+	}
+	f.AppID, _ = strconv.ParseInt(r.URL.Query().Get("app_id"), 10, 64)
+	total, err := s.store.CountDriftAssignments(r.Context(), f)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	keys, err := s.store.ListDriftAssignments(r.Context(), f)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	stats, err := s.store.DriftAssignmentStats(r.Context(), f)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	instanceIDs := make([]string, 0, len(keys))
+	seen := map[string]bool{}
+	for _, key := range keys {
+		if !seen[key.InstanceID] {
+			seen[key.InstanceID] = true
+			instanceIDs = append(instanceIDs, key.InstanceID)
+		}
+	}
+	insts, err := s.store.InstancesByIDs(r.Context(), instanceIDs)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	windows, _ := s.store.ListSyncWindows(r.Context())
-	out := make([]InstanceWithApps, 0, len(insts))
+	statuses, err := s.appsForInstances(r.Context(), insts, windows)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	instByID := make(map[string]model.Instance, len(insts))
 	for _, inst := range insts {
-		inst = s.decorateInstance(inst)
-		as, err := s.appsForInstance(r.Context(), inst, windows)
+		instByID[inst.ID] = s.decorateInstance(inst)
+	}
+	statusByKey := map[string]AppStatus{}
+	for instID, list := range statuses {
+		for _, status := range list {
+			statusByKey[instID+"/"+strconv.FormatInt(status.Application.ID, 10)] = status
+		}
+	}
+	rows := make([]DriftRow, 0, len(keys))
+	for _, key := range keys {
+		inst, ok := instByID[key.InstanceID]
+		if !ok {
+			continue
+		}
+		status, ok := statusByKey[key.InstanceID+"/"+strconv.FormatInt(key.AppID, 10)]
+		if !ok {
+			continue
+		}
+		rows = append(rows, DriftRow{Instance: inst, App: status})
+	}
+	facets := model.AssignmentFacets{Projects: []string{}, Apps: []model.AppRef{}}
+	if r.URL.Query().Get("facets") == "1" {
+		facets, err = s.store.DriftAssignmentFacets(r.Context(), all, scopes)
 		if err != nil {
 			s.internalError(w, r, err)
 			return
 		}
-		out = append(out, InstanceWithApps{Instance: inst, Apps: as})
 	}
-	writePage(w, out, total, limit, offset)
+	writeJSON(w, http.StatusOK, struct {
+		Items  []DriftRow             `json:"items"`
+		Total  int                    `json:"total"`
+		Limit  int                    `json:"limit"`
+		Offset int                    `json:"offset"`
+		Stats  model.AssignmentStats  `json:"stats"`
+		Facets model.AssignmentFacets `json:"facets"`
+	}{Items: rows, Total: total, Limit: limit, Offset: offset, Stats: stats, Facets: facets})
 }
 
-func (s *Server) appsForInstance(ctx context.Context, inst model.Instance, windows []model.SyncWindow) ([]AppStatus, error) {
-	ass, err := s.store.ListAssignments(ctx, inst.ID)
+const overviewRecentLimit = 9
+
+// handleOverview returns the dashboard's aggregate view in a bounded number of
+// queries, so opening the overview does not page through the entire fleet.
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	all, scopes := s.visibleProjects(r, "instances", "get")
+	now := time.Now().UTC()
+	stats, err := s.store.InstanceOverviewStats(r.Context(), all, scopes, now)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+
+	runs, err := s.store.ListRunsScoped(r.Context(), all, scopes, []string{"check", "apply"}, 100)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	instanceIDs := make([]string, 0, len(runs))
+	appIDs := make([]int64, 0, len(runs))
+	seenID := map[string]bool{}
+	seenApp := map[int64]bool{}
+	for _, run := range runs {
+		if !seenID[run.InstanceID] {
+			seenID[run.InstanceID] = true
+			instanceIDs = append(instanceIDs, run.InstanceID)
+		}
+		if !seenApp[run.AppID] {
+			seenApp[run.AppID] = true
+			appIDs = append(appIDs, run.AppID)
+		}
+	}
+	insts, err := s.store.InstancesByIDs(r.Context(), instanceIDs)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	applications, err := s.store.ApplicationsByIDs(r.Context(), appIDs)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	instByID := make(map[string]model.Instance, len(insts))
+	for _, inst := range insts {
+		instByID[inst.ID] = s.decorateInstance(inst)
+	}
+	appByID := make(map[int64]model.Application, len(applications))
+	for _, app := range applications {
+		appByID[app.ID] = app
+	}
+	recent := []model.OverviewRecent{}
+	seenAssignment := map[string]bool{}
+	for _, run := range runs {
+		inst, ok := instByID[run.InstanceID]
+		if !ok {
+			continue
+		}
+		app, ok := appByID[run.AppID]
+		if !ok {
+			continue
+		}
+		key := run.InstanceID + "/" + strconv.FormatInt(run.AppID, 10)
+		if seenAssignment[key] {
+			continue
+		}
+		seenAssignment[key] = true
+		recent = append(recent, model.OverviewRecent{
+			Instance:    inst,
+			Application: model.AppRef{ID: app.ID, Name: app.Name},
+			Run:         run,
+		})
+		if len(recent) == overviewRecentLimit {
+			break
+		}
+	}
+
+	base := model.InstanceListFilter{AllProjects: all, Projects: scopes, Now: now}
+	attention, err := s.overviewAttention(r.Context(), base)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Stats     model.OverviewStats    `json:"stats"`
+		Recent    []model.OverviewRecent `json:"recent"`
+		Attention []model.AttentionItem  `json:"attention"`
+	}{Stats: stats, Recent: recent, Attention: attention})
+}
+
+func (s *Server) overviewAttention(ctx context.Context, base model.InstanceListFilter) ([]model.AttentionItem, error) {
+	out := []model.AttentionItem{}
+	offline := base
+	offline.State = model.StateOffline
+	offline.RecentFirst = true
+	offline.Limit = 30
+	offlineInsts, err := s.store.ListInstancesFiltered(ctx, offline)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]AppStatus, 0, len(ass))
-	for _, a := range ass {
-		app, err := s.store.GetApplication(ctx, a.AppID)
+	for _, inst := range offlineInsts {
+		out = append(out, model.AttentionItem{Kind: model.StateOffline, Instance: s.decorateInstance(inst), At: inst.LastSeen})
+	}
+
+	issueByID := map[string]model.Instance{}
+	for _, filter := range []model.InstanceListFilter{
+		{State: model.StateError, RecentFirst: true, Limit: 30},
+		{State: model.StateDrift, RecentFirst: true, Limit: 30},
+		{StuckOnly: true, RecentFirst: true, Limit: 30},
+	} {
+		filter.AllProjects = base.AllProjects
+		filter.Projects = base.Projects
+		filter.Now = base.Now
+		list, err := s.store.ListInstancesFiltered(ctx, filter)
 		if err != nil {
+			return nil, err
+		}
+		for _, inst := range list {
+			issueByID[inst.ID] = inst
+		}
+	}
+	issueInsts := make([]model.Instance, 0, len(issueByID))
+	for _, inst := range issueByID {
+		issueInsts = append(issueInsts, inst)
+	}
+	if len(issueInsts) > 0 {
+		windows, _ := s.store.ListSyncWindows(ctx)
+		statuses, err := s.appsForInstances(ctx, issueInsts, windows)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, inst := range issueInsts {
+			inst = s.decorateInstance(inst)
+			if !inst.Online {
+				continue
+			}
+			for _, status := range statuses[inst.ID] {
+				kind := ""
+				at := status.LatestCheck.FinishedAt
+				switch {
+				case status.LatestCheck.Status == model.RunFailed:
+					kind = "failed"
+				case status.Stuck:
+					kind = "stuck"
+					if !status.StuckAt.IsZero() {
+						at = status.StuckAt
+					}
+				case status.LatestCheck.Status == model.RunDrift:
+					kind = "drift"
+				default:
+					continue
+				}
+				key := kind + "/" + inst.ID + "/" + strconv.FormatInt(status.Application.ID, 10)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				app := model.AppRef{ID: status.Application.ID, Name: status.Application.Name}
+				out = append(out, model.AttentionItem{Kind: kind, Instance: inst, Application: &app, At: at})
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At.IsZero() {
+			return false
+		}
+		if out[j].At.IsZero() {
+			return true
+		}
+		return out[i].At.After(out[j].At)
+	})
+	if len(out) > 7 {
+		out = out[:7]
+	}
+	return out, nil
+}
+
+type instanceRunKey struct {
+	instanceID string
+	appID      int64
+	mode       string
+}
+
+func (s *Server) appsForInstances(ctx context.Context, insts []model.Instance, windows []model.SyncWindow) (map[string][]AppStatus, error) {
+	out := map[string][]AppStatus{}
+	if len(insts) == 0 {
+		return out, nil
+	}
+	ids := make([]string, 0, len(insts))
+	for _, inst := range insts {
+		ids = append(ids, inst.ID)
+	}
+	assignments, err := s.store.ListAssignmentsWithApplications(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	runs, err := s.store.ListLatestRuns(ctx, ids, []string{"check", "apply"})
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[instanceRunKey]model.Run, len(runs))
+	for _, run := range runs {
+		latest[instanceRunKey{instanceID: run.InstanceID, appID: run.AppID, mode: run.Mode}] = run
+	}
+	hosts := make(map[string]model.Instance, len(insts))
+	for _, inst := range insts {
+		hosts[inst.ID] = inst
+	}
+	now := time.Now()
+	for _, row := range assignments {
+		inst, ok := hosts[row.Assignment.InstanceID]
+		if !ok {
 			continue
 		}
+		a := row.Assignment
+		app := row.Application
 		as := AppStatus{
 			Application:    app,
 			AutoHeal:       effectiveAutoHeal(inst.AutoHeal, app, a),
@@ -323,21 +710,19 @@ func (s *Server) appsForInstance(ctx context.Context, inst model.Instance, windo
 			StuckAt:        a.StuckAt,
 			LastCheckAt:    a.LastCheckAt,
 			TargetRevision: a.TargetRevision,
-			Frozen:         syncwindows.Frozen(windows, app.ID, time.Now()),
+			Frozen:         syncwindows.Frozen(windows, app.ID, now),
 		}
 		if a.AutoHeal != nil {
 			as.AutoHealSet = true
 		}
-		check, err := s.store.LatestRun(ctx, inst.ID, a.AppID, "check")
-		if err == nil {
+		if check, ok := latest[instanceRunKey{instanceID: inst.ID, appID: a.AppID, mode: "check"}]; ok {
 			as.LatestCheck = check
 			as.HasCheck = true
 		}
-		apply, err := s.store.LatestRun(ctx, inst.ID, a.AppID, "apply")
-		if err == nil {
+		if apply, ok := latest[instanceRunKey{instanceID: inst.ID, appID: a.AppID, mode: "apply"}]; ok {
 			as.LatestApply = apply
 		}
-		out = append(out, as)
+		out[inst.ID] = append(out[inst.ID], as)
 	}
 	return out, nil
 }
@@ -500,10 +885,14 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	inst = s.decorateInstance(inst)
 	windows, _ := s.store.ListSyncWindows(r.Context())
-	as, err := s.appsForInstance(r.Context(), inst, windows)
+	apps, err := s.appsForInstances(r.Context(), []model.Instance{inst}, windows)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	as := apps[inst.ID]
+	if as == nil {
+		as = []AppStatus{}
 	}
 	writeJSON(w, http.StatusOK, InstanceWithApps{Instance: inst, Apps: as})
 }
@@ -822,12 +1211,33 @@ func (s *Server) handleListApplicationRuns(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// The history view only needs the revision metadata, not console output.
+	instanceIDs := make([]string, 0, len(runs))
+	seen := map[string]bool{}
 	for i := range runs {
 		runs[i].OutputTail = ""
 		runs[i].ChangedTasks = nil
 		runs[i].Summary = nil
+		if !seen[runs[i].InstanceID] {
+			seen[runs[i].InstanceID] = true
+			instanceIDs = append(instanceIDs, runs[i].InstanceID)
+		}
 	}
-	writePage(w, runs, total, limit, offset)
+	insts, err := s.store.InstancesByIDs(r.Context(), instanceIDs)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	names := make(map[string]string, len(insts))
+	for _, inst := range insts {
+		names[inst.ID] = inst.Name
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items         []model.Run       `json:"items"`
+		Total         int               `json:"total"`
+		Limit         int               `json:"limit"`
+		Offset        int               `json:"offset"`
+		InstanceNames map[string]string `json:"instance_names"`
+	}{Items: runs, Total: total, Limit: limit, Offset: offset, InstanceNames: names})
 }
 
 func (s *Server) frozen(ctx context.Context, appID int64) bool {
@@ -1404,10 +1814,11 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 
 // checkinPayload is what the agent sends on every poll.
 type checkinPayload struct {
-	InstanceID string `json:"instance_id"`
-	Version    string `json:"version"`
-	Hostname   string `json:"hostname"`
-	Platform   string `json:"platform"`
+	InstanceID string         `json:"instance_id"`
+	Version    string         `json:"version"`
+	Hostname   string         `json:"hostname"`
+	Platform   string         `json:"platform"`
+	HostInfo   model.HostInfo `json:"host_info"`
 	// PollInterval is the agent heartbeat period in seconds (0 for older
 	// agents that predate this field).
 	PollInterval int64 `json:"poll_interval"`
@@ -1428,11 +1839,23 @@ type checkinResponse struct {
 type heartbeatPayload struct {
 	// InstanceID is accepted (and ignored) because the agent reuses its
 	// checkin payload for the lightweight heartbeat.
-	InstanceID   string `json:"instance_id"`
-	Version      string `json:"version"`
-	Hostname     string `json:"hostname"`
-	Platform     string `json:"platform"`
-	PollInterval int64  `json:"poll_interval"`
+	InstanceID   string         `json:"instance_id"`
+	Version      string         `json:"version"`
+	Hostname     string         `json:"hostname"`
+	Platform     string         `json:"platform"`
+	HostInfo     model.HostInfo `json:"host_info"`
+	PollInterval int64          `json:"poll_interval"`
+}
+
+// saveHostInfo persists best-effort inventory without failing the liveness
+// request when the inventory write fails.
+func (s *Server) saveHostInfo(ctx context.Context, id string, info model.HostInfo) {
+	if info.Empty() {
+		return
+	}
+	if err := s.store.SetInstanceHostInfo(ctx, id, info); err != nil {
+		s.log.Warn("failed to save host info", "instance", id, "error", err)
+	}
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -1451,6 +1874,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	s.saveHostInfo(r.Context(), inst.ID, body.HostInfo)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -1480,6 +1904,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	s.saveHostInfo(r.Context(), inst.ID, body.HostInfo)
 
 	windows, _ := s.store.ListSyncWindows(r.Context())
 	metrics.Checkin(inst.ID)
@@ -1494,16 +1919,35 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		ScanInterval:  scanning.IntervalSeconds,
 		JitterPercent: scanning.JitterPercent,
 	}
-	ass, err := s.store.ListAssignments(r.Context(), inst.ID)
+	assignments, err := s.store.ListAssignmentsWithApplications(r.Context(), []string{inst.ID})
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	for _, a := range ass {
-		app, err := s.store.GetApplication(r.Context(), a.AppID)
-		if err != nil {
-			continue
-		}
+	appIDs := make([]int64, 0, len(assignments))
+	urls := make([]string, 0, len(assignments))
+	for _, row := range assignments {
+		appIDs = append(appIDs, row.Assignment.AppID)
+		urls = append(urls, row.Application.RepoURL)
+	}
+	repos, repoErr := s.store.RepositoriesByURLs(r.Context(), urls)
+	if repoErr != nil {
+		s.log.Warn("failed to load repositories for checkin", "instance", inst.ID, "error", repoErr)
+		repos = map[string]model.Repository{}
+	}
+	appVars, appVarsErr := s.store.ListAppVariablesForApps(r.Context(), appIDs)
+	if appVarsErr != nil {
+		s.log.Warn("failed to load app variables for checkin", "instance", inst.ID, "error", appVarsErr)
+		appVars = map[int64][]model.Variable{}
+	}
+	hostVars, hostVarsErr := s.store.ListAssignmentVariablesForApps(r.Context(), inst.ID, appIDs)
+	if hostVarsErr != nil {
+		s.log.Warn("failed to load host variables for checkin", "instance", inst.ID, "error", hostVarsErr)
+		hostVars = map[int64][]model.Variable{}
+	}
+	for _, row := range assignments {
+		a := row.Assignment
+		app := row.Application
 		app.AutoHeal = effectiveAutoHeal(inst.AutoHeal, app, a)
 		// Rollback/pinned revision wins over the application branch. The agent
 		// receives it as the target revision and tells a commit SHA from a
@@ -1522,11 +1966,11 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		}
 		// Resolve the git connection from the repositories registry so the
 		// agent can authenticate against private repos.
-		if repo, err := s.store.GetRepositoryByURL(r.Context(), app.RepoURL); err == nil {
+		if repo, ok := repos[app.RepoURL]; ok {
 			app.Connection = &repo
 		}
 		// Merge: legacy vars < app defaults < this host's overrides.
-		if merged, err := s.mergedVars(r.Context(), inst.ID, a.AppID, app.Vars); err == nil {
+		if merged, err := mergeVarsJSON(app.Vars, appVars[a.AppID], hostVars[a.AppID]); err == nil {
 			app.Vars = merged
 		}
 		resp.Applications = append(resp.Applications, app)
@@ -1750,9 +2194,17 @@ func (s *Server) refreshInstanceState(ctx context.Context, inst model.Instance) 
 	if len(ass) == 0 {
 		state = model.StateUnknown
 	}
+	runs, err := s.store.ListLatestRuns(ctx, []string{inst.ID}, []string{"check"})
+	if err != nil {
+		return err
+	}
+	latestByApp := make(map[int64]model.Run, len(runs))
+	for _, run := range runs {
+		latestByApp[run.AppID] = run
+	}
 	for _, a := range ass {
-		latest, err := s.store.LatestRun(ctx, inst.ID, a.AppID, "check")
-		if err != nil {
+		latest, ok := latestByApp[a.AppID]
+		if !ok {
 			continue
 		}
 		inst.LastCommit = latest.CommitAfter

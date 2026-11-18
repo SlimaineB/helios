@@ -10,54 +10,65 @@ import DiffModal from '../components/DiffModal.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
 import TagList from '../components/TagList.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
+import Pager from '../components/Pager.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 
-const FETCH_ALL = 500
-const MAX_INSTANCES = 10000
-
-async function fetchAllInstances() {
-  const all = []
-  let offset = 0
-  let total = Infinity
-  while (all.length < total && all.length < MAX_INSTANCES) {
-    const data = await api.instances(`?limit=${FETCH_ALL}&offset=${offset}`)
-    const items = Array.isArray(data.items) ? data.items : []
-    if (!items.length) break
-    all.push(...items)
-    total = Number.isFinite(Number(data.total)) ? Number(data.total) : all.length
-    offset += items.length
-  }
-  return all
-}
+const PAGE_SIZE = 50
 
 const fmt = (t) => (t ? new Date(t).toLocaleString() : '—')
 
 export default function Drift() {
   const { can } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [instances, setInstances] = useState(null)
+  const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [pageOff, setPageOff] = useState(0)
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [appFilter, setAppFilter] = useState(searchParams.get('app') || '')
   const [diffRun, setDiffRun] = useState(null)
   const [busy, setBusy] = useState({})
   const loadedRef = useRef(false)
+  const requestSeq = useRef(0)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  useEffect(() => {
+    setPageOff(0)
+  }, [search, projectFilter, appFilter])
 
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
+    const seq = ++requestSeq.current
     try {
-      setInstances(await fetchAllInstances())
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(pageOff), facets: '1' })
+      if (search) params.set('q', search)
+      if (projectFilter) params.set('project', projectFilter === '__global__' ? '__global__' : projectFilter)
+      if (appFilter) params.set('app_id', appFilter)
+      const next = await api.drift(`?${params}`)
+      if (seq !== requestSeq.current) return
+      const nextTotal = Number(next.total) || 0
+      if (!(next.items || []).length && pageOff > 0 && nextTotal > 0) {
+        setPageOff(Math.max(0, pageOff - PAGE_SIZE))
+        return
+      }
+      setData(next)
     } catch (e) {
-      if (!loadedRef.current) toast.error(e.message)
+      if (seq === requestSeq.current && !loadedRef.current) toast.error(e.message)
     } finally {
-      loadedRef.current = true
-      setLoading(false)
+      if (seq === requestSeq.current) {
+        loadedRef.current = true
+        setLoading(false)
+      }
     }
-  }, [])
+  }, [appFilter, pageOff, projectFilter, search])
 
   const commands = useCommandRunner(refresh)
   useEffect(() => { refresh() }, [refresh])
@@ -68,58 +79,26 @@ export default function Drift() {
   }, [searchParams])
 
   const rows = useMemo(() => {
-    const out = []
-    for (const inst of instances || []) {
-      for (const app of inst.apps || []) {
-        const status = app.latest_check?.status
-        if (status !== 'drift' && !app.stuck) continue
-        out.push({
-          inst,
-          app,
-          state: app.stuck ? 'stuck' : 'drift',
-          at: app.latest_check?.finished_at || app.last_check_at,
-        })
-      }
-    }
-    return out.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0))
-  }, [instances])
+    return (data?.items || []).map(({ instance, app }) => ({
+      inst: instance,
+      app,
+      state: app.stuck ? 'stuck' : 'drift',
+      at: app.latest_check?.finished_at || app.last_check_at,
+    }))
+  }, [data])
 
-  const projectOptions = useMemo(() => {
-    const set = new Set()
-    for (const row of rows) set.add(row.inst.project || '')
-    return [...set].sort()
-  }, [rows])
-
-  const appOptions = useMemo(() => {
-    const map = new Map()
-    for (const row of rows) map.set(row.app.application.id, row.app.application.name)
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [rows])
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return rows.filter(({ inst, app }) => {
-      if (projectFilter) {
-        const p = inst.project || ''
-        if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
-      }
-      if (appFilter && String(app.application.id) !== appFilter) return false
-      if (q && ![inst.name, inst.id, inst.region, inst.project, ...(inst.tags || []), app.application.name].filter(Boolean).join(' ').toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [rows, search, projectFilter, appFilter])
-
-  const stats = useMemo(() => {
-    const inst = new Set()
-    const apps = new Set()
-    let autoheal = 0
-    for (const { inst: i, app } of rows) {
-      inst.add(i.id)
-      apps.add(app.application.id)
-      if (app.autoheal) autoheal++
-    }
-    return { assignments: rows.length, instances: inst.size, apps: apps.size, autoheal }
-  }, [rows])
+  const total = Number(data?.total) || 0
+  const projectOptions = useMemo(() => data?.facets?.projects || [], [data])
+  const appOptions = useMemo(
+    () => [...(data?.facets?.apps || [])].sort((a, b) => a.name.localeCompare(b.name)),
+    [data],
+  )
+  const stats = {
+    assignments: data?.stats?.total || 0,
+    instances: data?.stats?.instances || 0,
+    apps: data?.stats?.apps || 0,
+    autoheal: data?.stats?.autoheal || 0,
+  }
 
   const setParam = (key, value) => {
     const next = new URLSearchParams(searchParams)
@@ -142,7 +121,7 @@ export default function Drift() {
     }
   }
 
-  if (loading && !instances) {
+  if (loading && !data) {
     return (
       <section>
         <h1>Drift</h1>
@@ -179,8 +158,8 @@ export default function Drift() {
           type="search"
           className="filter-search"
           placeholder="Search instance, region or application…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
         />
         <select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setParam('project', e.target.value) }} aria-label="Project">
           <option value="">All projects</option>
@@ -189,16 +168,16 @@ export default function Drift() {
         </select>
         <select value={appFilter} onChange={(e) => { setAppFilter(e.target.value); setParam('app', e.target.value) }} aria-label="Application">
           <option value="">All applications</option>
-          {appOptions.map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
+          {appOptions.map((app) => <option key={app.id} value={String(app.id)}>{app.name}</option>)}
         </select>
-        {(search || projectFilter || appFilter) && (
-          <button type="button" className="ghost small" onClick={() => { setSearch(''); setProjectFilter(''); setAppFilter(''); setSearchParams({}, { replace: true }) }}>Clear</button>
+        {(searchInput || projectFilter || appFilter) && (
+          <button type="button" className="ghost small" onClick={() => { setSearchInput(''); setProjectFilter(''); setAppFilter(''); setSearchParams({}, { replace: true }) }}>Clear</button>
         )}
       </div>
 
-      {filtered.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="empty">
-          <p className="muted"><CircleCheck size={16} /> {rows.length ? 'No drift matches these filters.' : 'No drift detected. Every assignment matches its desired revision.'}</p>
+          <p className="muted"><CircleCheck size={16} /> {total || search || projectFilter || appFilter ? 'No drift matches these filters.' : 'No drift detected. Every assignment matches its desired revision.'}</p>
         </div>
       ) : (
         <div className="table-wrap">
@@ -215,7 +194,7 @@ export default function Drift() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(({ inst, app, state, at }) => {
+              {rows.map(({ inst, app, state, at }) => {
                 const key = `${inst.id}:${app.application.id}`
                 const pending = commands.pending[key]
                 const ah = appAutoHealMeta(inst, app)
@@ -327,6 +306,7 @@ export default function Drift() {
         </div>
       )}
 
+      <Pager total={total} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
     </section>
   )

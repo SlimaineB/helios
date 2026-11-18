@@ -14,6 +14,7 @@ import (
 
 	"github.com/slim/helios/agent/internal/client"
 	"github.com/slim/helios/agent/internal/config"
+	"github.com/slim/helios/agent/internal/hostinfo"
 )
 
 const (
@@ -36,6 +37,7 @@ type Manager struct {
 	version     string
 	hostname    string
 	platform    string
+	hostInfo    client.HostInfo
 	sshBin      string
 	connectWait time.Duration
 	backoffMin  time.Duration
@@ -58,6 +60,7 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger, version string) 
 		version:     version,
 		hostname:    host,
 		platform:    platform,
+		hostInfo:    hostinfo.Collect(cfg.AnsibleBin),
 		sshBin:      "ssh",
 		connectWait: defaultConnectGrace,
 		backoffMin:  defaultBackoffMin,
@@ -198,6 +201,7 @@ func (m *Manager) report(ctx context.Context, connected bool, cause error) {
 		Hostname:  m.hostname,
 		Platform:  m.platform,
 		Version:   m.version,
+		HostInfo:  m.hostInfo,
 	}
 	if cause != nil {
 		h.Error = cause.Error()

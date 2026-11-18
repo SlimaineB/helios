@@ -56,12 +56,31 @@ create system users, install packages, or write outside the agent state
 dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
-**Outbound-only servers?** Register the instance as *Tunnel · reverse SSH
-tunnel* instead. The host opens a reverse SSH tunnel to a bastion where a Helios
-runner executes Ansible. A lightweight tunnel agent can keep the tunnel open
-without installing Ansible, or you can run `ssh` manually. The UI shows the
-mode, filters instances by mode, and marks bastion-backed nodes in the topology.
-See
+### Outbound-only servers: tunnel mode and the bastion runner
+
+Register the instance as *Tunnel · reverse SSH tunnel* instead. The managed host
+opens a reverse SSH tunnel to a bastion, and **`helios-runner` on that bastion is
+the only process that runs Ansible**:
+
+```text
+hub  ──HTTPS poll/results──▶  helios-runner (bastion)  ──ssh 127.0.0.1:<port>──▶  reverse tunnel  ──▶  host sshd:22
+```
+
+- The **managed host** needs `sshd`, `python3` and outbound SSH. It does not
+  need `ansible-core`. A lightweight tunnel agent
+  (`helios-agent --mode tunnel`) can keep the tunnel open and report health, or
+  you can run `ssh -R` manually.
+- The **bastion runner** needs `git`, `ansible-core`, `ansible.posix` and an SSH
+  key for the managed-host account. It discovers tunnel instances from the hub
+  and launches `ansible-playbook --connection ssh` against
+  `127.0.0.1:<port>`.
+- The hub needs `HELIOS_RUNNER_TOKEN` and `HELIOS_TUNNEL_GATEWAY`. The UI shows
+  the mode, filters by mode, and the topology inserts a dedicated
+  **helios-runner** node between the hub and each tunnel host.
+
+See the complete walkthrough:
+[Tunnel mode example](deploy/examples/runner-tunnel/README.md), or the
+reference section in
 [Tunnel mode](docs/INSTALL.md#tunnel-mode--reverse-ssh).
 
 **Large fleet?** Enable the hub's [repo snapshot cache](docs/INSTALL.md#repo-snapshot-cache)

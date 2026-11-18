@@ -468,6 +468,15 @@ needs `python3` for Ansible modules, and `sshd` on port 22; install
 
 Traffic path: `runner (bastion) → ssh → 127.0.0.1:<port> (tunnel) → sshd on managed host`.
 
+There are **two separate SSH identities** in this setup:
+
+| Direction | Account on | Key | Purpose |
+|-----------|------------|-----|---------|
+| Managed host → bastion | `helios-tunnel` (bastion) | `tunnel_id` on the host | Opens the reverse tunnel; the key is restricted to one `permitlisten` port. |
+| Runner → managed host | `HELIOS_RUNNER_SSH_USER` (managed host) | `runner_id` on the bastion | Ansible's SSH connection through the tunnel; the account needs `python3` and any sudo rights the playbook requires. |
+
+Do not reuse the tunnel key as the runner key.
+
 ```text
 ┌────────────────────┐   HTTPS poll / results   ┌──────────────────────┐
 │ Helios hub         │ ◀──────────────────────▶ │ Bastion              │
@@ -487,8 +496,9 @@ Traffic path: `runner (bastion) → ssh → 127.0.0.1:<port> (tunnel) → sshd o
 ```
 
 The UI shows the mode on every instance (`agent` or `tunnel`), provides a
-**Mode** filter on the Instances page, and marks bastion-backed nodes in the
-**Topology** view available from both Applications and Instances. The instance
+**Mode** filter on the Instances page, and inserts an explicit
+**helios-runner** node in the **Topology** view: `hub → runner → tunnel host →
+applications`. Normal agents keep the direct `hub → agent` edge. The instance
 detail page renders the same path and shows the bastion gateway, tunnel port
 and last tunnel activity.
 
@@ -543,9 +553,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now helios-runner
 ```
 
-The runner discovers tunnel instances from the hub and starts one agent loop
-per instance. It only marks an instance online when the loopback port accepts a
-TCP connection.
+`HELIOS_RUNNER_SSH_USER` is the account on the **managed host**, not the
+bastion `helios-tunnel` account. The runner discovers tunnel instances from the
+hub and starts one agent loop per instance. It only marks an instance online
+when the loopback port accepts a TCP connection.
+
+A complete walkthrough lives in `deploy/examples/runner-tunnel/` (runner env,
+`sshd`/`authorized_keys` snippets, systemd unit and a `hostNetwork` Kubernetes
+manifest). The runner is the only Ansible executor for tunnel instances.
 
 ### 3. Register the instance and open the tunnel
 

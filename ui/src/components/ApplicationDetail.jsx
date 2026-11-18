@@ -34,6 +34,9 @@ export default function ApplicationDetail({
   stats,
   repo,
   instances,
+  instancesTotal = 0,
+  availableInstances,
+  availableTotal = 0,
   can,
   onClose,
   onEdit,
@@ -90,10 +93,7 @@ export default function ApplicationDetail({
     }))
     .filter(({ assignment }) => !!assignment)
 
-  const assignedIds = new Set(assigned.map(({ inst }) => inst.id))
-  const available = (instances || []).filter((inst) =>
-    (inst.project || '') === (app.project || '') && !assignedIds.has(inst.id)
-  )
+  const available = availableInstances || []
 
   const assign = async () => {
     const inst = available.find((i) => i.id === assignTo)
@@ -220,7 +220,10 @@ export default function ApplicationDetail({
               </button>
             </>
           ) : (
-            <span className="muted">No unassigned instance in this project.</span>
+            <span className="muted">No instance available in this project.</span>
+          )}
+          {availableTotal > available.length && (
+            <span className="muted">Showing the first {available.length} of {availableTotal} choices.</span>
           )}
         </div>
       )}
@@ -281,6 +284,11 @@ export default function ApplicationDetail({
               })}
             </tbody>
           </table>
+          {instancesTotal > assigned.length && (
+            <p className="muted">
+              Showing {assigned.length} of {instancesTotal} assigned instances. Open the Instances view to page through all of them.
+            </p>
+          )}
         </div>
       )}
     </Modal>

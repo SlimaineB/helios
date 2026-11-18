@@ -250,6 +250,12 @@ export default function InstanceDetail() {
         <div><b>Tags</b> {inst.tags?.length ? <TagList tags={inst.tags} /> : '—'}</div>
         <div><b>Platform</b> {inst.platform || '—'}</div>
         <div><b>Version</b> {inst.version || '—'}</div>
+        {inst.host_info?.os && <div><b>OS</b> {inst.host_info.os}</div>}
+        {inst.host_info?.arch && <div><b>Arch</b> {inst.host_info.arch}</div>}
+        {inst.host_info?.cpu_count > 0 && <div><b>CPU</b> {inst.host_info.cpu_count} vCPU</div>}
+        {inst.host_info?.memory_mb > 0 && <div><b>Memory</b> {inst.host_info.memory_mb} MB</div>}
+        {inst.host_info?.python && <div><b>Python</b> {inst.host_info.python}</div>}
+        {inst.host_info?.ansible && <div><b>Ansible</b> {inst.host_info.ansible}</div>}
         <div><b>Mode</b> {isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div>
         {isTunnel && <div><b>Bastion</b> <span className="mono">{inst.tunnel_gateway || '—'}</span></div>}
         {isTunnel && <div><b>Tunnel port</b> <span className="mono">{inst.tunnel_port || '—'}</span></div>}

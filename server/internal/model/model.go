@@ -76,8 +76,27 @@ type Instance struct {
 	LastTunnelAt time.Time `json:"last_tunnel_at,omitempty"`
 	// TunnelGateway is the SSH destination shown in the bootstrap command. It
 	// is derived from server configuration and never persisted.
-	TunnelGateway string    `json:"tunnel_gateway,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	TunnelGateway string `json:"tunnel_gateway,omitempty"`
+	// HostInfo is the last basic host inventory reported by the agent. It is
+	// best-effort (missing values are omitted) and stored as JSON.
+	HostInfo  HostInfo  `json:"host_info,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// HostInfo is the small, non-sensitive inventory an agent reports about its
+// host. It is intentionally flat so the UI can render it without a join.
+type HostInfo struct {
+	CPUCount int    `json:"cpu_count,omitempty"`
+	MemoryMB int    `json:"memory_mb,omitempty"`
+	Arch     string `json:"arch,omitempty"`
+	OS       string `json:"os,omitempty"`
+	Python   string `json:"python,omitempty"`
+	Ansible  string `json:"ansible,omitempty"`
+}
+
+// Empty reports whether no inventory has been collected yet.
+func (h HostInfo) Empty() bool {
+	return h == HostInfo{}
 }
 
 type Application struct {
@@ -202,6 +221,131 @@ type RunFilter struct {
 	Mode       string
 	Limit      int
 	Offset     int
+}
+
+type InstanceListFilter struct {
+	AllProjects    bool
+	Projects       []string
+	Query          string
+	Project        string
+	HasProject     bool
+	Tag            string
+	AppID          int64
+	AppIDs         []int64
+	NotAppID       int64
+	RepoURL        string
+	UnassignedOnly bool
+	Mode           string
+	State          string
+	OnlineOnly     bool
+	StuckOnly      bool
+	RecentFirst    bool
+	Limit          int
+	Offset         int
+	Now            time.Time
+}
+
+type AppRef struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type InstanceFacets struct {
+	Projects []string `json:"projects"`
+	Tags     []string `json:"tags"`
+	Apps     []AppRef `json:"apps"`
+}
+
+type InstanceListStats struct {
+	Total   int `json:"total"`
+	Online  int `json:"online"`
+	Offline int `json:"offline"`
+	Tunnel  int `json:"tunnel"`
+	Apps    int `json:"apps"`
+	Synced  int `json:"synced"`
+	Drift   int `json:"drift"`
+	Failed  int `json:"failed"`
+	Unknown int `json:"unknown"`
+}
+
+// ApplicationStats is one row of the applications dashboard aggregate.
+type ApplicationStats struct {
+	ID          int64     `json:"id"`
+	Instances   int       `json:"instances"`
+	Synced      int       `json:"synced"`
+	Unknown     int       `json:"unknown"`
+	Drift       int       `json:"drift"`
+	Error       int       `json:"error"`
+	Stuck       int       `json:"stuck"`
+	AutoHeal    int       `json:"autoheal"`
+	Revision    string    `json:"revision"`
+	RevisionMsg string    `json:"revision_msg"`
+	RevisionAt  time.Time `json:"revision_at"`
+	LastAt      time.Time `json:"last_at"`
+}
+
+// AssignmentFilter selects drifting/stuck assignments for the drift page.
+type AssignmentFilter struct {
+	AllProjects bool
+	Projects    []string
+	Query       string
+	Project     string
+	HasProject  bool
+	AppID       int64
+	Limit       int
+	Offset      int
+}
+
+// AssignmentKey identifies one assignment row before batch hydration.
+type AssignmentKey struct {
+	InstanceID string    `json:"instance_id"`
+	AppID      int64     `json:"app_id"`
+	At         time.Time `json:"at"`
+}
+
+type AssignmentStats struct {
+	Total     int `json:"total"`
+	Instances int `json:"instances"`
+	Apps      int `json:"apps"`
+	AutoHeal  int `json:"autoheal"`
+}
+
+type AssignmentFacets struct {
+	Projects []string `json:"projects"`
+	Apps     []AppRef `json:"apps"`
+}
+
+// VersionCount is one agent-version bucket used by the overview.
+type VersionCount struct {
+	Version string `json:"version"`
+	Count   int    `json:"count"`
+}
+
+// OverviewStats aggregates the whole visible fleet in one response so the
+// dashboard never needs to page through every instance.
+type OverviewStats struct {
+	InstanceListStats
+	HostOK      int            `json:"host_ok"`
+	HostDrift   int            `json:"host_drift"`
+	HostError   int            `json:"host_error"`
+	HostUnknown int            `json:"host_unknown"`
+	HostOffline int            `json:"host_offline"`
+	Versions    []VersionCount `json:"versions"`
+}
+
+// OverviewRecent is the latest activity shown on the overview dashboard.
+type OverviewRecent struct {
+	Instance    Instance `json:"instance"`
+	Application AppRef   `json:"application"`
+	Run         Run      `json:"run"`
+}
+
+// AttentionItem is one offline host or one assignment that needs an operator.
+type AttentionItem struct {
+	Kind        string    `json:"kind"`
+	Instance    Instance  `json:"instance"`
+	Application *AppRef   `json:"application,omitempty"`
+	At          time.Time `json:"at"`
 }
 
 // Project groups applications and instances and optionally restricts the git

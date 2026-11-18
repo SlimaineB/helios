@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helios-runner
+  namespace: helios
+  labels:
+    app.kubernetes.io/name: helios-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helios-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helios-runner
+    spec:
+      # The reverse tunnel listens on the bastion node's loopback. The runner
+      # must share that network namespace to reach 127.0.0.1:<port>.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: bastion-1
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: runner
+          image: registry.example.com/helios/runner:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HELIOS_SERVER
+              value: http://helios-server-helios-server:80
+            - name: HELIOS_RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: helios-runner
+                  key: runner-token
+            - name: HELIOS_RUNNER_SSH_USER
+              value: root
+            - name: HELIOS_RUNNER_SSH_KEY
+              value: /etc/helios/runner_id
+            - name: HELIOS_RUNNER_SSH_COMMON_ARGS
+              value: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/var/lib/helios/runner/known_hosts
+            - name: HELIOS_RUNNER_STATE_DIR
+              value: /var/lib/helios/runner
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: ssh
+              mountPath: /etc/helios
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/helios/runner
+      volumes:
+        - name: ssh
+          secret:
+            secretName: helios-runner
+            defaultMode: 0440
+        - name: state
+          emptyDir: {}
