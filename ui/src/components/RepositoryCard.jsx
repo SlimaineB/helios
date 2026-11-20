@@ -23,7 +23,11 @@ export default function RepositoryCard({ repo, onEdit, onDelete }) {
           <div className="detail">
             <label>Auth</label>
             <span className="value">
-              {repo.ssh_key ? 'SSH key' : repo.username ? `${repo.username} / token` : <span className="muted">none</span>}
+              {repo.ssh_key_set
+                ? 'SSH key'
+                : repo.password_set
+                  ? `${repo.username || 'token'} / token`
+                  : repo.username || <span className="muted">none</span>}
             </span>
           </div>
           <div className="detail">

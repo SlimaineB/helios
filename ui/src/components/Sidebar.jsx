@@ -1,10 +1,8 @@
 import { useState, createContext, useContext, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import HeliosMark from './HeliosMark.jsx'
-import {
-  Server, Database, GitBranch, Layers, Clock,
-  ChevronLeft, ChevronRight, FileText, RefreshCw, Globe2, Gauge, Settings as SettingsIcon, TriangleAlert
-} from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { NAV_GROUPS } from '../nav.js'
 
 const SidebarContext = createContext(null)
 export const useSidebar = () => useContext(SidebarContext)
@@ -25,20 +23,6 @@ export function SidebarProvider({ children }) {
     </SidebarContext.Provider>
   )
 }
-
-const NAV_ITEMS = [
-  { path: '/', label: 'Overview', icon: Gauge, perm: 'instances.get' },
-  { path: '/applications', label: 'Applications', icon: Database, perm: 'applications.get' },
-  { path: '/instances', label: 'Instances', icon: Server, perm: 'instances.get' },
-  { path: '/drift', label: 'Drift', icon: TriangleAlert, perm: 'instances.get' },
-  { path: '/map', label: 'World map', icon: Globe2, perm: 'instances.get' },
-  { path: '/projects', label: 'Projects', icon: Layers, perm: 'projects.get' },
-  { path: '/sync-windows', label: 'Sync windows', icon: Clock, perm: 'windows.get' },
-  { path: '/repositories', label: 'Repositories', icon: GitBranch, perm: 'repositories.get' },
-  { path: '/gitops', label: 'GitOps', icon: RefreshCw, perm: 'configrepos.get' },
-  { path: '/audit', label: 'Audit log', icon: FileText, perm: 'audit.get' },
-  { path: '/settings', label: 'Settings', icon: SettingsIcon, perm: 'settings.get' },
-]
 
 export default function Sidebar({ can }) {
   const { collapsed, setCollapsed, mobileOpen, setMobileOpen } = useSidebar()
@@ -79,31 +63,39 @@ export default function Sidebar({ can }) {
           )}
         </div>
         <nav className="sidebar-nav">
-          <ul role="list">
-            {NAV_ITEMS.map((item) => {
-              if (item.perm) {
-                const [resource, action] = item.perm.split('.')
-                if (!can(resource, action)) return null
-              }
-              const active = item.path === '/'
-                ? location.pathname === '/'
-                : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
-              return (
-                <li key={item.path}>
-                  <NavLink
-                    to={item.path}
-                    className={`nav-item ${active ? 'active' : ''}`}
-                    title={collapsed ? item.label : undefined}
-                    aria-current={active ? 'page' : undefined}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    <item.icon className="nav-icon" size={18} aria-hidden="true" />
-                    {!collapsed && <span className="nav-label">{item.label}</span>}
-                  </NavLink>
-                </li>
-              )
-            })}
-          </ul>
+          {NAV_GROUPS.map((group) => {
+            const items = group.items.filter((item) => {
+              const [resource, action] = item.perm.split('.')
+              return can(resource, action)
+            })
+            if (!items.length) return null
+            return (
+              <div className="nav-group" key={group.id}>
+                {!collapsed && <div className="nav-group-label">{group.label}</div>}
+                <ul role="list">
+                  {items.map((item) => {
+                    const active = item.path === '/'
+                      ? location.pathname === '/'
+                      : location.pathname === item.path || location.pathname.startsWith(item.path + '/')
+                    return (
+                      <li key={item.path}>
+                        <NavLink
+                          to={item.path}
+                          className={`nav-item ${active ? 'active' : ''}`}
+                          title={collapsed ? item.label : undefined}
+                          aria-current={active ? 'page' : undefined}
+                          onClick={() => setMobileOpen(false)}
+                        >
+                          <item.icon className="nav-icon" size={18} aria-hidden="true" />
+                          {!collapsed && <span className="nav-label">{item.label}</span>}
+                        </NavLink>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )
+          })}
         </nav>
       </aside>
       {mobileOpen && <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} aria-hidden="true" />}

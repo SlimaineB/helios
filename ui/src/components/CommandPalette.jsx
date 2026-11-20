@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useDialog } from '../hooks/useDialog.js'
+import { NAV_ITEMS } from '../nav.js'
 
 const SHORTCUTS = [
   { keys: '⌘K', label: 'Command palette' },
@@ -7,17 +8,6 @@ const SHORTCUTS = [
   { keys: 'Enter', label: 'Confirm action' },
 ]
 
-const NAV = [
-  { id: 'overview', label: 'Overview', path: '/', perm: 'instances.get' },
-  { id: 'applications', label: 'Applications', path: '/applications', perm: 'applications.get' },
-  { id: 'instances', label: 'Instances', path: '/instances', perm: 'instances.get' },
-  { id: 'projects', label: 'Projects', path: '/projects', perm: 'projects.get' },
-  { id: 'sync-windows', label: 'Sync windows', path: '/sync-windows', perm: 'windows.get' },
-  { id: 'repositories', label: 'Repositories', path: '/repositories', perm: 'repositories.get' },
-  { id: 'gitops', label: 'GitOps', path: '/gitops', perm: 'configrepos.get' },
-  { id: 'audit', label: 'Audit log', path: '/audit', perm: 'audit.get' },
-  { id: 'settings', label: 'Settings', path: '/settings', perm: 'settings.get' },
-]
 
 export default function CommandPalette({ open, onClose, can, navigate }) {
   const [query, setQuery] = useState('')
@@ -28,9 +18,10 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim()
     const res = []
-    NAV.forEach((n) => {
+    NAV_ITEMS.forEach((n) => {
       if (!n.perm || can(n.perm.split('.')[0], n.perm.split('.')[1])) {
-        if (!q || n.label.toLowerCase().includes(q)) res.push({ type: 'nav', ...n })
+        const hay = `${n.group} ${n.label}`.toLowerCase()
+        if (!q || hay.includes(q)) res.push({ type: 'nav', ...n })
       }
     })
     SHORTCUTS.forEach((s) => {

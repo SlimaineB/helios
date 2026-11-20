@@ -137,6 +137,16 @@ a:hover { color: var(--accent-hover); }
 
 .sidebar-nav { flex: 1; overflow: auto; padding: .6rem .5rem; }
 .sidebar-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.nav-group + .nav-group { margin-top: .65rem; padding-top: .6rem; border-top: 1px solid var(--border-soft); }
+.nav-group-label {
+  padding: .2rem .7rem .35rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+.sidebar.collapsed .nav-group + .nav-group { margin-top: .35rem; padding-top: .35rem; }
 
 .nav-item {
   display: flex;
