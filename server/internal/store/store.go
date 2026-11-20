@@ -89,19 +89,20 @@ type Store interface {
 
 	// Repositories (git connections registry)
 	ListRepositories(ctx context.Context) ([]model.Repository, error)
-	RepositoriesByURLs(ctx context.Context, urls []string) (map[string]model.Repository, error)
+	RepositoriesByProjectURLs(ctx context.Context, project string, urls []string) (map[string]model.Repository, error)
 	GetRepository(ctx context.Context, id int64) (model.Repository, error)
-	GetRepositoryByURL(ctx context.Context, url string) (model.Repository, error)
+	GetRepositoryByProjectURL(ctx context.Context, project, url string) (model.Repository, error)
 	CreateRepository(ctx context.Context, in model.Repository) (model.Repository, error)
 	UpdateRepository(ctx context.Context, in model.Repository) error
 	DeleteRepository(ctx context.Context, id int64) error
-	// CountApplicationsByRepoURL returns how many applications reference a
-	// repository URL, used to prevent deleting repositories still in use.
-	CountApplicationsByRepoURL(ctx context.Context, url string) (int, error)
-	// EnsureRepositoryByURL guarantees a registry row exists for url,
-	// creating a placeholder (name = url) when missing — ArgoCD-style, an
-	// application's repoURL always resolves in the registry.
-	EnsureRepositoryByURL(ctx context.Context, url string) (model.Repository, error)
+	// CountApplicationsByProjectRepoURL returns how many applications in a
+	// project reference a repository URL, used to prevent deleting
+	// repositories still in use.
+	CountApplicationsByProjectRepoURL(ctx context.Context, project, url string) (int, error)
+	// EnsureRepositoryByProjectURL guarantees a registry row exists for url in
+	// project, creating a placeholder (name = url) when missing — ArgoCD-style,
+	// an application's repoURL always resolves in its tenant registry.
+	EnsureRepositoryByProjectURL(ctx context.Context, project, url string) (model.Repository, error)
 	// BackfillRepositoryRegistry is a one-shot migration: it registers every
 	// repo_url already used by applications but absent from the registry.
 	BackfillRepositoryRegistry(ctx context.Context) error

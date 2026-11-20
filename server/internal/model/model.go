@@ -136,9 +136,11 @@ type Variable struct {
 // checkin. Password and SSHKey are kept server-side and never surfaced by
 // the operator API.
 type Repository struct {
-	ID                 int64     `json:"id"`
-	Name               string    `json:"name"`
-	URL                string    `json:"url"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Project owns this repository. Empty means the global/default project.
+	Project            string    `json:"project"`
 	Username           string    `json:"username,omitempty"`
 	Password           string    `json:"password,omitempty"`
 	SSHKey             string    `json:"ssh_key,omitempty"`

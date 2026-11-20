@@ -1269,13 +1269,31 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 // ---- sync windows (operator) ----
 
 func (s *Server) handleListSyncWindows(w http.ResponseWriter, r *http.Request) {
-	if !s.requireGlobal(w, r, "windows.get") {
-		return
-	}
+	all, scopes := s.visibleProjects(r, "windows", "get")
 	out, err := s.store.ListSyncWindows(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	if !all {
+		apps, err := s.store.ListApplicationsScoped(r.Context(), scopes)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		visibleApps := make(map[int64]bool, len(apps))
+		for _, app := range apps {
+			visibleApps[app.ID] = true
+		}
+		filtered := out[:0]
+		for _, w := range out {
+			// Global windows (app_id=0) affect every project and are safe to
+			// expose; app-specific windows only when their app is visible.
+			if w.AppID == 0 || visibleApps[w.AppID] {
+				filtered = append(filtered, w)
+			}
+		}
+		out = filtered
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1461,7 +1479,7 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Ensure the repo is registered (ArgoCD-style: app → registry upsert).
-	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
+	if _, err := s.store.EnsureRepositoryByProjectURL(r.Context(), in.Project, in.RepoURL); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -1557,7 +1575,7 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		in.Vars = "{}"
 	}
 	// Keep the registry in sync with the (possibly re-pointed) repo URL.
-	if _, err := s.store.EnsureRepositoryByURL(r.Context(), in.RepoURL); err != nil {
+	if _, err := s.store.EnsureRepositoryByProjectURL(r.Context(), in.Project, in.RepoURL); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -1662,6 +1680,7 @@ type repoView struct {
 	ID                 int64     `json:"id"`
 	Name               string    `json:"name"`
 	URL                string    `json:"url"`
+	Project            string    `json:"project"`
 	Username           string    `json:"username"`
 	PasswordSet        bool      `json:"password_set"`
 	SSHKeySet          bool      `json:"ssh_key_set"`
@@ -1674,6 +1693,7 @@ func toRepoView(r model.Repository) repoView {
 		ID:                 r.ID,
 		Name:               r.Name,
 		URL:                r.URL,
+		Project:            r.Project,
 		Username:           r.Username,
 		PasswordSet:        r.Password != "",
 		SSHKeySet:          r.SSHKey != "",
@@ -1683,13 +1703,24 @@ func toRepoView(r model.Repository) repoView {
 }
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
-	if !s.requireGlobal(w, r, "repositories.get") {
-		return
-	}
+	all, scopes := s.visibleProjects(r, "repositories", "get")
 	repos, err := s.store.ListRepositories(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	if !all {
+		visible := make(map[string]bool, len(scopes))
+		for _, scope := range scopes {
+			visible[scope] = true
+		}
+		filtered := repos[:0]
+		for _, repo := range repos {
+			if visible[repo.Project] {
+				filtered = append(filtered, repo)
+			}
+		}
+		repos = filtered
 	}
 	out := make([]repoView, 0, len(repos))
 	for _, repo := range repos {
@@ -1699,9 +1730,6 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) {
-	if !s.requireGlobal(w, r, "repositories.create") {
-		return
-	}
 	var in model.Repository
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -1711,13 +1739,24 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "url is required")
 		return
 	}
+	in.Project = strings.TrimSpace(in.Project)
+	if !s.requireObject(w, r, "repositories.create", in.Project) {
+		return
+	}
+	if msg, err := s.validateAppProject(r.Context(), in.Project, in.URL); err != nil {
+		s.internalError(w, r, err)
+		return
+	} else if msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
 	if in.Name == "" {
 		in.Name = in.URL
 	}
 	repo, err := s.store.CreateRepository(r.Context(), in)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) || strings.Contains(err.Error(), "UNIQUE") {
-			writeErr(w, http.StatusConflict, "repository url already exists")
+			writeErr(w, http.StatusConflict, "repository url already exists in this project")
 			return
 		}
 		s.internalError(w, r, err)
@@ -1727,9 +1766,6 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) {
-	if !s.requireGlobal(w, r, "repositories.update") {
-		return
-	}
 	id, ok := repoIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "missing repo id")
@@ -1740,12 +1776,32 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusNotFound, "repository not found")
 		return
 	}
+	if !s.requireObject(w, r, "repositories.update", old.Project) {
+		return
+	}
+	raw, err := readRawJSON(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
 	var in model.Repository
-	if err := readJSON(r, &in); err != nil {
+	if err := decodeJSON(raw, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
 	in.ID = old.ID
+	if _, ok := present["project"]; !ok {
+		in.Project = old.Project
+	}
+	in.Project = strings.TrimSpace(in.Project)
+	if in.Project != old.Project && !s.requireObject(w, r, "repositories.update", in.Project) {
+		return
+	}
 	if in.URL == "" {
 		in.URL = old.URL
 	}
@@ -1762,10 +1818,34 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 	if in.SSHKey == "" {
 		in.SSHKey = old.SSHKey
 	}
+	if _, ok := present["insecure_skip_verify"]; !ok {
+		in.InsecureSkipVerify = old.InsecureSkipVerify
+	}
 	in.CreatedAt = old.CreatedAt
+
+	if in.Project != old.Project || in.URL != old.URL {
+		apps, err := s.store.CountApplicationsByProjectRepoURL(r.Context(), old.Project, old.URL)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if apps > 0 {
+			writeErr(w, http.StatusConflict, fmt.Sprintf(
+				"repository is still used by %d application(s); cannot change its project or URL",
+				apps))
+			return
+		}
+	}
+	if msg, err := s.validateAppProject(r.Context(), in.Project, in.URL); err != nil {
+		s.internalError(w, r, err)
+		return
+	} else if msg != "" {
+		writeErr(w, http.StatusBadRequest, msg)
+		return
+	}
 	if err := s.store.UpdateRepository(r.Context(), in); err != nil {
 		if errors.Is(err, store.ErrConflict) || strings.Contains(err.Error(), "UNIQUE") {
-			writeErr(w, http.StatusConflict, "repository url already exists")
+			writeErr(w, http.StatusConflict, "repository url already exists in this project")
 			return
 		}
 		s.internalError(w, r, err)
@@ -1775,9 +1855,6 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) {
-	if !s.requireGlobal(w, r, "repositories.delete") {
-		return
-	}
 	id, ok := repoIDParam(r)
 	if !ok {
 		writeErr(w, http.StatusBadRequest, "missing repo id")
@@ -1792,7 +1869,10 @@ func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, err)
 		return
 	}
-	apps, err := s.store.CountApplicationsByRepoURL(r.Context(), repo.URL)
+	if !s.requireObject(w, r, "repositories.delete", repo.Project) {
+		return
+	}
+	apps, err := s.store.CountApplicationsByProjectRepoURL(r.Context(), repo.Project, repo.URL)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -1930,7 +2010,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		appIDs = append(appIDs, row.Assignment.AppID)
 		urls = append(urls, row.Application.RepoURL)
 	}
-	repos, repoErr := s.store.RepositoriesByURLs(r.Context(), urls)
+	repos, repoErr := s.store.RepositoriesByProjectURLs(r.Context(), inst.Project, urls)
 	if repoErr != nil {
 		s.log.Warn("failed to load repositories for checkin", "instance", inst.ID, "error", repoErr)
 		repos = map[string]model.Repository{}

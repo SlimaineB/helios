@@ -142,7 +142,20 @@ export default function Applications() {
     }
   }
 
-  const matchRepo = (url) => repos.find((r) => r.url === url)
+  const matchRepo = (url, project) => repos.find((r) => r.url === url && (r.project || '') === (project || ''))
+    || repos.find((r) => r.url === url)
+
+  const projectRepos = useMemo(() => {
+    const project = projectForApi(form.project)
+    return repos.filter((r) => (r.project || '') === project)
+  }, [repos, form.project])
+
+  const changeProject = (project) => {
+    setForm((p) => ({ ...p, project }))
+    const first = repos.find((r) => (r.project || '') === projectForApi(project))
+    setRepoId(first ? String(first.id) : '')
+    setRepoMode(first ? 'existing' : 'new')
+  }
 
   const openNew = () => {
     setEditing(null)
@@ -157,7 +170,7 @@ export default function Applications() {
   const openEdit = (app) => {
     setEditing(app)
     setForm({ name: app.name, branch: app.branch, path: app.path, autoheal: app.autoheal, sync_interval: app.sync_interval || 0, ignore_paths: app.ignore_paths || '', project: projectForUi(app.project) })
-    const m = matchRepo(app.repo_url)
+    const m = matchRepo(app.repo_url, app.project)
     if (m) {
       setRepoId(String(m.id))
       setRepoMode('existing')
@@ -185,6 +198,7 @@ export default function Applications() {
       if (repoMode === 'existing') {
         const r = repos.find((x) => String(x.id) === repoId)
         if (!r) throw new Error('select a repository')
+        if ((r.project || '') !== projectForApi(form.project)) throw new Error('repository belongs to another project')
         repoUrl = r.url
       } else {
         if (!repo.url.trim()) throw new Error('repo url is required')
@@ -193,6 +207,7 @@ export default function Applications() {
           const body = {
             name: repo.name,
             url: repo.url,
+            project: projectForApi(form.project),
             username: repo.username,
             insecure_skip_verify: repo.insecure_skip_verify,
           }
@@ -517,7 +532,7 @@ export default function Applications() {
               </label>
               <label>
                 Project
-                <select required value={form.project} onChange={(e) => setForm((p) => ({ ...p, project: e.target.value }))}>
+                <select required value={form.project} onChange={(e) => changeProject(e.target.value)}>
                   <option value={DEFAULT_PROJECT}>default (global)</option>
                   {form.project !== DEFAULT_PROJECT && !projects.some((p) => p.name === form.project) && (
                     <option value={form.project}>{form.project}</option>
@@ -548,10 +563,11 @@ export default function Applications() {
               <label>
                 <span className="sub">Repository</span>
                 <select value={repoId} onChange={(e) => setRepoId(e.target.value)}>
-                  {repos.map((r) => (
+                  {projectRepos.map((r) => (
                     <option key={r.id} value={r.id}>{r.name} — {r.url}</option>
                   ))}
                 </select>
+                {!projectRepos.length && <span className="sub">No repository is registered in this project yet; switch to “Create new”.</span>}
               </label>
             ) : (
               <fieldset className="repo-fields">
@@ -648,7 +664,7 @@ export default function Applications() {
               key={a.id}
               app={a}
               stats={appStats.get(a.id)}
-              repo={repos.find((r) => r.url === a.repo_url)}
+              repo={matchRepo(a.repo_url, a.project)}
               focused={a.id === focusAppId}
               onDetail={openDetail}
               onHistory={() => setHistoryApp(a)}
@@ -769,7 +785,7 @@ export default function Applications() {
         <ApplicationDetail
           app={detailApp}
           stats={appStats.get(detailApp.id)}
-          repo={repos.find((r) => r.url === detailApp.repo_url)}
+          repo={matchRepo(detailApp.repo_url, detailApp.project)}
           instances={detailInstances}
           instancesTotal={detailTotal}
           availableInstances={detailAvailable}

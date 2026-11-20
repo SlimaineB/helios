@@ -49,6 +49,7 @@ apiVersion: helios.dev/v1alpha1
 kind: Repository
 metadata:
   name: app-repo
+  project: team
 spec:
   url: https://example.com/app.git
 ---
@@ -91,7 +92,7 @@ spec:
 	if _, err := st.GetProjectByName(ctx, "team"); err != nil {
 		t.Fatalf("project not created: %v", err)
 	}
-	if _, err := st.GetRepositoryByURL(ctx, "https://example.com/app.git"); err != nil {
+	if _, err := st.GetRepositoryByProjectURL(ctx, "team", "https://example.com/app.git"); err != nil {
 		t.Fatalf("repository not created: %v", err)
 	}
 	app, err := st.GetApplicationByName(ctx, "demo")
@@ -125,6 +126,7 @@ apiVersion: helios.dev/v1alpha1
 kind: Repository
 metadata:
   name: app-repo
+  project: team
 spec:
   url: https://example.com/app.git
 `)

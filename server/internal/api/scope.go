@@ -99,13 +99,24 @@ func (s *Server) validateProjectOnly(ctx context.Context, name string) (string, 
 // ---- projects (operator) ----
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
-	if !s.requireGlobal(w, r, "projects.get") {
-		return
-	}
+	all, scopes := s.visibleProjects(r, "projects", "get")
 	out, err := s.store.ListProjects(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
 		return
+	}
+	if !all {
+		visible := make(map[string]bool, len(scopes))
+		for _, scope := range scopes {
+			visible[scope] = true
+		}
+		filtered := out[:0]
+		for _, p := range out {
+			if visible[p.Name] {
+				filtered = append(filtered, p)
+			}
+		}
+		out = filtered
 	}
 	writeJSON(w, http.StatusOK, out)
 }

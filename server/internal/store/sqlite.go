@@ -59,12 +59,14 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS repositories (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
-  url         TEXT NOT NULL UNIQUE,
+  url         TEXT NOT NULL,
+  project     TEXT NOT NULL DEFAULT '',
   username    TEXT NOT NULL DEFAULT '',
   password    TEXT NOT NULL DEFAULT '',
   ssh_key     TEXT NOT NULL DEFAULT '',
   insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  UNIQUE (project, url)
 );
 
 CREATE TABLE IF NOT EXISTS assignments (
@@ -261,12 +263,14 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS repositories (
   id          BIGSERIAL PRIMARY KEY,
   name        TEXT NOT NULL,
-  url         TEXT NOT NULL UNIQUE,
+  url         TEXT NOT NULL,
+  project     TEXT NOT NULL DEFAULT '',
   username    TEXT NOT NULL DEFAULT '',
   password    TEXT NOT NULL DEFAULT '',
   ssh_key     TEXT NOT NULL DEFAULT '',
   insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  UNIQUE (project, url)
 );
 
 CREATE TABLE IF NOT EXISTS assignments (
@@ -1643,7 +1647,7 @@ func (s *sqlstore) DeleteApplication(ctx context.Context, id int64) error {
 
 // ---- Repositories ----
 
-const repoCols = `id, name, url, username, password, ssh_key, insecure_skip_verify, created_at`
+const repoCols = `id, name, url, project, username, password, ssh_key, insecure_skip_verify, created_at`
 
 func (s *sqlstore) scanRepo(row interface{ Scan(...any) error }) (model.Repository, error) {
 	var (
@@ -1651,7 +1655,7 @@ func (s *sqlstore) scanRepo(row interface{ Scan(...any) error }) (model.Reposito
 		created string
 	)
 	var insecure int
-	err := row.Scan(&r.ID, &r.Name, &r.URL, &r.Username, &r.Password, &r.SSHKey, &insecure, &created)
+	err := row.Scan(&r.ID, &r.Name, &r.URL, &r.Project, &r.Username, &r.Password, &r.SSHKey, &insecure, &created)
 	if err != nil {
 		return r, err
 	}
@@ -1683,7 +1687,7 @@ func (s *sqlstore) ListRepositories(ctx context.Context) ([]model.Repository, er
 	return out, rows.Err()
 }
 
-func (s *sqlstore) RepositoriesByURLs(ctx context.Context, urls []string) (map[string]model.Repository, error) {
+func (s *sqlstore) RepositoriesByProjectURLs(ctx context.Context, project string, urls []string) (map[string]model.Repository, error) {
 	out := map[string]model.Repository{}
 	uniq := make([]string, 0, len(urls))
 	seen := map[string]struct{}{}
@@ -1700,9 +1704,10 @@ func (s *sqlstore) RepositoriesByURLs(ctx context.Context, urls []string) (map[s
 	if len(uniq) == 0 {
 		return out, nil
 	}
-	rows, err := s.query(ctx, `SELECT `+repoCols+` FROM repositories WHERE url IN (`+placeholders(len(uniq))+`)`, anyArgs(uniq)...)
+	args := append([]any{project}, anyArgs(uniq)...)
+	rows, err := s.query(ctx, `SELECT `+repoCols+` FROM repositories WHERE project=? AND url IN (`+placeholders(len(uniq))+`)`, args...)
 	if err != nil {
-		return nil, wrap(err, "list repos by url")
+		return nil, wrap(err, "list repos by project url")
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -1724,11 +1729,11 @@ func (s *sqlstore) GetRepository(ctx context.Context, id int64) (model.Repositor
 	return r, nil
 }
 
-func (s *sqlstore) GetRepositoryByURL(ctx context.Context, url string) (model.Repository, error) {
-	row := s.queryRow(ctx, `SELECT `+repoCols+` FROM repositories WHERE url=?`, url)
+func (s *sqlstore) GetRepositoryByProjectURL(ctx context.Context, project, url string) (model.Repository, error) {
+	row := s.queryRow(ctx, `SELECT `+repoCols+` FROM repositories WHERE project=? AND url=?`, project, url)
 	r, err := s.scanRepo(row)
 	if err != nil {
-		return r, wrap(err, "get repo by url")
+		return r, wrap(err, "get repo by project url")
 	}
 	return r, nil
 }
@@ -1748,8 +1753,8 @@ func (s *sqlstore) CreateRepository(ctx context.Context, in model.Repository) (m
 		return in, fmt.Errorf("encrypt repository ssh key: %w", err)
 	}
 	id, err := s.insertID(ctx,
-		`INSERT INTO repositories (name, url, username, password, ssh_key, insecure_skip_verify, created_at) VALUES (?,?,?,?,?,?,?)`,
-		in.Name, in.URL, in.Username, password, sshKey, insecure, tm(in.CreatedAt))
+		`INSERT INTO repositories (name, url, project, username, password, ssh_key, insecure_skip_verify, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		in.Name, in.URL, in.Project, in.Username, password, sshKey, insecure, tm(in.CreatedAt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return in, ErrConflict
@@ -1774,8 +1779,8 @@ func (s *sqlstore) UpdateRepository(ctx context.Context, in model.Repository) er
 		return fmt.Errorf("encrypt repository ssh key: %w", err)
 	}
 	_, err = s.exec(ctx,
-		`UPDATE repositories SET name=?, url=?, username=?, password=?, ssh_key=?, insecure_skip_verify=? WHERE id=?`,
-		in.Name, in.URL, in.Username, password, sshKey, insecure, in.ID)
+		`UPDATE repositories SET name=?, url=?, project=?, username=?, password=?, ssh_key=?, insecure_skip_verify=? WHERE id=?`,
+		in.Name, in.URL, in.Project, in.Username, password, sshKey, insecure, in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrConflict
@@ -1793,28 +1798,28 @@ func (s *sqlstore) DeleteRepository(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *sqlstore) CountApplicationsByRepoURL(ctx context.Context, url string) (int, error) {
+func (s *sqlstore) CountApplicationsByProjectRepoURL(ctx context.Context, project, url string) (int, error) {
 	var n int
-	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM applications WHERE repo_url=?`, url).Scan(&n); err != nil {
-		return 0, wrap(err, "count applications by repo url")
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM applications WHERE project=? AND repo_url=?`, project, url).Scan(&n); err != nil {
+		return 0, wrap(err, "count applications by project repo url")
 	}
 	return n, nil
 }
 
-// EnsureRepositoryByURL makes the registry self-healing (ArgoCD style): an
-// application created against an unregistered URL gets a placeholder row, so
-// its connection always resolves at checkin time.
-func (s *sqlstore) EnsureRepositoryByURL(ctx context.Context, url string) (model.Repository, error) {
-	r, err := s.GetRepositoryByURL(ctx, url)
+// EnsureRepositoryByProjectURL makes the registry self-healing (ArgoCD style):
+// an application created against an unregistered URL gets a placeholder row in
+// its own project, so its connection always resolves at checkin time.
+func (s *sqlstore) EnsureRepositoryByProjectURL(ctx context.Context, project, url string) (model.Repository, error) {
+	r, err := s.GetRepositoryByProjectURL(ctx, project, url)
 	if err == nil {
 		return r, nil
 	}
-	r, err = s.CreateRepository(ctx, model.Repository{Name: url, URL: url})
+	r, err = s.CreateRepository(ctx, model.Repository{Name: url, URL: url, Project: project})
 	if err == nil {
 		return r, nil
 	}
 	// Lost a create race / duplicate — re-read the winner.
-	return s.GetRepositoryByURL(ctx, url)
+	return s.GetRepositoryByProjectURL(ctx, project, url)
 }
 
 // BackfillRepositoryRegistry registers every repo_url already referenced by
@@ -1829,7 +1834,7 @@ func (s *sqlstore) BackfillRepositoryRegistry(ctx context.Context) error {
 		if app.RepoURL == "" {
 			continue
 		}
-		if _, err := s.EnsureRepositoryByURL(ctx, app.RepoURL); err != nil {
+		if _, err := s.EnsureRepositoryByProjectURL(ctx, app.Project, app.RepoURL); err != nil {
 			return fmt.Errorf("backfill %s: %w", app.RepoURL, err)
 		}
 	}

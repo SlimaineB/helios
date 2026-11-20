@@ -1,8 +1,13 @@
-# RBAC for the Poddy-compatible Dex users.
+# Tenant-scoped RBAC for the Poddy-compatible Dex users.
+#
+# A tenant is a Helios project. Each identity gets read/write access inside its
+# OIDC groups and a personal project, including that project's repository
+# credentials. Global resources (config repos, settings, audit) remain
+# admin-only.
 #
 # Dex's local password connector does not emit a groups claim, so the server
 # uses HELIOS_OIDC_GROUP_CLAIM=email and binds identities by email address.
-# The Poddy groups are kept in Dex for reference:
+# Poddy groups for reference:
 #   admins: admin, ops
 #   backend: dev, alice, bob
 #   frontend: carol
@@ -16,20 +21,94 @@ metadata:
 data:
   rbac.yaml: |
     policies:
-      - "p, role:operator, *, get, *"
-      - "p, role:operator, commands, create, *"
-      - "p, role:operator, commands, sync, *"
-      - "p, role:operator, applications, create, *"
-      - "p, role:operator, applications, update, *"
-      - "p, role:operator, repositories, create, *"
-      - "p, role:operator, repositories, update, *"
-      - "p, role:operator, configrepos, sync, *"
+      # Shared group tenants.
+      - "p, role:backend, applications, *, backend"
+      - "p, role:backend, instances, *, backend"
+      - "p, role:backend, commands, *, backend"
+      - "p, role:backend, runs, get, backend"
+      - "p, role:backend, repositories, *, backend"
+      - "p, role:backend, windows, get, backend"
+      - "p, role:backend, projects, get, backend"
+
+      - "p, role:frontend, applications, *, frontend"
+      - "p, role:frontend, instances, *, frontend"
+      - "p, role:frontend, commands, *, frontend"
+      - "p, role:frontend, runs, get, frontend"
+      - "p, role:frontend, repositories, *, frontend"
+      - "p, role:frontend, windows, get, frontend"
+      - "p, role:frontend, projects, get, frontend"
+
+      - "p, role:go-users, applications, *, go-users"
+      - "p, role:go-users, instances, *, go-users"
+      - "p, role:go-users, commands, *, go-users"
+      - "p, role:go-users, runs, get, go-users"
+      - "p, role:go-users, repositories, *, go-users"
+      - "p, role:go-users, windows, get, go-users"
+      - "p, role:go-users, projects, get, go-users"
+
+      # Personal tenants (user-scoped resources).
+      - "p, role:dev, applications, *, dev"
+      - "p, role:dev, instances, *, dev"
+      - "p, role:dev, commands, *, dev"
+      - "p, role:dev, runs, get, dev"
+      - "p, role:dev, repositories, *, dev"
+      - "p, role:dev, windows, get, dev"
+      - "p, role:dev, projects, get, dev"
+
+      - "p, role:alice, applications, *, alice"
+      - "p, role:alice, instances, *, alice"
+      - "p, role:alice, commands, *, alice"
+      - "p, role:alice, runs, get, alice"
+      - "p, role:alice, repositories, *, alice"
+      - "p, role:alice, windows, get, alice"
+      - "p, role:alice, projects, get, alice"
+
+      - "p, role:bob, applications, *, bob"
+      - "p, role:bob, instances, *, bob"
+      - "p, role:bob, commands, *, bob"
+      - "p, role:bob, runs, get, bob"
+      - "p, role:bob, repositories, *, bob"
+      - "p, role:bob, windows, get, bob"
+      - "p, role:bob, projects, get, bob"
+
+      - "p, role:carol, applications, *, carol"
+      - "p, role:carol, instances, *, carol"
+      - "p, role:carol, commands, *, carol"
+      - "p, role:carol, runs, get, carol"
+      - "p, role:carol, repositories, *, carol"
+      - "p, role:carol, windows, get, carol"
+      - "p, role:carol, projects, get, carol"
+
+      - "p, role:dave, applications, *, dave"
+      - "p, role:dave, instances, *, dave"
+      - "p, role:dave, commands, *, dave"
+      - "p, role:dave, runs, get, dave"
+      - "p, role:dave, repositories, *, dave"
+      - "p, role:dave, windows, get, dave"
+      - "p, role:dave, projects, get, dave"
+
+      - "p, role:erin, applications, *, erin"
+      - "p, role:erin, instances, *, erin"
+      - "p, role:erin, commands, *, erin"
+      - "p, role:erin, runs, get, erin"
+      - "p, role:erin, repositories, *, erin"
+      - "p, role:erin, windows, get, erin"
+      - "p, role:erin, projects, get, erin"
+
     bindings:
       - "g, admin@example.com, role:admin"
       - "g, ops@example.com, role:admin"
-      - "g, dev@example.com, role:operator"
-      - "g, alice@example.com, role:operator"
-      - "g, bob@example.com, role:operator"
-      - "g, carol@example.com, role:operator"
-      - "g, dave@example.com, role:operator"
-      - "g, erin@example.com, role:readonly"
+      - "g, dev@example.com, role:backend"
+      - "g, dev@example.com, role:go-users"
+      - "g, dev@example.com, role:dev"
+      - "g, alice@example.com, role:backend"
+      - "g, alice@example.com, role:go-users"
+      - "g, alice@example.com, role:alice"
+      - "g, bob@example.com, role:backend"
+      - "g, bob@example.com, role:go-users"
+      - "g, bob@example.com, role:bob"
+      - "g, carol@example.com, role:frontend"
+      - "g, carol@example.com, role:carol"
+      - "g, dave@example.com, role:go-users"
+      - "g, dave@example.com, role:dave"
+      - "g, erin@example.com, role:erin"

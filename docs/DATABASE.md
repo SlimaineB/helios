@@ -41,7 +41,8 @@ run the additive migrations.
   the implicit global/default scope. Renaming a project cascades to
   `applications.project` and `instances.project`.
 - **Repository credentials** are matched to applications by
-  `applications.repo_url` -> `repositories.url`; this is a logical reference,
+  `(applications.project, applications.repo_url)` ->
+  `(repositories.project, repositories.url)`; this is a logical reference,
   not a foreign key.
 
 ## Relationships
@@ -51,7 +52,8 @@ run the additive migrations.
 - `instances` 1—N `assignment_variables` N—1 `applications`
 - `instances.project` and `applications.project` refer to `projects.name`
   logically.
-- `applications.repo_url` refers to `repositories.url` logically.
+- `(applications.project, applications.repo_url)` refers to
+  `(repositories.project, repositories.url)` logically.
 - `runs`, `commands` and `audit_log` are history/queue tables with no foreign
   keys. Their rows are retained even when an instance or application is
   deleted.
@@ -112,13 +114,16 @@ Variable precedence is `applications.vars` (legacy) < `variables` <
 
 ### `repositories`
 
-Reusable git connection settings. Applications reference a repository by URL.
+Reusable git connection settings. Applications reference a repository by URL
+inside the same project. The same URL may be registered in multiple projects
+with different credentials.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | integer PK | Repository ID |
 | `name` | `TEXT NOT NULL` | Display name |
-| `url` | `TEXT NOT NULL UNIQUE` | Git URL, unique |
+| `url` | `TEXT NOT NULL` | Git URL |
+| `project` | `TEXT NOT NULL DEFAULT ''` | Owning project/tenant; empty = global |
 | `username` | `TEXT NOT NULL DEFAULT ''` | HTTPS username |
 | `password` | `TEXT NOT NULL DEFAULT ''` | HTTPS password/token |
 | `ssh_key` | `TEXT NOT NULL DEFAULT ''` | SSH private key |
@@ -362,7 +367,7 @@ commands are never pruned. Tune with `HELIOS_RETENTION_*`.
 |---|---|
 | `instances.token_hash` unique | Fast agent authentication and duplicate-token rejection |
 | `applications.name` unique | Unique application names |
-| `repositories.url` unique | One registry entry per repository URL |
+| `repositories (project, url)` unique | One registry entry per URL per tenant |
 | `projects.name` unique | Unique project names |
 | `config_repos.name` unique | Unique config repository names |
 | `gitops_managed` PK `(config_repo_id, kind, name)` | One ownership record per config repo/object |

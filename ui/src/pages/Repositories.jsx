@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LayoutGrid, List, Pencil, Trash2 } from 'lucide-react'
-import { api } from '../api/client.js'
+import { api, DEFAULT_PROJECT, projectForUi, projectForApi, projectLabel } from '../api/client.js'
 import { useAuth } from '../App.jsx'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
@@ -10,7 +10,7 @@ import { SkeletonEmpty, SkeletonCard } from '../components/Skeleton.jsx'
 import { toast } from '../components/Toast.jsx'
 import RepositoryCard from '../components/RepositoryCard.jsx'
 
-const empty = { name: '', url: '', username: '', password: '', ssh_key: '', insecure_skip_verify: false }
+const empty = { name: '', url: '', project: DEFAULT_PROJECT, username: '', password: '', ssh_key: '', insecure_skip_verify: false }
 
 const authKind = (repo) => {
   if (repo.ssh_key_set) return 'ssh'
@@ -28,6 +28,7 @@ const authLabel = (repo) => {
 export default function Repositories() {
   const { can } = useAuth()
   const [repos, setRepos] = useState([])
+  const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -39,8 +40,12 @@ export default function Repositories() {
   const [view, setView] = useState('cards')
 
   const refresh = useCallback(async () => {
-    try { setLoading(true); setRepos(await api.repositories()) }
-    catch (e) { toast.error(e.message) }
+    try {
+      setLoading(true)
+      const [r, p] = await Promise.all([api.repositories(), api.projects().catch(() => [])])
+      setRepos(r)
+      setProjects(p)
+    } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }, [])
   useEffect(() => { refresh() }, [refresh])
@@ -55,13 +60,13 @@ export default function Repositories() {
     })
   }, [repos, search, authFilter])
 
-  const openNew = () => { setEditing(null); setForm(empty); setFormError(''); setShowForm(true) }
-  const openEdit = (repo) => { setEditing(repo); setForm({ ...empty, name: repo.name, url: repo.url, username: repo.username, insecure_skip_verify: repo.insecure_skip_verify }); setFormError(''); setShowForm(true) }
+  const openNew = () => { setEditing(null); setForm({ ...empty, project: projects[0]?.name || DEFAULT_PROJECT }); setFormError(''); setShowForm(true) }
+  const openEdit = (repo) => { setEditing(repo); setForm({ ...empty, name: repo.name, url: repo.url, project: projectForUi(repo.project), username: repo.username, insecure_skip_verify: repo.insecure_skip_verify }); setFormError(''); setShowForm(true) }
   const closeForm = () => { setShowForm(false); setEditing(null); setForm(empty); setFormError('') }
 
   const submit = async (e) => {
     e.preventDefault(); setFormError('')
-    const body = { name: form.name, url: form.url, username: form.username, insecure_skip_verify: form.insecure_skip_verify }
+    const body = { name: form.name, url: form.url, project: projectForApi(form.project), username: form.username, insecure_skip_verify: form.insecure_skip_verify }
     if (form.password) body.password = form.password
     if (form.ssh_key) body.ssh_key = form.ssh_key
     try {
@@ -84,7 +89,7 @@ export default function Repositories() {
   return (
     <section>
       <h1>Repositories</h1>
-      <p className="muted">Git connections, reusable by any application via <code>repo_url</code> — like ArgoCD's repositories. The agent authenticates against private repos using the matching entry.</p>
+      <p className="muted">Git connections scoped to a project, reusable by its applications via <code>repo_url</code>. The agent authenticates against private repos using the matching tenant entry.</p>
 
       <div className="filters">
         <input
@@ -150,6 +155,7 @@ export default function Repositories() {
             <thead>
               <tr>
                 <th>Repository</th>
+                <th style={{ width: '150px' }}>Project</th>
                 <th style={{ width: '190px' }}>Authentication</th>
                 <th style={{ width: '150px' }}>TLS</th>
                 <th style={{ width: '260px' }}>Actions</th>
@@ -167,6 +173,7 @@ export default function Repositories() {
                       </span>
                     </div>
                   </td>
+                  <td><span className="project-badge">{projectLabel(repo.project)}</span></td>
                   <td>
                     <div className="cell-title">
                       <strong>{authLabel(repo)}</strong>
@@ -188,7 +195,7 @@ export default function Repositories() {
                 </tr>
               ))}
               {filteredRepos.length === 0 && (
-                <tr><td colSpan={4} className="muted">{hasFilters ? 'No repository matches these filters.' : 'No repositories yet.'}</td></tr>
+                <tr><td colSpan={5} className="muted">{hasFilters ? 'No repository matches these filters.' : 'No repositories yet.'}</td></tr>
               )}
             </tbody>
           </table>
@@ -198,7 +205,8 @@ export default function Repositories() {
       {showForm && (
         <Modal title={editing ? 'Edit repository' : 'New repository'} onClose={closeForm} wide>
           <form className="form-card" onSubmit={submit}>
-            <div className="two"><label>Name<input required autoFocus {...f('name')} /></label><label>Git URL<input required placeholder="https://github.com/you/infra.git" {...f('url')} /></label></div>
+            <div className="two"><label>Name<input required autoFocus {...f('name')} /></label><label>Project<select required value={form.project} onChange={(e) => setForm((p) => ({ ...p, project: e.target.value }))}><option value={DEFAULT_PROJECT}>default (global)</option>{form.project !== DEFAULT_PROJECT && !projects.some((p) => p.name === form.project) && <option value={form.project}>{form.project}</option>}{projects.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}</select><span className="sub">Credentials are scoped to this tenant.</span></label></div>
+            <label>Git URL<input required placeholder="https://github.com/you/infra.git" {...f('url')} /></label>
             <label>Username (leave empty to use the token as the user, e.g. GitHub fine-grained PAT)<input {...f('username')} /></label>
             <div className="two"><label>Password / token<input type="password" placeholder={editing && editing.password_set ? '•••••• (unchanged)' : 'e.g. github PAT'} {...f('password')} /></label><label className="row"><input type="checkbox" checked={form.insecure_skip_verify} onChange={(e) => setForm((p) => ({ ...p, insecure_skip_verify: e.target.checked }))} />{' '}Insecure skip verify (self-signed TLS)</label></div>
             <label>SSH private key (deploy key, optional)<textarea rows={4} spellCheck={false} placeholder={editing && editing.ssh_key_set ? '•••••• (unchanged)' : '-----BEGIN OPENSSH PRIVATE KEY-----'} {...f('ssh_key')} /></label>

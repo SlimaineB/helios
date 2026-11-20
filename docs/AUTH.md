@@ -73,6 +73,24 @@ projects) or a project name; a project-scoped rule never matches the global
 scope. Rules are a union (no deny lists). Unauthenticated requests return
 `401`; unprivileged requests return `403`.
 
+## Tenant scoping
+
+A project is a tenant. List endpoints filter on the project objects a caller
+may read: applications, instances, runs, drift/overview, projects and
+repositories. Each repository row belongs to exactly one project and stores
+that tenant's credentials; the same URL may be registered independently in
+multiple projects. Applications automatically resolve credentials from the
+registry row in their own project. Sync windows are visible when global
+(`app_id=0`) or attached to a visible application. Mutating handlers re-check
+the concrete object, so a scoped policy cannot update another project's
+resources by guessing an ID.
+
+Global resources (`configrepos.*`, `settings.*`, `audit.get` and project
+create/update/delete) remain admin-only. A scoped role should therefore not
+bind users to `role:readonly`, which grants `get` on `*`.
+
+Example tenant roles and bindings are in `deploy/k3s/rbac.yaml`.
+
 ## Route map
 
 | Permission | Unlocks |
@@ -89,8 +107,9 @@ scope. Rules are a union (no deny lists). Unauthenticated requests return
 | `windows.*` | Sync windows |
 | `audit.get` | Audit log |
 
-`repositories.*`, `projects.*`, `configrepos.*`, `windows.*` and `audit.get`
-require the global (`*`) object scope.
+`repositories.*`, `projects.get` and `windows.get` are tenant-scoped.
+Project writes, `configrepos.*`, `settings.*` and `audit.get` require the
+global (`*`) object scope.
 
 For a production setup, see [Install](INSTALL.md) and the
 [configuration section](INSTALL.md#compose-configuration) for the relevant

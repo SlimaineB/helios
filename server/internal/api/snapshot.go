@@ -49,7 +49,7 @@ func (s *Server) handleAgentSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	creds := gitops.Creds{}
-	if repo, err := s.store.GetRepositoryByURL(r.Context(), app.RepoURL); err == nil {
+	if repo, err := s.store.GetRepositoryByProjectURL(r.Context(), app.Project, app.RepoURL); err == nil {
 		creds = gitops.Creds{
 			Username:           repo.Username,
 			Password:           repo.Password,

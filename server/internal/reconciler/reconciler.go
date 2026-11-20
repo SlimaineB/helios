@@ -242,9 +242,9 @@ func (r *Reconciler) reconcile(ctx context.Context, repo model.ConfigRepo, summa
 		name, spec := name, spec
 		apply(gitops.KindProject, name, name, func() error { return r.applyProject(ctx, name, spec, summary) })
 	}
-	for name, spec := range desired.repositories {
-		name, spec := name, spec
-		apply(gitops.KindRepository, name, spec.URL, func() error { return r.applyRepository(ctx, spec, summary) })
+	for key, spec := range desired.repositories {
+		key, spec := key, spec
+		apply(gitops.KindRepository, key, repoManagedName(spec.Project, spec.URL), func() error { return r.applyRepository(ctx, spec, summary) })
 	}
 	for name, spec := range desired.applications {
 		name, spec := name, spec
@@ -303,7 +303,7 @@ func buildDesired(docs []gitops.Document) (desiredState, error) {
 			if err != nil {
 				return out, fmt.Errorf("%s: %w", doc.Source, err)
 			}
-			out.repositories[doc.Metadata.Name] = spec
+			out.repositories[repoManifestKey(spec.Project, doc.Metadata.Name)] = spec
 		case gitops.KindApplication:
 			spec, err := doc.Application()
 			if err != nil {
@@ -377,7 +377,19 @@ func (r *Reconciler) applyRepository(ctx context.Context, spec gitops.Repository
 	if strings.TrimSpace(spec.URL) == "" {
 		return errors.New("repository url is required")
 	}
-	existing, err := r.store.GetRepositoryByURL(ctx, spec.URL)
+	if spec.Project != projects.Global {
+		if !projects.ValidName(spec.Project) {
+			return fmt.Errorf("invalid project name %q", spec.Project)
+		}
+		p, err := r.store.GetProjectByName(ctx, spec.Project)
+		if err != nil {
+			return fmt.Errorf("unknown project %q", spec.Project)
+		}
+		if !projects.MatchRepo(p.RepoPatterns, spec.URL) {
+			return fmt.Errorf("repository %s is not allowed by project %s", spec.URL, spec.Project)
+		}
+	}
+	existing, err := r.store.GetRepositoryByProjectURL(ctx, spec.Project, spec.URL)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			return err
@@ -385,6 +397,7 @@ func (r *Reconciler) applyRepository(ctx context.Context, spec gitops.Repository
 		_, err := r.store.CreateRepository(ctx, model.Repository{
 			Name:               spec.Name,
 			URL:                spec.URL,
+			Project:            spec.Project,
 			Username:           spec.Username,
 			Password:           spec.Password,
 			SSHKey:             spec.SSHKey,
@@ -435,11 +448,11 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 	}
 	repoURL := spec.RepoURL
 	if repoURL == "" && spec.RepoRef != "" {
-		if ref, ok := desired.repositories[spec.RepoRef]; ok {
+		if ref, ok := desired.repositories[repoManifestKey(spec.Project, spec.RepoRef)]; ok {
 			repoURL = ref.URL
 		} else if repos, err := r.store.ListRepositories(ctx); err == nil {
 			for _, repo := range repos {
-				if repo.Name == spec.RepoRef {
+				if repo.Project == spec.Project && repo.Name == spec.RepoRef {
 					repoURL = repo.URL
 					break
 				}
@@ -458,7 +471,7 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 			return fmt.Errorf("repository %s is not allowed by project %s", repoURL, spec.Project)
 		}
 	}
-	if _, err := r.store.EnsureRepositoryByURL(ctx, repoURL); err != nil {
+	if _, err := r.store.EnsureRepositoryByProjectURL(ctx, spec.Project, repoURL); err != nil {
 		return err
 	}
 
@@ -588,7 +601,7 @@ func managedDesired(d desiredState, m model.ManagedResource) bool {
 		return ok
 	case gitops.KindRepository:
 		for _, spec := range d.repositories {
-			if spec.URL == m.Name {
+			if repoManagedName(spec.Project, spec.URL) == m.Name {
 				return true
 			}
 		}
@@ -633,13 +646,14 @@ func (r *Reconciler) deleteManaged(ctx context.Context, m model.ManagedResource)
 		}
 		return r.store.DeleteApplication(ctx, app.ID)
 	case gitops.KindRepository:
-		repo, err := r.store.GetRepositoryByURL(ctx, m.Name)
+		project, url := splitRepoManagedName(m.Name)
+		repo, err := r.store.GetRepositoryByProjectURL(ctx, project, url)
 		if errors.Is(err, store.ErrNotFound) {
 			return nil
 		} else if err != nil {
 			return err
 		}
-		n, err := r.store.CountApplicationsByRepoURL(ctx, repo.URL)
+		n, err := r.store.CountApplicationsByProjectRepoURL(ctx, repo.Project, repo.URL)
 		if err != nil {
 			return err
 		}
@@ -671,9 +685,24 @@ func (r *Reconciler) deleteManaged(ctx context.Context, m model.ManagedResource)
 }
 
 func (r *Reconciler) credsFor(ctx context.Context, url string) gitops.Creds {
-	repo, err := r.store.GetRepositoryByURL(ctx, url)
+	repo, err := r.store.GetRepositoryByProjectURL(ctx, projects.Global, url)
 	if err != nil {
-		return gitops.Creds{}
+		// Config repositories are global admin objects. Fall back to a matching
+		// registry row when credentials were stored under a tenant project.
+		repos, listErr := r.store.ListRepositories(ctx)
+		if listErr != nil {
+			return gitops.Creds{}
+		}
+		found := false
+		for _, candidate := range repos {
+			if candidate.URL == url {
+				repo, found = candidate, true
+				break
+			}
+		}
+		if !found {
+			return gitops.Creds{}
+		}
 	}
 	return gitops.Creds{
 		Username:           repo.Username,
@@ -681,6 +710,22 @@ func (r *Reconciler) credsFor(ctx context.Context, url string) gitops.Creds {
 		SSHKey:             repo.SSHKey,
 		InsecureSkipVerify: repo.InsecureSkipVerify,
 	}
+}
+
+func repoManifestKey(project, name string) string {
+	return project + "::" + name
+}
+
+func repoManagedName(project, url string) string {
+	return project + "::" + url
+}
+
+func splitRepoManagedName(name string) (project, url string) {
+	project, url, ok := strings.Cut(name, "::")
+	if !ok {
+		return projects.Global, name
+	}
+	return project, url
 }
 
 func assignmentKey(instance, app string) string { return instance + "::" + app }

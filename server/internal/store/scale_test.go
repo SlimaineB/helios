@@ -131,7 +131,7 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 	if err != nil || len(runs) != 1 || runs[0].ID != drift.ID || runs[0].ID == old.ID {
 		t.Fatalf("latest runs: err=%v %+v", err, runs)
 	}
-	repos, err := st.RepositoriesByURLs(ctx, []string{app.RepoURL})
+	repos, err := st.RepositoriesByProjectURLs(ctx, app.Project, []string{app.RepoURL})
 	if err != nil || repos[app.RepoURL].ID != repo.ID || repos[app.RepoURL].Password != "p" {
 		t.Fatalf("repos by urls: err=%v %+v", err, repos)
 	}

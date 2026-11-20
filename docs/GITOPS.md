@@ -95,6 +95,7 @@ apiVersion: helios.dev/v1alpha1
 kind: Repository
 metadata:
   name: finance-infra
+  project: finance
 spec:
   url: https://github.com/acme/finance-infra.git
   username: gitops-bot        # optional
@@ -106,6 +107,7 @@ spec:
 | Field | Required | Description |
 |---|---|---|
 | `metadata.name` | yes | Manifest-local name, usable as `repoRef` |
+| `metadata.project` | no | Owning project/tenant; empty = global. An application's `repoRef` resolves within the same project. |
 | `spec.url` | yes | Git URL used by applications |
 | `spec.username` | no | HTTPS username |
 | `spec.password` | no | HTTPS password/token |

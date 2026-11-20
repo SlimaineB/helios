@@ -190,6 +190,7 @@ func (d Document) Project() (ProjectSpec, error) {
 // RepositorySpec is the typed spec of a Repository manifest.
 type RepositorySpec struct {
 	Name               string
+	Project            string
 	URL                string
 	Username           string
 	Password           string
@@ -207,6 +208,7 @@ func (d Document) Repository() (RepositorySpec, error) {
 	}
 	return RepositorySpec{
 		Name:               d.Metadata.Name,
+		Project:            d.project(),
 		URL:                url,
 		Username:           str(d.Spec, "username"),
 		Password:           str(d.Spec, "password"),

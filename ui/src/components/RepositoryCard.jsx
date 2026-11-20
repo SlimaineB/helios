@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import CopyButton from './CopyButton.jsx'
 import { useAuth } from '../App.jsx'
+import { projectLabel } from '../api/client.js'
 import { toast } from '../components/Toast.jsx'
 
 export default function RepositoryCard({ repo, onEdit, onDelete }) {
@@ -20,6 +21,10 @@ export default function RepositoryCard({ repo, onEdit, onDelete }) {
 
       <div className="card-body">
         <div className="detail-row">
+          <div className="detail">
+            <label>Project</label>
+            <span className="value">{projectLabel(repo.project)}</span>
+          </div>
           <div className="detail">
             <label>Auth</label>
             <span className="value">

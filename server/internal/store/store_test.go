@@ -42,11 +42,11 @@ func TestRepositoryUpsert(t *testing.T) {
 func exerciseUpsert(t *testing.T, st Store) {
 	ctx := context.Background()
 
-	r1, err := st.EnsureRepositoryByURL(ctx, "http://example.com/a.git")
+	r1, err := st.EnsureRepositoryByProjectURL(ctx, "", "http://example.com/a.git")
 	if err != nil || r1.ID == 0 || r1.Name != "http://example.com/a.git" {
 		t.Fatalf("ensure create: err=%v %+v", err, r1)
 	}
-	r2, err := st.EnsureRepositoryByURL(ctx, "http://example.com/a.git")
+	r2, err := st.EnsureRepositoryByProjectURL(ctx, "", "http://example.com/a.git")
 	if err != nil || r2.ID != r1.ID {
 		t.Fatalf("ensure idempotent: err=%v r2=%d want=%d", err, r2.ID, r1.ID)
 	}
@@ -138,7 +138,7 @@ func exerciseStore(t *testing.T, st Store) {
 	if err != nil || repo.ID == 0 {
 		t.Fatalf("create repo: %v (id=%d)", err, repo.ID)
 	}
-	if r, err := st.GetRepositoryByURL(ctx, repo.URL); err != nil || r.Password != "p" {
+	if r, err := st.GetRepositoryByProjectURL(ctx, repo.Project, repo.URL); err != nil || r.Password != "p" {
 		t.Fatalf("get repo by url: %v r=%+v", err, r)
 	}
 
