@@ -7,6 +7,7 @@ import {
 import { api, instanceOnline } from '../api/client.js'
 import { toast } from '../components/Toast.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
+import FleetTabs from '../components/FleetTabs.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import world from '../assets/world-land.json'
 
@@ -310,6 +311,8 @@ export default function WorldMap() {
           <button type="button" className="btn ghost small" onClick={load} title="Refresh"><RefreshCw size={14} /> Refresh</button>
         </div>
       </div>
+
+      <div className="fleet-switch"><FleetTabs /></div>
 
       <div className="wm-toolbar">
         <div className="wm-field">

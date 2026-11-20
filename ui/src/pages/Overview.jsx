@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { api, stateLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
+import FleetTabs from '../components/FleetTabs.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -132,6 +133,8 @@ export default function Overview() {
           </button>
         </div>
       </div>
+
+      <div className="fleet-switch"><FleetTabs /></div>
 
       <div className="stats ov-stats">
         <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{model.total}</span><span className="stat-label">Instances</span></div>
