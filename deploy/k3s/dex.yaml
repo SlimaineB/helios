@@ -1,0 +1,169 @@
+# Lab Dex for Helios OIDC/RBAC tests.
+# Users and password hashes are copied from ../mydev/poddy/deploy/dex/config.yaml:
+# admin/admin, dev/poddy, alice/alice, ops/ops, bob/bob, carol/carol,
+# dave/dave, erin/erin.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: helios-dex
+  namespace: helios
+type: Opaque
+stringData:
+  client-secret: helios-dex-secret
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-config
+  namespace: helios
+data:
+  config.yaml: |
+    issuer: http://172.29.74.141:30557/dex
+
+    storage:
+      type: memory
+
+    web:
+      http: 0.0.0.0:5556
+
+    logger:
+      level: info
+
+    oauth2:
+      skipApprovalScreen: true
+      responseTypes: ["code"]
+
+    staticClients:
+      - id: helios
+        name: Helios
+        secretEnv: HELIOS_DEX_CLIENT_SECRET
+        redirectURIs:
+          - http://172.29.74.141:30080/api/v1/auth/callback
+          - http://localhost:30080/api/v1/auth/callback
+
+    enablePasswordDB: true
+    staticPasswords:
+      - email: admin@example.com
+        hash: "$2a$10$RBpPsn8KzP/6uhNTwpv6gus..i.XfWcIGPBVAevVm/2hudgopagfe"
+        username: admin
+        userID: "1"
+        groups:
+          - admins
+      - email: dev@example.com
+        hash: "$2b$10$rH1sxs27TIKlMeahhen49u8S6uEHekvqn3teWj36qfPcJsy0.kK1q"
+        username: dev
+        userID: "2"
+        groups:
+          - backend
+          - go-users
+      - email: alice@example.com
+        hash: "$2a$10$w7g/EnCwjrqc/a12/4bmvey5Xo60qJ4aUkNEFXT1IujhgLMHcpHTK"
+        username: alice
+        userID: "3"
+        groups:
+          - backend
+          - go-users
+      - email: ops@example.com
+        hash: "$2a$10$rTym/jEvRLBx.OerWgkX8O3hwYPcn2J3rjkTaXa6XroO8ByU9MYIO"
+        username: ops
+        userID: "4"
+        groups:
+          - admins
+      - email: bob@example.com
+        hash: "$2a$10$9qjPSqNbzr9t0IMCLwInb.4oqtKF.1GlPWBOv5nyBt.fAGrM8BwGW"
+        username: bob
+        userID: "5"
+        groups:
+          - backend
+          - go-users
+      - email: carol@example.com
+        hash: "$2a$10$9J3ggArqVCKRcpV8BWQSKeQyL5YyLv7tvuSp6ajCq1GhOz.6goFqu"
+        username: carol
+        userID: "6"
+        groups:
+          - frontend
+      - email: dave@example.com
+        hash: "$2a$10$Q1cTQglnj42fVSuzADuAdeM7BKqsCN6OE9PcmKEbC/sRaukysms46"
+        username: dave
+        userID: "7"
+        groups:
+          - go-users
+      - email: erin@example.com
+        hash: "$2a$10$7ahB6rNCMOurEr4m6Iss7e1iBFEIZtgGxbQrrG3TSr9fInORzQG1G"
+        username: erin
+        userID: "8"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  namespace: helios
+  labels:
+    app.kubernetes.io/name: dex
+    app.kubernetes.io/part-of: helios
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dex
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dex
+        app.kubernetes.io/part-of: helios
+    spec:
+      containers:
+        - name: dex
+          image: ghcr.io/dexidp/dex:v2.45.0
+          imagePullPolicy: IfNotPresent
+          command: ["dex", "serve", "/etc/dex/config.yaml"]
+          env:
+            - name: HELIOS_DEX_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: helios-dex
+                  key: client-secret
+          ports:
+            - name: http
+              containerPort: 5556
+          readinessProbe:
+            httpGet:
+              path: /dex/.well-known/openid-configuration
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /dex/.well-known/openid-configuration
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: dex-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+  namespace: helios
+  labels:
+    app.kubernetes.io/name: dex
+    app.kubernetes.io/part-of: helios
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: dex
+  ports:
+    - name: http
+      port: 5556
+      targetPort: http
+      nodePort: 30557

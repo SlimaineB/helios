@@ -4,6 +4,18 @@
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.database.dsn) }}
 {{- fail "replicaCount > 1 requires database.dsn (PostgreSQL); SQLite is single-writer and cannot be shared by replicas" }}
 {{- end }}
+{{- if and .Values.oidc.enabled (not .Values.oidc.issuer) }}
+{{- fail "oidc.issuer is required when oidc.enabled=true" }}
+{{- end }}
+{{- if and .Values.oidc.enabled (not .Values.oidc.clientId) }}
+{{- fail "oidc.clientId is required when oidc.enabled=true" }}
+{{- end }}
+{{- if and .Values.oidc.enabled (not .Values.oidc.existingSecret) }}
+{{- fail "oidc.existingSecret is required when oidc.enabled=true" }}
+{{- end }}
+{{- if and .Values.rbac.enabled (not .Values.rbac.existingConfigMap) }}
+{{- fail "rbac.existingConfigMap is required when rbac.enabled=true" }}
+{{- end }}
 {{- $baseURL := .Values.baseUrl }}
 {{- if and (not $baseURL) .Values.ingress.enabled }}
 {{- $baseURL = printf "%s://%s" (ternary "https" "http" .Values.ingress.tls.enabled) .Values.ingress.host }}
@@ -64,7 +76,7 @@ spec:
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.secretKey.value .Values.secretKey.existingSecret .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway .Values.repoCache.enabled }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.secretKey.value .Values.secretKey.existingSecret .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway .Values.repoCache.enabled .Values.oidc.enabled .Values.rbac.enabled }}
           env:
             {{- if $baseURL }}
             - name: HELIOS_BASE_URL
@@ -123,6 +135,25 @@ spec:
             - name: HELIOS_REPO_CACHE_RESOLVE_TTL
               value: {{ .Values.repoCache.resolveTTL | default "30s" | quote }}
             {{- end }}
+            {{- if .Values.oidc.enabled }}
+            - name: HELIOS_OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: HELIOS_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: HELIOS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret }}
+                  key: {{ .Values.oidc.clientSecretKey }}
+            - name: HELIOS_OIDC_GROUP_CLAIM
+              value: {{ .Values.oidc.groupClaim | quote }}
+            - name: HELIOS_OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            {{- end }}
+            {{- if .Values.rbac.enabled }}
+            - name: HELIOS_RBAC_FILE
+              value: /etc/helios/rbac.yaml
+            {{- end }}
           {{- end }}
           ports:
             - name: http
@@ -146,6 +177,12 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.rbac.enabled }}
+            - name: rbac
+              mountPath: /etc/helios/rbac.yaml
+              subPath: {{ .Values.rbac.key }}
+              readOnly: true
+            {{- end }}
             {{- if not .Values.database.dsn }}
             - name: data
               mountPath: /data
@@ -159,6 +196,11 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.rbac.enabled }}
+        - name: rbac
+          configMap:
+            name: {{ .Values.rbac.existingConfigMap }}
+        {{- end }}
         {{- if not .Values.database.dsn }}
         - name: data
           persistentVolumeClaim:

@@ -29,6 +29,25 @@ storage:
 # is enabled, the chart derives it from ingress.host and ingress.tls.
 baseUrl: ""
 
+# OpenID Connect login. The local admin remains available alongside OIDC.
+# The client secret is read from an existing Secret so it never lives in Helm
+# release values. The issuer must be reachable by both the browser and the pod.
+oidc:
+  enabled: false
+  issuer: ""
+  clientId: ""
+  existingSecret: ""
+  clientSecretKey: client-secret
+  groupClaim: groups
+  scopes: "openid, profile, email, groups"
+
+# ArgoCD-style RBAC policy file. When enabled, the chart mounts the
+# `rbac.yaml` key from an existing ConfigMap at /etc/helios/rbac.yaml.
+rbac:
+  enabled: false
+  existingConfigMap: ""
+  key: rbac.yaml
+
 # Encrypt repository credentials and secret playbook variables at rest with
 # AES-256-GCM. Use a stable 32-byte hex/base64 key, or any long passphrase (it is
 # hashed). Existing plaintext rows remain readable; changing the key makes

@@ -22,6 +22,23 @@ service:
 database:
   dsn: ""
 
+# OIDC + RBAC lab setup. The Dex issuer uses the k3s node IP because it must be
+# reachable from both the browser and the server pod; update it if the WSL IP
+# changes. The browser callback stays on the forwarded Helios NodePort.
+baseUrl: http://172.29.74.141:30080
+oidc:
+  enabled: true
+  issuer: http://172.29.74.141:30557/dex
+  clientId: helios
+  existingSecret: helios-dex
+  clientSecretKey: client-secret
+  groupClaim: email
+  scopes: "openid, profile, email, groups"
+rbac:
+  enabled: true
+  existingConfigMap: helios-rbac
+  key: rbac.yaml
+
 # Stop applying after this many consecutive failed convergence cycles.
 healing:
   maxDriftStreak: 3

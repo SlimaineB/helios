@@ -1,0 +1,35 @@
+# RBAC for the Poddy-compatible Dex users.
+#
+# Dex's local password connector does not emit a groups claim, so the server
+# uses HELIOS_OIDC_GROUP_CLAIM=email and binds identities by email address.
+# The Poddy groups are kept in Dex for reference:
+#   admins: admin, ops
+#   backend: dev, alice, bob
+#   frontend: carol
+#   go-users: dev, alice, bob, dave
+#   erin: no group
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helios-rbac
+  namespace: helios
+data:
+  rbac.yaml: |
+    policies:
+      - "p, role:operator, *, get, *"
+      - "p, role:operator, commands, create, *"
+      - "p, role:operator, commands, sync, *"
+      - "p, role:operator, applications, create, *"
+      - "p, role:operator, applications, update, *"
+      - "p, role:operator, repositories, create, *"
+      - "p, role:operator, repositories, update, *"
+      - "p, role:operator, configrepos, sync, *"
+    bindings:
+      - "g, admin@example.com, role:admin"
+      - "g, ops@example.com, role:admin"
+      - "g, dev@example.com, role:operator"
+      - "g, alice@example.com, role:operator"
+      - "g, bob@example.com, role:operator"
+      - "g, carol@example.com, role:operator"
+      - "g, dave@example.com, role:operator"
+      - "g, erin@example.com, role:readonly"
