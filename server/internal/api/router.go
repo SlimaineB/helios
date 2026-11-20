@@ -62,6 +62,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/runs/{runId}/log", s.op("runs.get", s.handleRunLog))
 
 	m.HandleFunc("GET /api/v1/applications", s.op("applications.get", s.handleListApplications))
+	m.HandleFunc("GET /api/v1/applications/{appId}", s.op("applications.get", s.handleGetApplication))
 	m.HandleFunc("GET /api/v1/application-stats", s.op("applications.get", s.handleApplicationStats))
 	m.HandleFunc("POST /api/v1/applications", s.op("applications.create", s.handleCreateApplication))
 	m.HandleFunc("PUT /api/v1/applications/{appId}", s.op("applications.update", s.handleUpdateApplication))
@@ -90,6 +91,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/repositories", s.op("repositories.get", s.handleListRepositories))
 	m.HandleFunc("POST /api/v1/repositories", s.op("repositories.create", s.handleCreateRepository))
 	m.HandleFunc("PUT /api/v1/repositories/{repoId}", s.op("repositories.update", s.handleUpdateRepository))
+	m.HandleFunc("POST /api/v1/repositories/{repoId}/check", s.op("repositories.get", s.handleCheckRepository))
 	m.HandleFunc("DELETE /api/v1/repositories/{repoId}", s.op("repositories.delete", s.handleDeleteRepository))
 
 	m.HandleFunc("GET /api/v1/config-repos", s.op("configrepos.get", s.handleListConfigRepos))

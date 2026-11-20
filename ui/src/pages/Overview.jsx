@@ -211,7 +211,7 @@ export default function Overview() {
                     <div className="ov-att-main">
                       <Link to={`/instances/${item.inst.id}`}>{item.inst.name}</Link>
                       {item.app ? (
-                        <Link className="ov-att-app" to={`/applications?app=${item.app.application.id}`}>{item.app.application.name}</Link>
+                        <Link className="ov-att-app" to={`/applications/${item.app.application.id}`}>{item.app.application.name}</Link>
                       ) : (
                         <span className="sub">last seen {fmtDate(item.inst.last_seen)}</span>
                       )}
@@ -252,7 +252,7 @@ export default function Overview() {
                   <tr key={`${inst.id}-${app.application.id}-${run.id}`}>
                     <td><span className={`state-badge ${appState(app)}`}>{stateLabel(appState(app))}</span></td>
                     <td><Link to={`/instances/${inst.id}`} className="entity-link">{inst.name}</Link></td>
-                    <td><Link to={`/applications?app=${app.application.id}`} className="entity-link">{app.application.name}</Link></td>
+                    <td><Link to={`/applications/${app.application.id}`} className="entity-link">{app.application.name}</Link></td>
                     <td><span className="mono">{run.mode}</span></td>
                     <td className="muted">{fmtAgo(run.finished_at)}</td>
                     <td className="mono muted">{run.commit_after?.slice(0, 7) || '—'}</td>

@@ -4,6 +4,7 @@ import Overview from './pages/Overview.jsx'
 import Instances from './pages/Instances.jsx'
 import InstanceDetail from './pages/InstanceDetail.jsx'
 import Applications from './pages/Applications.jsx'
+import ApplicationDetailPage from './pages/ApplicationDetailPage.jsx'
 import Repositories from './pages/Repositories.jsx'
 import SyncWindows from './pages/SyncWindows.jsx'
 import Audit from './pages/Audit.jsx'
@@ -145,6 +146,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Overview />} />
                 <Route path="/applications" element={<Applications />} />
+                <Route path="/applications/:id" element={<ApplicationDetailPage />} />
                 <Route path="/instances" element={<Instances />} />
                 <Route path="/drift" element={<Drift />} />
                 <Route path="/instances/:id" element={<InstanceDetail />} />

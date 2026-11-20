@@ -11,7 +11,6 @@ import ApplicationCard from '../components/ApplicationCard.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
 import AutoHealChip from '../components/AutoHealChip.jsx'
 import ApplicationHistory from '../components/ApplicationHistory.jsx'
-import ApplicationDetail from '../components/ApplicationDetail.jsx'
 import TopologyView from '../components/TopologyView.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
@@ -19,8 +18,6 @@ import { toast } from '../components/Toast.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 
 const TOPOLOGY_LIMIT = 300
-const DETAIL_INSTANCE_LIMIT = 500
-const ASSIGN_CHOICE_LIMIT = 200
 
 async function fetchAppInstanceIDs(appId) {
   const ids = []
@@ -61,12 +58,6 @@ export default function Applications() {
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
   const [historyApp, setHistoryApp] = useState(null)
-  const [detailApp, setDetailApp] = useState(null)
-  const [detailInstances, setDetailInstances] = useState([])
-  const [detailTotal, setDetailTotal] = useState(0)
-  const [detailAvailable, setDetailAvailable] = useState([])
-  const [detailAvailableTotal, setDetailAvailableTotal] = useState(0)
-  const [detailNonce, setDetailNonce] = useState(0)
   const [topologyInstances, setTopologyInstances] = useState([])
   const [topologyTotal, setTopologyTotal] = useState(0)
   const [search, setSearch] = useState('')
@@ -111,7 +102,7 @@ export default function Applications() {
       setLoading(false)
     }
   }, [])
-  const modalOpen = showForm || !!confirm || !!varsApp || !!historyApp || !!detailApp
+  const modalOpen = showForm || !!confirm || !!varsApp || !!historyApp
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -189,6 +180,17 @@ export default function Applications() {
     setFormError('')
   }
 
+  useEffect(() => {
+    const editId = Number(searchParams.get('edit'))
+    if (!editId || !apps.length || showForm) return
+    const target = apps.find((app) => app.id === editId)
+    if (!target) return
+    openEdit(target)
+    const next = new URLSearchParams(searchParams)
+    next.delete('edit')
+    setSearchParams(next, { replace: true })
+  }, [apps, searchParams, showForm, repos])
+
   const submit = async (e) => {
     e.preventDefault()
     setSaving(true)
@@ -252,8 +254,6 @@ export default function Applications() {
     }
   }
 
-  const openDetail = (app) => setDetailApp(app)
-
   const runApp = async (app, action) => {
     let ids = []
     try {
@@ -294,51 +294,6 @@ export default function Applications() {
       toast.error(e.message)
     }
   }
-  const editFromDetail = (app) => {
-    setDetailApp(null)
-    openEdit(app)
-  }
-  const varsFromDetail = (app) => {
-    setDetailApp(null)
-    setVarsApp(app)
-  }
-  const historyFromDetail = (app) => {
-    setDetailApp(null)
-    setHistoryApp(app)
-  }
-  const deleteFromDetail = (app) => {
-    setDetailApp(null)
-    confirmDelete(app)
-  }
-  const unassignFromDetail = (app, inst) => setConfirm({
-    title: 'Unassign application',
-    message: `Unassign "${app.name}" from "${inst.name}"? The application stays on other instances.`,
-    onConfirm: () => doUnassign(app, inst),
-    variant: 'danger',
-  })
-  const doUnassign = async (app, inst) => {
-    try {
-      await api.unassign(inst.id, app.id)
-      toast.success('Application unassigned')
-      refresh()
-      setDetailNonce((n) => n + 1)
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      setConfirm(null)
-    }
-  }
-  const assignFromDetail = async (app, inst) => {
-    try {
-      await api.assign(inst.id, app.id)
-      toast.success('Application assigned')
-      refresh()
-      setDetailNonce((n) => n + 1)
-    } catch (e) {
-      toast.error(e.message)
-    }
-  }
-
   const f = (k) => ({
     value: form[k],
     onChange: (e) => setForm((p) => ({ ...p, [k]: e.target.value })),
@@ -378,31 +333,6 @@ export default function Applications() {
       return true
     })
   }, [apps, search, projectFilter, repoFilter, focusAppId])
-
-  useEffect(() => {
-    if (!detailApp) {
-      setDetailInstances([])
-      setDetailTotal(0)
-      setDetailAvailable([])
-      setDetailAvailableTotal(0)
-      return undefined
-    }
-    let cancelled = false
-    const project = detailApp.project ? `project=${encodeURIComponent(detailApp.project)}` : 'project=__global__'
-    Promise.all([
-      api.instances(`?app_id=${detailApp.id}&limit=${DETAIL_INSTANCE_LIMIT}`),
-      api.instances(`?${project}&not_app_id=${detailApp.id}&limit=${ASSIGN_CHOICE_LIMIT}&compact=1`),
-    ]).then(([page, available]) => {
-      if (cancelled) return
-      setDetailInstances(page.items || [])
-      setDetailTotal(Number(page.total) || 0)
-      setDetailAvailable(available.items || [])
-      setDetailAvailableTotal(Number(available.total) || 0)
-    }).catch((e) => {
-      if (!cancelled) toast.error(e.message)
-    })
-    return () => { cancelled = true }
-  }, [detailApp, detailNonce])
 
   useEffect(() => {
     if (view !== 'topology' || filteredApps.length === 0) return undefined
@@ -666,7 +596,6 @@ export default function Applications() {
               stats={appStats.get(a.id)}
               repo={matchRepo(a.repo_url, a.project)}
               focused={a.id === focusAppId}
-              onDetail={openDetail}
               onHistory={() => setHistoryApp(a)}
               can={can}
               onCheckAll={() => runApp(a, 'check')}
@@ -722,14 +651,13 @@ export default function Applications() {
                   <tr key={a.id} id={`app-${a.id}`} className={a.id === focusAppId ? 'is-focused' : undefined}>
                     <td>
                       <div className="cell-title">
-                        <button
-                          type="button"
+                        <Link
                           className="app-name-link"
-                          onClick={() => openDetail(a)}
+                          to={`/applications/${a.id}`}
                           title="Open application details"
                         >
                           <strong>{a.name}</strong>
-                        </button>
+                        </Link>
                         <span className="cell-sub">
                           <span className="mono">id {a.id}</span>
                           <span className="mono repo-cell" title={a.repo_url}>{shortRepo(a.repo_url)}</span>
@@ -769,7 +697,7 @@ export default function Applications() {
                     </td>
                     <td>
                       <div className="row-actions">
-                        <Link className="btn ghost small" to={`/instances?app=${a.id}`}>Open</Link>
+                        <Link className="btn ghost small" to={`/applications/${a.id}`}>Open</Link>
                         <QuickMenu label={`Actions for ${a.name}`} items={menu} />
                       </div>
                     </td>
@@ -779,26 +707,6 @@ export default function Applications() {
             </tbody>
           </table>
         </div>
-      )}
-
-      {detailApp && (
-        <ApplicationDetail
-          app={detailApp}
-          stats={appStats.get(detailApp.id)}
-          repo={matchRepo(detailApp.repo_url, detailApp.project)}
-          instances={detailInstances}
-          instancesTotal={detailTotal}
-          availableInstances={detailAvailable}
-          availableTotal={detailAvailableTotal}
-          can={can}
-          onClose={() => setDetailApp(null)}
-          onEdit={editFromDetail}
-          onVars={varsFromDetail}
-          onHistory={historyFromDetail}
-          onDelete={deleteFromDetail}
-          onUnassign={(inst) => unassignFromDetail(detailApp, inst)}
-          onAssign={(inst) => assignFromDetail(detailApp, inst)}
-        />
       )}
 
       {historyApp && (

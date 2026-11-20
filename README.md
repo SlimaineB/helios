@@ -350,6 +350,7 @@ GET    /api/v1/settings               # effective non-secret runtime configurati
 PUT    /api/v1/settings/scanning       # fleet scan interval + jitter (persisted)
 POST   /api/v1/settings/webhook/test   # deliver a test webhook event
 GET    /api/v1/applications
+GET    /api/v1/applications/{appId}
 POST   /api/v1/applications
 PUT    /api/v1/applications/{appId}
 DELETE /api/v1/applications/{appId}
@@ -357,6 +358,7 @@ GET    /api/v1/repositories
 POST   /api/v1/repositories
 PUT    /api/v1/repositories/{repoId}
 DELETE /api/v1/repositories/{repoId}
+POST   /api/v1/repositories/{repoId}/check   # test Git connectivity
 
 GET    /api/v1/projects
 POST   /api/v1/projects          {name, repo_patterns}

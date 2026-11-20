@@ -18,6 +18,7 @@ import (
 
 	"github.com/slim/helios/server/internal/auth"
 	"github.com/slim/helios/server/internal/envutil"
+	"github.com/slim/helios/server/internal/gitops"
 	"github.com/slim/helios/server/internal/metrics"
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
@@ -1444,6 +1445,27 @@ func (s *Server) handleListApplications(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, apps)
 }
 
+func (s *Server) handleGetApplication(w http.ResponseWriter, r *http.Request) {
+	id, ok := appIDParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "missing app id")
+		return
+	}
+	app, err := s.store.GetApplication(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "application not found")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	if !s.requireObject(w, r, "applications.get", app.Project) {
+		return
+	}
+	writeJSON(w, http.StatusOK, app)
+}
+
 func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
 	var in model.Application
 	if err := readJSON(r, &in); err != nil {
@@ -1852,6 +1874,37 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, toRepoView(in))
+}
+
+func (s *Server) handleCheckRepository(w http.ResponseWriter, r *http.Request) {
+	id, ok := repoIDParam(r)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "missing repo id")
+		return
+	}
+	repo, err := s.store.GetRepository(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "repository not found")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	if !s.requireObject(w, r, "repositories.get", repo.Project) {
+		return
+	}
+	err = gitops.Check(r.Context(), repo.URL, gitops.Creds{
+		Username:           repo.Username,
+		Password:           repo.Password,
+		SSHKey:             repo.SSHKey,
+		InsecureSkipVerify: repo.InsecureSkipVerify,
+	})
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "repository connection failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDeleteRepository(w http.ResponseWriter, r *http.Request) {

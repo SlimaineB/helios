@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { LayoutGrid, List, Pencil, Trash2 } from 'lucide-react'
+import { LayoutGrid, List, Pencil, PlugZap, Trash2 } from 'lucide-react'
 import { api, DEFAULT_PROJECT, projectForUi, projectForApi, projectLabel } from '../api/client.js'
 import { useAuth } from '../App.jsx'
 import Modal from '../components/Modal.jsx'
@@ -35,6 +35,7 @@ export default function Repositories() {
   const [form, setForm] = useState(empty)
   const [formError, setFormError] = useState('')
   const [confirm, setConfirm] = useState(null)
+  const [checking, setChecking] = useState(null)
   const [search, setSearch] = useState('')
   const [authFilter, setAuthFilter] = useState('')
   const [view, setView] = useState('cards')
@@ -75,6 +76,18 @@ export default function Repositories() {
       toast.success(editing ? 'Repository updated' : 'Repository created')
       closeForm(); refresh()
     } catch (err) { setFormError(err.message) }
+  }
+
+  const checkRepo = async (repo) => {
+    setChecking(repo.id)
+    try {
+      await api.checkRepository(repo.id)
+      toast.success(`Connection OK: ${repo.url}`)
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setChecking(null)
+    }
   }
 
   const confirmDelete = (repo) => setConfirm({ title: 'Delete repository', message: `Delete "${repo.url}"? Repositories still used by applications cannot be deleted.`, onConfirm: () => doDelete(repo), variant: 'danger' })
@@ -145,6 +158,8 @@ export default function Repositories() {
                 repo={repo}
                 onEdit={openEdit}
                 onDelete={confirmDelete}
+                onCheck={checkRepo}
+                checking={checking === repo.id}
               />
             ))
           )}
@@ -184,6 +199,9 @@ export default function Repositories() {
                   <td>
                     <div className="actions">
                       <Link className="btn ghost small" to={`/applications?repo=${encodeURIComponent(repo.url)}`}>Applications</Link>
+                      <button className="btn ghost small" disabled={checking === repo.id} onClick={() => checkRepo(repo)}>
+                        <PlugZap size={13} /> {checking === repo.id ? 'Testing…' : 'Test'}
+                      </button>
                       <button className="btn ghost small" disabled={!can('repositories', 'update')} onClick={() => openEdit(repo)}>
                         <Pencil size={13} /> Edit
                       </button>

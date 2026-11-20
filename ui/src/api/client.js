@@ -114,6 +114,7 @@ export const api = {
   deleteProject: (id) => request('DELETE', `/api/v1/projects/${id}`),
 
   applications: () => request('GET', '/api/v1/applications'),
+  application: (id) => request('GET', `/api/v1/applications/${id}`),
   applicationStats: () => request('GET', '/api/v1/application-stats'),
   createApplication: (app) => request('POST', '/api/v1/applications', app),
   updateApplication: (app) => request('PUT', `/api/v1/applications/${app.id}`, app),
@@ -130,6 +131,7 @@ export const api = {
   createRepository: (repo) => request('POST', '/api/v1/repositories', repo),
   updateRepository: (repo) => request('PUT', `/api/v1/repositories/${repo.id}`, repo),
   deleteRepository: (id) => request('DELETE', `/api/v1/repositories/${id}`),
+  checkRepository: (id) => request('POST', `/api/v1/repositories/${id}/check`),
 
   configRepos: () => request('GET', '/api/v1/config-repos'),
   createConfigRepo: (repo) => request('POST', '/api/v1/config-repos', repo),

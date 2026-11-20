@@ -1,10 +1,10 @@
 import { Link } from 'react-router-dom'
+import { PlugZap } from 'lucide-react'
 import CopyButton from './CopyButton.jsx'
 import { useAuth } from '../App.jsx'
 import { projectLabel } from '../api/client.js'
-import { toast } from '../components/Toast.jsx'
 
-export default function RepositoryCard({ repo, onEdit, onDelete }) {
+export default function RepositoryCard({ repo, onEdit, onDelete, onCheck, checking }) {
   const { can } = useAuth()
 
   return (
@@ -45,6 +45,9 @@ export default function RepositoryCard({ repo, onEdit, onDelete }) {
       <footer className="card-foot">
         <div className="actions">
           <Link className="btn ghost small" to={`/applications?repo=${encodeURIComponent(repo.url)}`}>Applications</Link>
+          <button className="btn ghost small" disabled={checking} onClick={() => onCheck(repo)} title="Test Git connection">
+            <PlugZap size={13} /> {checking ? 'Testing…' : 'Test'}
+          </button>
           <button className="btn ghost small" disabled={!can('repositories', 'update')} onClick={() => onEdit(repo)}>Edit</button>
           <button className="btn danger small" disabled={!can('repositories', 'delete')} onClick={() => onDelete(repo)}>Delete</button>
         </div>

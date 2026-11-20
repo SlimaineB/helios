@@ -74,6 +74,21 @@ func Sync(ctx context.Context, dir, url, branch string, c Creds) (before, after 
 	return before, head(ctx, dir), nil
 }
 
+// Check verifies that a repository URL is reachable with the given credentials.
+// It uses git ls-remote so no working tree is created.
+func Check(ctx context.Context, url string, c Creds) error {
+	env, cleanup, err := c.env()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	out, err := runGit(ctx, env, gitArgs(c.InsecureSkipVerify, "git", "ls-remote", url, "HEAD")...)
+	if err != nil {
+		return fmt.Errorf("git ls-remote: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func head(ctx context.Context, dir string) string {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return ""

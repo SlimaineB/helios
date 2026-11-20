@@ -92,7 +92,7 @@ function InstancesTree({ instances, onCheckAll, onApplyAll, onHostAutoHeal, can,
               { label: 'Check all applications', icon: ClipboardCheck, onClick: () => onCheckAll?.(inst), disabled: !canRun },
               { label: 'Apply all applications', icon: Play, onClick: () => onApplyAll?.(inst), disabled: !canRun },
               c.total === 1
-                ? { label: 'Open application', icon: Network, to: `/applications?app=${inst.apps[0].application.id}` }
+                ? { label: 'Open application', icon: Network, to: `/applications/${inst.apps[0].application.id}` }
                 : null,
               { separator: true },
               {

@@ -10,7 +10,7 @@ const EMPTY = { instances: 0, synced: 0, unknown: 0, drift: 0, error: 0, stuck: 
 
 const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
 
-export default function ApplicationCard({ app, stats, repo, focused, can, onDetail, onEdit, onDelete, onVars, onHistory, onCheckAll, onApplyAll }) {
+export default function ApplicationCard({ app, stats, repo, focused, can, onEdit, onDelete, onVars, onHistory, onCheckAll, onApplyAll }) {
   const s = { ...EMPTY, ...(stats || {}) }
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0
@@ -48,14 +48,13 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
       <header className="card-head">
         <div className="app-main">
           <div className="cell-title">
-            <button
-              type="button"
+            <Link
               className="app-name-link"
-              onClick={() => onDetail(app)}
+              to={`/applications/${app.id}`}
               title="Open application details"
             >
               <strong className="app-name">{app.name}</strong>
-            </button>
+            </Link>
             <span className="cell-sub">
               <CopyButton value={String(app.id)} size="small" title="Copy app ID" />
               <span className="mono">id {app.id}</span>
@@ -122,22 +121,9 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onDeta
           reason={app.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
         />
         <div className="actions">
-          <button type="button" className="btn ghost small" disabled={!canRun} onClick={onCheckAll} title="Check every node running this application">
-            <ClipboardCheck size={13} /> Check
-          </button>
-          <button type="button" className="btn warn small" disabled={!canRun} onClick={onApplyAll} title="Apply this application to every node running it">
-            <Play size={13} /> Apply
-          </button>
-          <Link
-            className={`btn small${s.drift > 0 ? ' warn' : ''}`}
-            to={`/instances?app=${app.id}`}
-            title={s.drift > 0 ? 'Review nodes with drift' : 'View nodes running this application'}
-          >
-            {s.drift > 0 ? 'Review drift' : 'View nodes'}
+          <Link className={`btn small${s.drift > 0 ? ' warn' : ''}`} to={`/applications/${app.id}`}>
+            <ExternalLink size={13} /> {s.drift > 0 ? 'Review drift' : 'Open'}
           </Link>
-          <button type="button" className="btn ghost small" onClick={() => onDetail(app)}>
-            <ExternalLink size={13} /> Details
-          </button>
         </div>
       </footer>
     </article>

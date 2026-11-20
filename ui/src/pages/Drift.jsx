@@ -201,7 +201,7 @@ export default function Drift() {
                 const tasks = app.latest_check?.changed_tasks || []
                 const menu = [
                   { label: 'Open instance', icon: Server, to: `/instances/${inst.id}` },
-                  { label: 'Open application', icon: History, to: `/applications?app=${app.application.id}` },
+                  { label: 'Open application', icon: History, to: `/applications/${app.application.id}` },
                   { separator: true },
                   {
                     label: 'Check now',
@@ -239,7 +239,7 @@ export default function Drift() {
                       </div>
                     </td>
                     <td>
-                      <Link to={`/applications?app=${app.application.id}`} className="entity-link">{app.application.name}</Link>
+                      <Link to={`/applications/${app.application.id}`} className="entity-link">{app.application.name}</Link>
                       {app.stuck && <div className="cell-sub drift-text">Auto-heal paused after repeated non-convergence</div>}
                     </td>
                     <td>

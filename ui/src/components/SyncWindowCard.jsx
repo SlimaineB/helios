@@ -79,7 +79,7 @@ export default function SyncWindowCard({ window: w, appName, onEdit, onDelete })
             <strong>{w.name}</strong>
             <span className="cell-sub">
               {w.app_id ? (
-                <>Application: <Link className="entity-link" to={`/instances?app=${w.app_id}`}>{appName}</Link></>
+                <>Application: <Link className="entity-link" to={`/applications/${w.app_id}`}>{appName}</Link></>
               ) : 'All applications'}
             </span>
           </div>

@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { GitCommit } from 'lucide-react'
-import Modal from './Modal.jsx'
 import Badge from './Badge.jsx'
 import AutoHealChip from './AutoHealChip.jsx'
 import HealthBadge from './HealthBadge.jsx'
@@ -38,7 +37,6 @@ export default function ApplicationDetail({
   availableInstances,
   availableTotal = 0,
   can,
-  onClose,
   onEdit,
   onVars,
   onDelete,
@@ -108,7 +106,7 @@ export default function ApplicationDetail({
   }
 
   return (
-    <Modal title={`Application · ${app.name}`} onClose={onClose} wide>
+    <div className="app-detail-page">
       <div className="app-detail-head">
         <div>
           <strong className="app-detail-name">{app.name}</strong>
@@ -291,6 +289,6 @@ export default function ApplicationDetail({
           )}
         </div>
       )}
-    </Modal>
+    </div>
   )
 }

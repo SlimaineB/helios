@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ChevronUp, Network, Server, Terminal } from 'lucide-react'
 import { projectLabel, stateLabel, instanceOnline } from '../api/client.js'
 
-const MAX_APPS = 6
+const MAX_HOSTS = 6
 
 const L = {
   pad: 28,
@@ -11,13 +11,14 @@ const L = {
   hubH: 116,
   runnerW: 214,
   runnerH: 92,
-  agentW: 248,
-  agentH: 88,
   appW: 292,
-  appH: 44,
+  appH: 52,
+  hostW: 248,
+  hostH: 88,
   colGap: 92,
   rowGap: 56,
-  appGap: 8,
+  hostGap: 8,
+  moreH: 40,
 }
 const MIN_CANVAS_H = 380
 
@@ -54,6 +55,15 @@ const appState = (app) => {
   return s === 'ok' || s === 'drift' ? s : 'unknown'
 }
 
+const aggregateState = (hosts) => {
+  const seen = new Set(hosts.map((host) => appState(host.assignment)))
+  if (seen.has('error')) return 'error'
+  if (seen.has('stuck')) return 'stuck'
+  if (seen.has('drift')) return 'drift'
+  if (seen.has('ok') && seen.size === 1) return 'ok'
+  return 'unknown'
+}
+
 const relTime = (value) => {
   if (!value) return 'never'
   const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000))
@@ -75,6 +85,31 @@ const edgePath = (edge) => {
   return `M ${edge.x1} ${edge.y1} C ${edge.x1 + bend} ${edge.y1}, ${edge.x2 - bend} ${edge.y2}, ${edge.x2} ${edge.y2}`
 }
 
+function buildGroups(instances) {
+  const byApp = new Map()
+  const unassigned = []
+  for (const inst of instances) {
+    const assignments = inst.apps || []
+    if (!assignments.length) unassigned.push({ inst, assignment: null })
+    for (const assignment of assignments) {
+      const app = assignment.application
+      if (!app) continue
+      let group = byApp.get(app.id)
+      if (!group) {
+        group = { key: `app-${app.id}`, app, hosts: [] }
+        byApp.set(app.id, group)
+      }
+      group.hosts.push({ inst, assignment })
+    }
+  }
+  const groups = [...byApp.values()].sort((a, b) =>
+    projectLabel(a.app.project).localeCompare(projectLabel(b.app.project))
+    || a.app.name.localeCompare(b.app.name)
+    || a.app.id - b.app.id)
+  if (unassigned.length) groups.push({ key: 'unassigned', app: null, hosts: unassigned })
+  return groups
+}
+
 export default function TopologyView({ instances, emptyMessage = 'No instances to display.' }) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState(() => new Set())
@@ -82,12 +117,12 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
 
   const hasTunnels = instances.some((inst) => inst.execution_mode === 'tunnel')
   const runnerX = L.pad + L.hubW + L.colGap
-  const agentX = hasTunnels ? runnerX + L.runnerW + L.colGap : L.pad + L.hubW + L.colGap
-  const appX = agentX + L.agentW + L.colGap
-  const canvasW = appX + L.appW + L.pad
+  const appX = hasTunnels ? runnerX + L.runnerW + L.colGap : L.pad + L.hubW + L.colGap
+  const hostX = appX + L.appW + L.colGap
+  const canvasW = hostX + L.hostW + L.pad
 
   const stats = useMemo(() => {
-    const apps = instances.flatMap((inst) => inst.apps || [])
+    const assignments = instances.flatMap((inst) => inst.apps || [])
     const online = instances.filter(isOnline).length
     const tunnels = instances.filter((inst) => inst.execution_mode === 'tunnel')
     return {
@@ -96,22 +131,42 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
       runners: new Set(tunnels.map(runnerKeyFor)).size,
       online,
       offline: instances.length - online,
-      links: apps.length,
-      unique: new Set(apps.map((app) => app.application.id)).size,
+      links: assignments.length,
+      unique: new Set(assignments.map((app) => app.application.id)).size,
     }
   }, [instances])
 
   const layout = useMemo(() => {
-    const rows = instances.map((inst) => {
-      const allApps = inst.apps || []
-      const isExpanded = expanded.has(inst.id)
-      const displayApps = isExpanded ? allApps : allApps.slice(0, MAX_APPS)
-      const hidden = allApps.length - displayApps.length
-      const showMore = hidden > 0 || (isExpanded && allApps.length > MAX_APPS)
-      const rowCount = displayApps.length + (showMore ? 1 : 0)
-      const appsH = rowCount ? rowCount * L.appH + (rowCount - 1) * L.appGap : 0
-      const groupH = Math.max(L.agentH, appsH)
-      return { inst, allApps, displayApps, hidden, isExpanded, showMore, appsH, groupH }
+    const sourceGroups = buildGroups(instances)
+    const rows = sourceGroups.map((group) => {
+      const allHosts = group.hosts
+      const isExpanded = expanded.has(group.key)
+      const displayHosts = isExpanded ? allHosts : allHosts.slice(0, MAX_HOSTS)
+      const hidden = allHosts.length - displayHosts.length
+      const showMore = hidden > 0 || (isExpanded && allHosts.length > MAX_HOSTS)
+      const moreH = showMore ? L.moreH : 0
+      const hostsH = displayHosts.length * L.hostH
+        + Math.max(0, displayHosts.length - 1) * L.hostGap
+        + (showMore ? (displayHosts.length ? L.hostGap : 0) + moreH : 0)
+      const groupH = Math.max(L.appH, hostsH)
+      const firstRunner = allHosts.length && allHosts.every((host) =>
+        host.inst.execution_mode === 'tunnel'
+        && runnerKeyFor(host.inst) === runnerKeyFor(allHosts[0].inst))
+        ? runnerKeyFor(allHosts[0].inst)
+        : null
+      return {
+        ...group,
+        allHosts,
+        displayHosts,
+        hidden,
+        isExpanded,
+        showMore,
+        moreH,
+        hostsH,
+        groupH,
+        runnerKey: firstRunner,
+        state: group.app ? aggregateState(allHosts) : 'unknown',
+      }
     })
 
     const contentH = rows.reduce((sum, row) => sum + row.groupH, 0)
@@ -120,26 +175,23 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
     let y = (height - contentH) / 2
     const groups = rows.map((row) => {
       const groupTop = y
-      const agentTop = groupTop + (row.groupH - L.agentH) / 2
-      const appsTop = groupTop + (row.groupH - row.appsH) / 2
-      const agentCenter = agentTop + L.agentH / 2
-      const apps = row.displayApps.map((app, i) => ({
-        app,
-        top: appsTop + i * (L.appH + L.appGap),
-      }))
+      const appTop = groupTop + (row.groupH - L.appH) / 2
+      const appCenter = appTop + L.appH / 2
+      const hostsTop = groupTop + (row.groupH - row.hostsH) / 2
+      let hostY = hostsTop
+      const hosts = row.displayHosts.map((host) => {
+        const top = hostY
+        hostY += L.hostH + L.hostGap
+        return { ...host, top }
+      })
+      const moreTop = row.showMore
+        ? (hosts.length ? hosts[hosts.length - 1].top + L.hostH + L.hostGap : hostsTop)
+        : null
       y += row.groupH + L.rowGap
-      return {
-        ...row,
-        runnerKey: row.inst.execution_mode === 'tunnel' ? runnerKeyFor(row.inst) : null,
-        groupTop,
-        agentTop,
-        agentCenter,
-        apps,
-        moreTop: row.showMore ? appsTop + row.displayApps.length * (L.appH + L.appGap) : null,
-      }
+      return { ...row, groupTop, appTop, appCenter, hostsTop, hosts, moreTop }
     })
 
-    const hubCenter = groups.length ? Math.min(height / 2, groups[0].agentCenter) : height / 2
+    const hubCenter = groups.length ? Math.min(height / 2, groups[0].appCenter) : height / 2
     const hubTop = hubCenter - L.hubH / 2
 
     const runnerMap = new Map()
@@ -149,20 +201,27 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
       if (!runner) {
         runner = {
           key: group.runnerKey,
-          gateway: group.inst.tunnel_gateway || 'bastion (gateway not configured)',
+          gateway: group.allHosts[0]?.inst.tunnel_gateway || 'bastion (gateway not configured)',
           groups: [],
-          online: 0,
-          count: 0,
+          appIds: new Set(),
+          instances: new Map(),
         }
         runnerMap.set(group.runnerKey, runner)
       }
       runner.groups.push(group)
-      runner.count += 1
-      if (isOnline(group.inst)) runner.online += 1
+      if (group.app) runner.appIds.add(group.app.id)
+      for (const host of group.allHosts) runner.instances.set(host.inst.id, host.inst)
     }
     const runners = [...runnerMap.values()].map((runner) => {
-      const center = runner.groups.reduce((sum, group) => sum + group.agentCenter, 0) / runner.groups.length
-      return { ...runner, center, top: center - L.runnerH / 2 }
+      const center = runner.groups.reduce((sum, group) => sum + group.appCenter, 0) / runner.groups.length
+      const list = [...runner.instances.values()]
+      return {
+        ...runner,
+        center,
+        top: center - L.runnerH / 2,
+        count: list.length,
+        online: list.filter(isOnline).length,
+      }
     })
     const runnerByKey = new Map(runners.map((runner) => [runner.key, runner]))
 
@@ -172,7 +231,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
         key: `hub-runner-${runner.key}`,
         kind: 'runner-hub',
         runnerKey: runner.key,
-        instanceIds: runner.groups.map((group) => group.inst.id),
+        instanceIds: [...runner.instances.keys()],
         x1: L.pad + L.hubW,
         y1: hubCenter,
         x2: runnerX,
@@ -183,74 +242,84 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
     for (const group of groups) {
       const runner = group.runnerKey ? runnerByKey.get(group.runnerKey) : null
       edges.push({
-        key: `${runner ? 'runner' : 'hub'}-${group.inst.id}`,
-        kind: runner ? 'runner' : 'hub',
+        key: `source-${group.key}`,
+        kind: 'source',
+        appId: group.app?.id || null,
         runnerKey: group.runnerKey,
-        instanceId: group.inst.id,
+        instanceIds: group.allHosts.map((host) => host.inst.id),
         x1: runner ? runnerX + L.runnerW : L.pad + L.hubW,
         y1: runner ? runner.center : hubCenter,
-        x2: agentX,
-        y2: group.agentCenter,
-        tone: isOnline(group.inst) ? 'accent' : 'muted',
+        x2: appX,
+        y2: group.appCenter,
+        tone: group.allHosts.some((host) => isOnline(host.inst)) ? 'accent' : 'muted',
       })
-      for (const { app, top } of group.apps) {
+      for (const host of group.hosts) {
         edges.push({
-          key: `app-${group.inst.id}-${app.application.id}`,
-          kind: 'app',
-          instanceId: group.inst.id,
-          appId: app.application.id,
-          x1: agentX + L.agentW,
-          y1: group.agentCenter,
-          x2: appX,
-          y2: top + L.appH / 2,
-          tone: appState(app),
+          key: `host-${group.key}-${host.inst.id}`,
+          kind: 'app-host',
+          appId: group.app?.id || null,
+          instanceId: host.inst.id,
+          x1: appX + L.appW,
+          y1: group.appCenter,
+          x2: hostX,
+          y2: host.top + L.hostH / 2,
+          tone: group.app ? appState(host.assignment) : (isOnline(host.inst) ? 'accent' : 'muted'),
         })
       }
     }
 
-    return { groups, runners, height, hubTop, hubCenter, edges, runnerX, agentX, appX, canvasW }
-  }, [instances, expanded, runnerX, agentX, appX, canvasW])
+    return { groups, runners, height, hubTop, hubCenter, edges, runnerX, appX, hostX, canvasW }
+  }, [instances, expanded, runnerX, appX, hostX, canvasW])
 
   const edgeActive = (edge) => {
     if (!focus) return true
     if (focus.kind === 'runner') return edge.runnerKey === focus.runnerKey
-    if (edge.kind === 'runner-hub') return (edge.instanceIds || []).includes(focus.instanceId)
-    if (edge.instanceId !== focus.instanceId) return false
-    if (edge.kind === 'hub' || edge.kind === 'runner') return true
-    return focus.kind === 'agent' || focus.appId === edge.appId
+    if (edge.kind === 'runner-hub') {
+      if (focus.kind === 'app') return (edge.instanceIds || []).some((id) =>
+        layout.groups.some((group) => group.app?.id === focus.appId && group.allHosts.some((host) => host.inst.id === id)))
+      if (focus.kind === 'host') return (edge.instanceIds || []).includes(focus.instanceId)
+      return true
+    }
+    if (focus.kind === 'app') return edge.appId === focus.appId
+    if (focus.kind === 'host') {
+      if (edge.instanceId === focus.instanceId) return true
+      return edge.kind === 'source' && (edge.instanceIds || []).includes(focus.instanceId)
+    }
+    return true
   }
 
-  const agentActive = (id, runnerKey) => {
-    if (!focus) return true
-    if (focus.kind === 'runner') return focus.runnerKey === runnerKey
-    return focus.instanceId === id
-  }
-  const runnerActive = (runner) => {
-    if (!focus) return true
-    if (focus.kind === 'runner') return focus.runnerKey === runner.key
-    return runner.groups.some((group) => group.inst.id === focus.instanceId)
-  }
-  const appActive = (instanceId, appId) =>
-    !focus || (focus.instanceId === instanceId
-      && (focus.kind === 'agent' || focus.appId === appId))
+  const groupActive = (group) => !focus
+    || (focus.kind === 'runner' && group.runnerKey === focus.runnerKey)
+    || (focus.kind === 'app' && group.app?.id === focus.appId)
+    || (focus.kind === 'host' && group.allHosts.some((host) => host.inst.id === focus.instanceId))
 
-  const toggleExpanded = (id) => {
+  const hostActive = (group, instanceId) => !focus
+    || (focus.kind === 'host' && focus.instanceId === instanceId)
+    || (focus.kind === 'app' && group.app?.id === focus.appId)
+    || (focus.kind === 'runner' && group.runnerKey === focus.runnerKey)
+
+  const runnerActive = (runner) => !focus
+    || (focus.kind === 'runner' && focus.runnerKey === runner.key)
+    || (focus.kind === 'host' && runner.instances.has(focus.instanceId))
+    || (focus.kind === 'app' && runner.appIds.has(focus.appId))
+
+  const toggleExpanded = (key) => {
     setExpanded((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
   const expandAll = () => {
-    setExpanded(new Set(instances
-      .filter((inst) => (inst.apps || []).length > MAX_APPS)
-      .map((inst) => inst.id)))
+    setExpanded(new Set(layout.groups
+      .filter((group) => group.allHosts.length > MAX_HOSTS)
+      .map((group) => group.key)))
   }
 
-  const hasExpandable = instances.some((inst) => (inst.apps || []).length > MAX_APPS)
-  const anyExpanded = instances.some((inst) => expanded.has(inst.id))
+  const hasExpandable = layout.groups.some((group) => group.allHosts.length > MAX_HOSTS)
+  const anyExpanded = layout.groups.some((group) => expanded.has(group.key))
 
   if (!instances.length) {
     return (
@@ -271,10 +340,10 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
           <span><span className="legend-dot stuck" />Stuck</span>
           <span><span className="legend-dot unknown" />No check</span>
           <span className="legend-divider" />
-          <span><span className="legend-line" />Assignment</span>
+          <span><span className="legend-line" />Application → host</span>
           <span><Terminal size={12} /> Bastion runner</span>
           <span className="legend-divider" />
-          <span>Tunnel path: hub → runner → host</span>
+          <span>Tunnel hosts run through the bastion</span>
         </div>
         <div className="topology-toolbar-actions">
           {hasExpandable && (
@@ -329,7 +398,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                 markerEnd={`url(#topo-arrow-${edge.tone})`}
               />
             ))}
-            {layout.edges.filter((edge) => edge.kind !== 'app').map((edge) => (
+            {layout.edges.filter((edge) => edge.kind !== 'app-host').map((edge) => (
               <path
                 key={`flow-${edge.key}`}
                 d={edgePath(edge)}
@@ -348,9 +417,9 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
               <span>control plane</span>
             </span>
             <span className="topology-hub-stats">
-              <span><b>{stats.instances}</b> instances</span>
+              <span><b>{stats.instances}</b> hosts</span>
+              <span><b>{stats.unique}</b> app{stats.unique === 1 ? '' : 's'}</span>
               <span><b>{stats.runners}</b> runner{stats.runners === 1 ? '' : 's'}</span>
-              <span><b>{stats.tunnels}</b> tunnel{stats.tunnels === 1 ? '' : 's'}</span>
               <span><b>{stats.links}</b> assignments</span>
             </span>
           </div>
@@ -366,7 +435,7 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
               tabIndex={0}
               role="group"
               title={`helios-runner on ${runner.gateway} · executes Ansible through ${plural(runner.count, 'reverse SSH tunnel')}`}
-              aria-label={`Bastion runner ${runner.gateway}, ${plural(runner.count, 'tunnel instance')}`}
+              aria-label={`Bastion runner ${runner.gateway}, ${plural(runner.count, 'tunnel host')}`}
             >
               <span className="topology-runner-icon"><Terminal size={18} /></span>
               <span className="topology-runner-main">
@@ -384,75 +453,83 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
           ))}
 
           {layout.groups.map((group) => {
-            const online = isOnline(group.inst)
-            const aState = agentState(group.inst)
+            const state = group.state
             return (
-              <Fragment key={group.inst.id}>
-                <button
-                  type="button"
-                  className={`topology-node topology-agent agent-${aState} ${group.inst.execution_mode === 'tunnel' ? 'is-tunnel' : ''} ${online ? '' : 'is-offline'} ${agentActive(group.inst.id, group.runnerKey) ? 'is-active' : ''}`}
-                  style={{ left: layout.agentX, top: group.agentTop, width: L.agentW, height: L.agentH }}
-                  onMouseEnter={() => setFocus({ kind: 'agent', instanceId: group.inst.id })}
-                  onFocus={() => setFocus({ kind: 'agent', instanceId: group.inst.id })}
-                  onBlur={() => setFocus(null)}
-                  onClick={() => navigate(`/instances/${group.inst.id}`)}
-                  title={`${group.inst.name} · ${group.inst.execution_mode === 'tunnel' ? `tunnel via ${group.inst.tunnel_gateway || 'bastion'}` : 'agent'} · ${stateLabel(aState)} · ${plural(group.allApps.length, 'application')}`}
-                  aria-label={`Open ${group.inst.execution_mode === 'tunnel' ? 'tunnel instance via bastion' : 'agent'} ${group.inst.name}`}
-                >
-                  <span className={`topology-agent-icon ${aState}`}>
-                    {group.inst.execution_mode === 'tunnel' ? <Network size={18} /> : <Server size={18} />}
-                  </span>
-                  <span className="topology-agent-main">
-                    <span className="topology-agent-title">
-                      <strong>{group.inst.name}</strong>
-                      <span className={`status-dot ${online ? 'online' : 'offline'}`} title={online ? 'online' : 'offline'} />
-                    </span>
-                    <span className="topology-agent-meta">
-                      <span className={`topology-mode-badge ${group.inst.execution_mode === 'tunnel' ? 'is-tunnel' : ''}`}>
-                        {group.inst.execution_mode === 'tunnel' ? 'bastion' : 'agent'}
+              <Fragment key={group.key}>
+                {group.app ? (
+                  <button
+                    type="button"
+                    className={`topology-node topology-app tone-${state} ${groupActive(group) ? 'is-active' : ''}`}
+                    style={{ left: layout.appX, top: group.appTop, width: L.appW, height: L.appH }}
+                    onMouseEnter={() => setFocus({ kind: 'app', appId: group.app.id })}
+                    onFocus={() => setFocus({ kind: 'app', appId: group.app.id })}
+                    onBlur={() => setFocus(null)}
+                    onClick={() => navigate(`/applications/${group.app.id}`)}
+                    title={`${group.app.name} · ${APP_STATE_LABEL[state]} · ${plural(group.allHosts.length, 'host')}`}
+                    aria-label={`Open application ${group.app.name}`}
+                  >
+                    <span className={`status-dot ${state}`} />
+                    <span className="topology-app-copy">
+                      <span className="topology-app-name">{group.app.name}</span>
+                      <span className="topology-app-sub">
+                        {projectLabel(group.app.project)} · {group.app.branch || 'main'}
+                        {' · '}{plural(group.allHosts.length, 'host')}
                       </span>
-                      <span className="project-badge">{projectLabel(group.inst.project)}</span>
-                      <span>{plural(group.allApps.length, 'app')}</span>
-                      {group.inst.version && <span>v{group.inst.version}</span>}
                     </span>
-                    <span className="topology-agent-foot">
-                      <span className={`state-badge ${aState}`}>{stateLabel(aState)}</span>
-                      <span>{online ? `seen ${relTime(group.inst.last_seen)}` : `offline · ${relTime(group.inst.last_seen)}`}</span>
-                    </span>
-                  </span>
-                  <ChevronRight size={15} className="topology-node-chevron" />
-                </button>
+                    <span className={`topology-app-state ${state}`}>{APP_STATE_LABEL[state]}</span>
+                  </button>
+                ) : (
+                  <div
+                    className="topology-app-empty"
+                    style={{
+                      left: layout.appX,
+                      top: group.appTop,
+                      width: L.appW,
+                      height: L.appH,
+                    }}
+                  >
+                    No application assigned
+                  </div>
+                )}
 
-                {group.apps.map(({ app, top }) => {
-                  const state = appState(app)
-                  const lastCheck = app.latest_check?.finished_at
-                    ? new Date(app.latest_check.finished_at).toLocaleString()
-                    : 'never'
+                {group.hosts.map(({ inst, top }) => {
+                  const online = isOnline(inst)
+                  const aState = agentState(inst)
                   return (
                     <button
                       type="button"
-                      key={`${group.inst.id}-${app.application.id}`}
-                      className={`topology-node topology-app tone-${state} ${appActive(group.inst.id, app.application.id) ? 'is-active' : ''}`}
-                      style={{ left: layout.appX, top, width: L.appW, height: L.appH }}
-                      onMouseEnter={() => setFocus({ kind: 'app', instanceId: group.inst.id, appId: app.application.id })}
-                      onFocus={() => setFocus({ kind: 'app', instanceId: group.inst.id, appId: app.application.id })}
+                      key={`${group.key}-${inst.id}`}
+                      className={`topology-node topology-agent topology-host agent-${aState} ${inst.execution_mode === 'tunnel' ? 'is-tunnel' : ''} ${online ? '' : 'is-offline'} ${hostActive(group, inst.id) ? 'is-active' : ''}`}
+                      style={{ left: layout.hostX, top, width: L.hostW, height: L.hostH }}
+                      onMouseEnter={() => setFocus({ kind: 'host', instanceId: inst.id })}
+                      onFocus={() => setFocus({ kind: 'host', instanceId: inst.id })}
                       onBlur={() => setFocus(null)}
-                      onClick={() => navigate(`/applications?app=${app.application.id}`)}
-                      title={`${app.application.name} on ${group.inst.name} · ${APP_STATE_LABEL[state]} · last check ${lastCheck}`}
-                      aria-label={`Open application ${app.application.name}`}
+                      onClick={() => navigate(`/instances/${inst.id}`)}
+                      title={`${inst.name} · ${group.app ? `runs ${group.app.name}` : 'no application'} · ${inst.execution_mode === 'tunnel' ? `tunnel via ${inst.tunnel_gateway || 'bastion'}` : 'agent'} · ${stateLabel(aState)}`}
+                      aria-label={`Open ${inst.execution_mode === 'tunnel' ? 'tunnel host via bastion' : 'agent'} ${inst.name}`}
                     >
-                      <span className={`status-dot ${state}`} />
-                      <span className="topology-app-copy">
-                        <span className="topology-app-name">{app.application.name}</span>
-                        <span className="topology-app-sub">
-                          {app.target_revision
-                            ? `pinned ${app.target_revision.slice(0, 7)}`
-                            : app.application.branch}
-                          {' · app #'}
-                          {app.application.id}
+                      <span className={`topology-agent-icon ${aState}`}>
+                        {inst.execution_mode === 'tunnel' ? <Network size={18} /> : <Server size={18} />}
+                      </span>
+                      <span className="topology-agent-main">
+                        <span className="topology-agent-title">
+                          <strong>{inst.name}</strong>
+                          <span className={`status-dot ${online ? 'online' : 'offline'}`} title={online ? 'online' : 'offline'} />
+                        </span>
+                        <span className="topology-agent-meta">
+                          <span className={`topology-mode-badge ${inst.execution_mode === 'tunnel' ? 'is-tunnel' : ''}`}>
+                            {inst.execution_mode === 'tunnel' ? 'bastion' : 'agent'}
+                          </span>
+                          <span className="project-badge">{projectLabel(inst.project)}</span>
+                          <span>{plural((inst.apps || []).length, 'app')}</span>
+                          {inst.version && <span>v{inst.version}</span>}
+                        </span>
+                        <span className="topology-agent-foot">
+                          <span className={`state-badge ${aState}`}>{stateLabel(aState)}</span>
+                          <span>{online ? `seen ${relTime(inst.last_seen)}` : `offline · ${relTime(inst.last_seen)}`}</span>
                         </span>
                       </span>
-                      <span className={`topology-app-state ${state}`}>{APP_STATE_LABEL[state]}</span>
+                      <ChevronRight size={15} className="topology-node-chevron" />
                     </button>
                   )
                 })}
@@ -461,26 +538,12 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                   <button
                     type="button"
                     className="topology-more"
-                    style={{ left: layout.appX, top: group.moreTop, width: L.appW, height: L.appH }}
-                    onClick={() => toggleExpanded(group.inst.id)}
+                    style={{ left: layout.hostX, top: group.moreTop, width: L.hostW, height: L.moreH }}
+                    onClick={() => toggleExpanded(group.key)}
                   >
                     {group.isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {group.isExpanded ? 'Show less' : `Show ${plural(group.hidden, 'more application')}`}
+                    {group.isExpanded ? 'Show fewer hosts' : `Show ${plural(group.hidden, 'more host')}`}
                   </button>
-                )}
-
-                {group.apps.length === 0 && (
-                  <div
-                    className="topology-app-empty"
-                    style={{
-                      left: layout.appX,
-                      top: group.groupTop + (group.groupH - L.appH) / 2,
-                      width: L.appW,
-                      height: L.appH,
-                    }}
-                  >
-                    No applications assigned
-                  </div>
                 )}
               </Fragment>
             )
