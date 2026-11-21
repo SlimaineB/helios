@@ -1410,7 +1410,31 @@ details summary { cursor: pointer; color: var(--muted); }
   font-weight: 600;
 }
 .filter-chip.mono { font-family: var(--font-mono); font-size: 11px; font-weight: 500; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-filter-chip { margin-left: .55rem; vertical-align: middle; }
+
+/* ------------------------------------------------------ instance detail tabs */
+.detail-tabs { margin: 0 0 .85rem; }
+.detail-tabs .seg-btn { padding: 6px 14px; font-size: 12.5px; }
+.detail-tab-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-align: center;
+}
+.detail-tabs .seg-btn.active .detail-tab-count { color: var(--accent); background: var(--accent-soft); }
+
+.run-table td { vertical-align: middle; }
+.run-table td:first-child { white-space: nowrap; }
+.run-commit, .run-when { white-space: nowrap; }
+.run-summary {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ----------------------------------------------------------- sync windows */
 .field-label {

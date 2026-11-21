@@ -12,12 +12,13 @@ import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import VariableEditor from '../components/VariableEditor.jsx'
 import Pager from '../components/Pager.jsx'
 import RegionPicker from '../components/RegionPicker.jsx'
+import QuickMenu from '../components/QuickMenu.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Modal from '../components/Modal.jsx'
-import CopyButton from '../components/CopyButton.jsx'
+import CopyButton, { copyText } from '../components/CopyButton.jsx'
 import TagList, { formatTags, parseTags } from '../components/TagList.jsx'
 import TunnelDiagram from '../components/TunnelDiagram.jsx'
-import { SkeletonCard, SkeletonTable, SkeletonEmpty } from '../components/Skeleton.jsx'
+import { SkeletonCard, SkeletonTable } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 
@@ -44,7 +45,8 @@ export default function InstanceDetail() {
   const [tagsValue, setTagsValue] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [regions, setRegions] = useState([])
-  const historyRef = useRef(null)
+  const [tab, setTab] = useState('apps')
+  const tabsRef = useRef(null)
 
   const appNamesById = useMemo(
     () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
@@ -241,8 +243,9 @@ export default function InstanceDetail() {
   }
   const filterAppLogs = (app) => {
     setAppFilter(String(app.application.id))
+    setTab('history')
     requestAnimationFrame(() => {
-      historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
   }
 
@@ -362,8 +365,32 @@ export default function InstanceDetail() {
         </div>
       </details>
 
-      <h2>Applications <span className="muted detail-count">{inst.apps.length}</span></h2>
-      {inst.apps.length === 0 && <SkeletonEmpty lines={2} />}
+      <div className="seg detail-tabs" role="tablist" aria-label="Instance detail sections" ref={tabsRef}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'apps'}
+          className={'seg-btn' + (tab === 'apps' ? ' active' : '')}
+          onClick={() => setTab('apps')}
+        >
+          Applications <span className="detail-tab-count">{inst.apps.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'history'}
+          className={'seg-btn' + (tab === 'history' ? ' active' : '')}
+          onClick={() => setTab('history')}
+        >
+          Run history <span className="detail-tab-count">{runsTotal}</span>
+        </button>
+      </div>
+
+      {tab === 'apps' ? (
+        <>
+      {inst.apps.length === 0 && (
+        <div className="empty"><p className="muted">No applications assigned.</p></div>
+      )}
       {inst.apps.map((a) => {
         const pending = commands.pending[`${inst.id}:${a.application.id}`]
         const ah = appAutoHealMeta(inst, a)
@@ -391,11 +418,16 @@ export default function InstanceDetail() {
             )}
             <span className="mono muted"><CopyButton value={a.application.repo_url} label="" size="small" title="Copy repo URL" />{a.application.repo_url}</span>
             <span className="actions">
-              <button className="small" disabled={!can('instances', 'update')} onClick={() => setVarsApp(a.application)}>Host vars</button>{' '}
               <button className="small" title="Filter run history to this application" onClick={() => filterAppLogs(a)}><Filter size={13} /> Filter logs</button>{' '}
               <button className="small warn" title="Apply the desired configuration now" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'apply'} onClick={() => commands.run(inst.id, a.application.id, 'apply')}>{pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}Apply now</button>{' '}
               <button className="small" title="Check for drift without changing the host" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check now</button>{' '}
-              <button className="small danger" disabled={!can('instances', 'update')} onClick={() => confirmUnassign(a)} title="Remove this application from this instance only">Unassign</button>
+              <QuickMenu
+                label={`More actions for ${a.application.name}`}
+                items={[
+                  { label: 'Host variables', onClick: () => setVarsApp(a.application), disabled: !can('instances', 'update') },
+                  { label: 'Unassign application', onClick: () => confirmUnassign(a), disabled: !can('instances', 'update'), danger: true },
+                ]}
+              />
             </span>
           </div>
 
@@ -434,53 +466,76 @@ export default function InstanceDetail() {
         )
       })}
 
-      {inst && inst.apps.length && (
-        <div className="filters" style={{ marginBottom: '12px' }} ref={historyRef}>
-          <label htmlFor="history-app-filter">Application</label>
-          <select
-            id="history-app-filter"
-            value={appFilter}
-            onChange={(e) => setAppFilter(e.target.value)}
-            title="Filter run history by application"
-          >
-            <option value="">All applications</option>
-            {inst.apps.map((a) => (
-              <option key={a.application.id} value={String(a.application.id)}>{a.application.name}</option>
-            ))}
-            {appFilter && !appFilterName && <option value={appFilter}>Application #{appFilter}</option>}
-          </select>
-          {appFilter && (
-            <button type="button" className="ghost small" onClick={() => setAppFilter('')}>Clear</button>
+        </>
+      ) : (
+        <>
+          {inst.apps.length > 0 && (
+            <div className="filters" style={{ marginBottom: '12px' }}>
+              <label htmlFor="history-app-filter">Application</label>
+              <select
+                id="history-app-filter"
+                value={appFilter}
+                onChange={(e) => setAppFilter(e.target.value)}
+                title="Filter run history by application"
+              >
+                <option value="">All applications</option>
+                {inst.apps.map((a) => (
+                  <option key={a.application.id} value={String(a.application.id)}>{a.application.name}</option>
+                ))}
+                {appFilter && !appFilterName && <option value={appFilter}>Application #{appFilter}</option>}
+              </select>
+              {appFilterName && (
+                <button type="button" className="ghost small" onClick={() => setAppFilter('')}>Clear filter</button>
+              )}
+            </div>
           )}
-        </div>
+          <div className="table-wrap">
+            <table className="grid run-table">
+              <thead><tr><th>#</th><th>Mode</th><th>Status</th><th style={{ width: '140px' }}>Application</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th style={{ width: '56px' }} aria-label="Actions" /></tr></thead>
+              <tbody>
+                {runs.map((r) => (
+                  <tr key={r.id}>
+                    <td className="mono run-id">#{r.id}</td>
+                    <td>{r.mode === 'apply' ? 'Apply' : 'Check'}</td>
+                    <td><Badge state={r.status} label={r.status} small /></td>
+                    <td className="mono">{appNamesById.get(r.app_id) || `#${r.app_id}`}</td>
+                    <td>{r.trigger}</td>
+                    <td className="mono run-commit" title={[r.commit_after, r.commit_msg].filter(Boolean).join(' — ')}>{r.commit_after?.slice(0, 9) || '—'}</td>
+                    <td className="mono run-summary" title={Object.entries(r.summary || {}).map(([k, v]) => `${k}:${v}`).join(' ')}>{Object.entries(r.summary || {}).map(([k, v]) => `${k}:${v}`).join(' ')}</td>
+                    <td className="muted run-when">{new Date(r.finished_at).toLocaleString()}</td>
+                    <td>
+                      <QuickMenu
+                        label={`Actions for run ${r.id}`}
+                        items={[
+                          {
+                            label: 'Copy run ID',
+                            onClick: async () => {
+                              const ok = await copyText(String(r.id))
+                              if (ok) toast.success('Copied run ID', 1500)
+                              else toast.error('Failed to copy', 2000)
+                            },
+                          },
+                          { separator: true },
+                          r.mode === 'check' && r.status === 'drift'
+                            ? { label: 'Review drift', onClick: () => setDiffRun(r.id) }
+                            : null,
+                          { label: 'View logs', onClick: () => setLogRun({ runId: r.id, view: 'text' }) },
+                          r.commit_after ? { separator: true } : null,
+                          r.commit_after
+                            ? { label: 'Rollback to this commit', onClick: () => confirmRollback(r), disabled: !can('instances', 'update'), danger: true }
+                            : null,
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+                {runs.length === 0 && <tr><td colSpan={9} className="muted">{appFilter ? 'No runs for this application.' : 'No runs yet.'}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <Pager total={runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
+        </>
       )}
-      <h2>
-        Run history
-        {appFilterName && <span className="filter-chip history-filter-chip">{appFilterName}</span>}
-      </h2>
-      <table className="grid">
-        <thead><tr><th>#</th><th>Mode</th><th>Status</th><th style={{ width: '140px' }}>Application</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th></th></tr></thead>
-        <tbody>
-          {runs.map((r) => (
-            <tr key={r.id}>
-              <td className="mono"><CopyButton value={String(r.id)} label="" size="small" title="Copy run ID" />{r.id}</td>
-              <td>{r.mode === 'apply' ? 'Apply' : 'Check'}</td>
-              <td><Badge state={r.status} label={r.status} small /></td>
-              <td className="mono">{appNamesById.get(r.app_id) || `#${r.app_id}`}</td>
-              <td>{r.trigger}</td>
-              <td className="commit-cell" title={r.commit_msg}><span className="mono"><CopyButton value={r.commit_after || ''} label="" size="small" title="Copy commit" />{r.commit_after?.slice(0, 9) || '—'}</span> {r.commit_msg && <span className="sub">{r.commit_msg}</span>}</td>
-              <td className="mono">{Object.entries(r.summary || {}).map(([k, v]) => `${k}:${v}`).join(' ')}</td>
-              <td className="muted">{new Date(r.finished_at).toLocaleString()}</td>
-              <td>
-                {r.mode === 'check' && r.status === 'drift' && <><button className="small warn" title="Review this drift diff" onClick={() => setDiffRun(r.id)}>Review drift</button>{' '}</>}
-                {r.commit_after && <><button className="small warn" disabled={!can('instances', 'update')} title="pin this assignment to this commit and re-apply" onClick={() => confirmRollback(r)}>Rollback</button>{' '}</>}
-                <button className="small" title="View the full run log" onClick={() => setLogRun({ runId: r.id, view: 'text' })}>View logs</button>
-              </td>
-            </tr>
-          ))}
-          {runs.length === 0 && <tr><td colSpan={9} className="muted">{appFilter ? 'No runs for this application.' : 'No runs yet.'}</td></tr>}
-        </tbody>
-      </table>
 
       {logRun && <LogsModal runId={logRun.runId} initialView={logRun.view} onClose={() => setLogRun(null)} />}
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
@@ -514,7 +569,6 @@ export default function InstanceDetail() {
         </Modal>
       )}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
-      <Pager total={runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
     </section>
   )
 }

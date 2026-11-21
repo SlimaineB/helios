@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { toast } from './Toast.jsx'
 
-async function copyText(text) {
+export async function copyText(text) {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text)
