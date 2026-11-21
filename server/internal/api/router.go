@@ -97,6 +97,8 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/regions/{regionId}", s.op("regions.update", s.handleUpdateRegion))
 	m.HandleFunc("DELETE /api/v1/regions/{regionId}", s.op("regions.delete", s.handleDeleteRegion))
 
+	m.HandleFunc("GET /api/v1/sync-lock", s.op("windows.get", s.handleGetSyncLock))
+	m.HandleFunc("PUT /api/v1/sync-lock", s.op("windows.update", s.handleSetSyncLock))
 	m.HandleFunc("GET /api/v1/sync-windows", s.op("windows.get", s.handleListSyncWindows))
 	m.HandleFunc("POST /api/v1/sync-windows", s.op("windows.create", s.handleCreateSyncWindow))
 	m.HandleFunc("PUT /api/v1/sync-windows/{windowId}", s.op("windows.update", s.handleUpdateSyncWindow))

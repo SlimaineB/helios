@@ -110,6 +110,8 @@ export const api = {
   bulkCommands: (action, instanceIds, appId) =>
     request('POST', '/api/v1/bulk/commands', { action, instance_ids: instanceIds, app_id: appId || 0 }),
 
+  syncLock: () => request('GET', '/api/v1/sync-lock'),
+  setSyncLock: (body) => request('PUT', '/api/v1/sync-lock', body),
   syncWindows: () => request('GET', '/api/v1/sync-windows'),
   createSyncWindow: (w) => request('POST', '/api/v1/sync-windows', w),
   updateSyncWindow: (id, w) => request('PUT', `/api/v1/sync-windows/${id}`, w),

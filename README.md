@@ -191,6 +191,11 @@ checks and drift reporting keep running, autoheal is turned off in the checkin
 response, and manual Sync/Rollback return `409` (events still record the
 attempt). This is the ArgoCD maintenance-window analogue, evaluated server-side.
 
+For prod incidents there is also an **emergency global sync lock**
+(`Sync windows` page, `/api/v1/sync-lock`): one toggle with a mandatory reason
+freezes every apply/sync immediately, fleet-wide, while checks keep running. A
+red banner is shown on every page while it is active.
+
 ### Notifications, retention, live updates, metrics, audit
 
 - **Webhook**: set `HELIOS_WEBHOOK_URL` (optionally `HELIOS_WEBHOOK_SECRET` for an

@@ -719,7 +719,7 @@ func (s *Server) appsForInstances(ctx context.Context, insts []model.Instance, w
 			StuckAt:        a.StuckAt,
 			LastCheckAt:    a.LastCheckAt,
 			TargetRevision: a.TargetRevision,
-			Frozen:         syncwindows.Frozen(windows, app.ID, now),
+			Frozen:         syncwindows.Frozen(windows, app.ID, now) || s.globalSyncFrozen(ctx),
 		}
 		if a.AutoHeal != nil {
 			as.AutoHealSet = true
@@ -1091,7 +1091,7 @@ func (s *Server) handleSetRevision(w http.ResponseWriter, r *http.Request) {
 			Event: "sync_blocked", InstanceID: id, AppID: appID,
 			Mode: model.ActionApply, Message: "rollback frozen by a maintenance window",
 		})
-		writeErr(w, http.StatusConflict, "sync is frozen by a maintenance window")
+		writeErr(w, http.StatusConflict, "sync is locked globally or by a maintenance window")
 		return
 	}
 	if err := s.store.SetAssignmentTargetRevision(r.Context(), id, appID, rev); err != nil {
@@ -1145,9 +1145,9 @@ func (s *Server) handleCreateInstanceCommand(w http.ResponseWriter, r *http.Requ
 		metrics.Frozen(body.AppID)
 		s.notifyEvent(r.Context(), notify.Event{
 			Event: "sync_blocked", InstanceID: id, AppID: body.AppID,
-			Mode: model.ActionApply, Message: "sync frozen by a maintenance window",
+			Mode: model.ActionApply, Message: "sync locked globally or by a maintenance window",
 		})
-		writeErr(w, http.StatusConflict, "sync is frozen by a maintenance window")
+		writeErr(w, http.StatusConflict, "sync is locked globally or by a maintenance window")
 		return
 	}
 	c, err := s.store.CreateCommand(r.Context(), model.Command{
@@ -1250,6 +1250,9 @@ func (s *Server) handleListApplicationRuns(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) frozen(ctx context.Context, appID int64) bool {
+	if s.globalSyncFrozen(ctx) {
+		return true
+	}
 	windows, err := s.store.ListSyncWindows(ctx)
 	if err != nil {
 		// A window lookup failure must not block operations; the caller still
@@ -1258,6 +1261,73 @@ func (s *Server) frozen(ctx context.Context, appID int64) bool {
 		return false
 	}
 	return syncwindows.Frozen(windows, appID, time.Now())
+}
+
+// ---- global emergency sync lock ----
+
+const syncLockSetting = "global_sync_lock"
+
+type syncLock struct {
+	Enabled bool      `json:"enabled"`
+	Reason  string    `json:"reason,omitempty"`
+	At      time.Time `json:"at,omitempty"`
+}
+
+func (s *Server) globalSyncFrozen(ctx context.Context) bool {
+	raw, err := s.store.GetRuntimeSetting(ctx, syncLockSetting)
+	if err != nil {
+		return false
+	}
+	var lock syncLock
+	if err := json.Unmarshal([]byte(raw), &lock); err != nil {
+		return false
+	}
+	return lock.Enabled
+}
+
+func (s *Server) handleGetSyncLock(w http.ResponseWriter, r *http.Request) {
+	lock := syncLock{}
+	if raw, err := s.store.GetRuntimeSetting(r.Context(), syncLockSetting); err == nil {
+		_ = json.Unmarshal([]byte(raw), &lock)
+	}
+	writeJSON(w, http.StatusOK, lock)
+}
+
+type syncLockInput struct {
+	Enabled *bool  `json:"enabled"`
+	Reason  string `json:"reason"`
+}
+
+func (s *Server) handleSetSyncLock(w http.ResponseWriter, r *http.Request) {
+	var in syncLockInput
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if in.Enabled == nil {
+		writeErr(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if *in.Enabled && reason == "" {
+		writeErr(w, http.StatusBadRequest, "a reason is required when locking syncs globally")
+		return
+	}
+	lock := syncLock{Enabled: *in.Enabled, Reason: reason}
+	if *in.Enabled {
+		lock.At = time.Now().UTC()
+	}
+	raw, err := json.Marshal(lock)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.store.SetRuntimeSetting(r.Context(), syncLockSetting, string(raw)); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.publishEvent(hubEvent{Type: "sync-lock", Status: map[bool]string{true: "locked", false: "unlocked"}[lock.Enabled]})
+	writeJSON(w, http.StatusOK, lock)
 }
 
 // ---- audit log (operator) ----
@@ -2141,8 +2211,9 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		if a.Stuck {
 			app.AutoHeal = false
 		}
-		// Maintenance windows suppress autoheal but never checks.
-		if syncwindows.Frozen(windows, app.ID, time.Now()) {
+		// Maintenance windows and the global emergency lock suppress autoheal
+		// but never checks.
+		if syncwindows.Frozen(windows, app.ID, time.Now()) || s.globalSyncFrozen(r.Context()) {
 			app.AutoHeal = false
 		}
 		// Resolve the git connection from the repositories registry so the

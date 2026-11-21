@@ -22,6 +22,7 @@ import CommandPalette from './components/CommandPalette.jsx'
 import Glossary from './components/Glossary.jsx'
 import Sidebar, { SidebarProvider } from './components/Sidebar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import SyncLockBanner from './components/SyncLockBanner.jsx'
 import HeliosMark from './components/HeliosMark.jsx'
 import { CircleHelp, Menu } from 'lucide-react'
 
@@ -117,6 +118,7 @@ export default function App() {
           {glossaryOpen && <Glossary onClose={() => setGlossaryOpen(false)} />}
           <Sidebar can={can} />
           <main className="content">
+            <SyncLockBanner />
             <header className="topbar">
               <button className="mobile-menu-btn" onClick={() => {
                 window.dispatchEvent(new CustomEvent('sidebar:toggle'))

@@ -2846,3 +2846,26 @@ input:focus, select:focus, textarea:focus {
 .rbac-form .btn { white-space: nowrap; }
 .rbac-table { max-height: none; }
 .rbac-table td { vertical-align: middle; }
+
+/* ------------------------------------------------------- global sync lock */
+.sync-lock-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 1rem;
+  padding: 10px 12px;
+  border: 1px solid #f6c9cf;
+  border-radius: 12px;
+  background: var(--err-soft);
+  color: #8f1d29;
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: 0 10px 26px -22px rgba(217, 59, 74, .8);
+}
+.sync-lock-bar { margin-bottom: .8rem; }
+.sync-lock-bar.locked {
+  border-color: #f6c9cf;
+  background: linear-gradient(90deg, var(--err-soft), #fff);
+}
+.sync-lock-bar .host-setting-copy strong { display: inline-flex; align-items: center; gap: 6px; color: #8f1d29; }
+.sync-lock-reason input { min-width: 280px; flex: 1 1 320px; }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AlertTriangle, Lock } from 'lucide-react'
 import { api } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
@@ -44,12 +45,45 @@ export default function SyncWindows() {
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirm, setConfirm] = useState(null)
+  const [lock, setLock] = useState(null)
+  const [lockReason, setLockReason] = useState('')
 
   const refresh = useCallback(async () => {
-    try { setLoading(true); const [w, a] = await Promise.all([api.syncWindows(), api.applications()]); setWindows(w); setApps(a) }
+    try {
+      setLoading(true)
+      const [w, a, l] = await Promise.all([api.syncWindows(), api.applications(), api.syncLock().catch(() => null)])
+      setWindows(w); setApps(a); setLock(l)
+    }
     catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }, [])
+
+  const toggleLock = (enabled) => {
+    if (!can('windows', 'update')) return
+    if (enabled && !lockReason.trim()) {
+      toast.error('A reason is required when locking syncs globally')
+      return
+    }
+    setConfirm({
+      title: enabled ? 'Lock all syncs now?' : 'Unlock syncs?',
+      message: enabled
+        ? `This immediately freezes every apply/sync fleet-wide. Checks still run, so drift keeps accumulating until you unlock. Reason: ${lockReason.trim()}`
+        : 'Syncs and auto-applies will be allowed again according to the configured autoheal/window rules.',
+      variant: enabled ? 'danger' : undefined,
+      onConfirm: async () => {
+        setConfirm(null)
+        try {
+          const next = await api.setSyncLock({ enabled, reason: lockReason.trim() })
+          setLock(next)
+          toast.success(enabled ? 'Global sync lock enabled' : 'Global sync lock disabled')
+          if (!enabled) setLockReason('')
+          await refresh()
+        } catch (e) {
+          toast.error(e.message)
+        }
+      },
+    })
+  }
   useEffect(() => { refresh() }, [refresh])
 
   const openNew = () => { setEditing(null); setForm({ ...empty }); setFormError(''); setShowForm(true) }
@@ -101,6 +135,41 @@ export default function SyncWindows() {
         Control when deployments can run. A <strong>block</strong> window freezes syncs while it is active;
         an <strong>allow</strong> window only permits syncs during it. Checks and drift detection always run.
       </p>
+
+      <div className={`host-setting-bar sync-lock-bar${lock?.enabled ? ' locked' : ''}`}>
+        <div className="host-setting-copy">
+          <strong><Lock size={14} /> Emergency sync lock</strong>
+          <span className="sub muted">
+            Immediately freezes every sync/apply fleet-wide. Checks and drift detection still run, so drift can accumulate while locked.
+          </span>
+        </div>
+        {lock?.enabled && (
+          <span className="state-badge failed" title={lock.reason || ''}>
+            <AlertTriangle size={12} /> locked
+          </span>
+        )}
+        <label className="switch" title={lock?.enabled ? 'Unlock all syncs' : 'Lock all syncs now'}>
+          <input
+            type="checkbox"
+            checked={!!lock?.enabled}
+            disabled={!can('windows', 'update')}
+            onChange={(e) => toggleLock(e.target.checked)}
+          />
+          <span className="slider" />
+        </label>
+      </div>
+      {can('windows', 'update') && (
+        <div className="filters sync-lock-reason">
+          <label htmlFor="sync-lock-reason">Lock reason</label>
+          <input
+            id="sync-lock-reason"
+            value={lockReason}
+            onChange={(e) => setLockReason(e.target.value)}
+            placeholder="INC-1234: payment regression, freeze deploys"
+          />
+          <span className="sub muted">Required when enabling the lock; shown in the global warning banner.</span>
+        </div>
+      )}
 
       <div className="row-toolbar">
         <span className="muted">{windows.length} window{windows.length === 1 ? '' : 's'}</span>
