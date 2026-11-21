@@ -71,6 +71,59 @@ func (s *Server) handleRunnerInstances(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"instances": insts})
 }
 
+type runnerSummary struct {
+	Instances    int        `json:"instances"`
+	Online       int        `json:"online"`
+	WithPort     int        `json:"with_port"`
+	LastTunnelAt *time.Time `json:"last_tunnel_at,omitempty"`
+}
+
+type runnerInventory struct {
+	Enabled    bool             `json:"enabled"`
+	Configured bool             `json:"configured"`
+	Gateway    string           `json:"gateway,omitempty"`
+	PortMin    int              `json:"port_min"`
+	PortMax    int              `json:"port_max"`
+	Summary    runnerSummary    `json:"summary"`
+	Instances  []model.Instance `json:"instances"`
+}
+
+// handleRunnerInventory is the operator-facing view of the agentless runner
+// setup. It never exposes the shared runner token: only whether the API is
+// enabled and which tunnel instances the persistent bastion runner can reach.
+func (s *Server) handleRunnerInventory(w http.ResponseWriter, r *http.Request) {
+	insts, err := s.store.ListTunnelInstances(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := runnerInventory{
+		Enabled:   s.runnerTokenHash != "",
+		Gateway:   s.tunnelGateway,
+		PortMin:   s.tunnelPortMin,
+		PortMax:   s.tunnelPortMax,
+		Instances: make([]model.Instance, 0, len(insts)),
+	}
+	for i := range insts {
+		inst := s.decorateInstance(insts[i])
+		out.Instances = append(out.Instances, inst)
+		out.Summary.Instances++
+		if inst.Online {
+			out.Summary.Online++
+		}
+		if inst.TunnelPort > 0 {
+			out.Summary.WithPort++
+		}
+		if !inst.LastTunnelAt.IsZero() &&
+			(out.Summary.LastTunnelAt == nil || inst.LastTunnelAt.After(*out.Summary.LastTunnelAt)) {
+			last := inst.LastTunnelAt
+			out.Summary.LastTunnelAt = &last
+		}
+	}
+	out.Configured = out.Enabled && out.Gateway != ""
+	writeJSON(w, http.StatusOK, out)
+}
+
 // decorateInstance adds non-persisted, server-derived fields for the UI.
 // Staleness detection. An agent checks in once per poll interval, so allow
 // three missed beats (with a floor for very fast agents and a cap for slow

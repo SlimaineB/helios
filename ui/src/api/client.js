@@ -72,6 +72,7 @@ export const api = {
 
   downloads: () => request('GET', '/api/v1/downloads'),
   overview: () => request('GET', '/api/v1/overview'),
+  runners: () => request('GET', '/api/v1/runners'),
   drift: (query) => request('GET', `/api/v1/drift${query || ''}`),
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),

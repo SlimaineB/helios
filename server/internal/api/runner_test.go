@@ -316,3 +316,42 @@ func TestTunnelCheckinReturnsScanPolicy(t *testing.T) {
 		t.Fatalf("instance id = %q, want tunnel-scan", got.InstanceID)
 	}
 }
+
+func TestRunnerInventoryListsTunnelInstancesWithoutToken(t *testing.T) {
+	s, st := newTestServer(t)
+	s.SetTunnelConfig("helios-tunnel@bastion.example.com", 22000, 22010)
+	createInstance(t, st, "tunnel-1", model.ModeTunnel, 22000)
+	s.SetRunnerToken("runner-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners", nil)
+	rec := httptest.NewRecorder()
+	s.handleRunnerInventory(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "runner-secret") {
+		t.Fatalf("runner token leaked in response: %s", rec.Body.String())
+	}
+	var resp runnerInventory
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Enabled || !resp.Configured {
+		t.Fatalf("enabled/configured = %v/%v, want true/true", resp.Enabled, resp.Configured)
+	}
+	if resp.Gateway != "helios-tunnel@bastion.example.com" {
+		t.Fatalf("gateway = %q", resp.Gateway)
+	}
+	if resp.PortMin != 22000 || resp.PortMax != 22010 {
+		t.Fatalf("ports = %d-%d", resp.PortMin, resp.PortMax)
+	}
+	if resp.Summary.Instances != 1 || resp.Summary.WithPort != 1 {
+		t.Fatalf("summary = %+v, want one tunnel with port", resp.Summary)
+	}
+	if len(resp.Instances) != 1 || resp.Instances[0].ID != "tunnel-1" {
+		t.Fatalf("instances = %+v, want tunnel-1 only", resp.Instances)
+	}
+	if resp.Instances[0].TunnelGateway != "helios-tunnel@bastion.example.com" {
+		t.Fatalf("instance gateway = %q", resp.Instances[0].TunnelGateway)
+	}
+}
