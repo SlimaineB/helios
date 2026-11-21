@@ -477,8 +477,9 @@ ArgoCD-style RBAC policy.
   (`helios_sess`) → `/api/v1/auth/me` returns the identity and the
   effective `permissions` list the UI uses to enable/disable controls.
 
-**Authorization** — `-rbac` / `HELIOS_RBAC_FILE` points to a YAML file of
-`p` (policy) and `g` (group→role binding) rules:
+**Authorization** — RBAC is stored in the hub database and edited live from
+**System → RBAC** (`/api/v1/rbac*`). `-rbac` / `HELIOS_RBAC_FILE` is only a
+first-run bootstrap YAML of `p` (policy) and `g` (group→role binding) rules:
 
 ```yaml
 policies:

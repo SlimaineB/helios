@@ -215,6 +215,26 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS rbac_policies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  role       TEXT NOT NULL,
+  resource   TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  object     TEXT NOT NULL DEFAULT '*',
+  created_at TEXT NOT NULL,
+  UNIQUE (role, resource, action, object)
+);
+CREATE INDEX IF NOT EXISTS idx_rbac_policies_role ON rbac_policies(role);
+
+CREATE TABLE IF NOT EXISTS rbac_bindings (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_name TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (group_name, role)
+);
+CREATE INDEX IF NOT EXISTS idx_rbac_bindings_role ON rbac_bindings(role);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   at        TEXT NOT NULL,
@@ -425,6 +445,26 @@ CREATE TABLE IF NOT EXISTS settings (
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS rbac_policies (
+  id         BIGSERIAL PRIMARY KEY,
+  role       TEXT NOT NULL,
+  resource   TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  object     TEXT NOT NULL DEFAULT '*',
+  created_at TEXT NOT NULL,
+  UNIQUE (role, resource, action, object)
+);
+CREATE INDEX IF NOT EXISTS idx_rbac_policies_role ON rbac_policies(role);
+
+CREATE TABLE IF NOT EXISTS rbac_bindings (
+  id         BIGSERIAL PRIMARY KEY,
+  group_name TEXT NOT NULL,
+  role       TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (group_name, role)
+);
+CREATE INDEX IF NOT EXISTS idx_rbac_bindings_role ON rbac_bindings(role);
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id        BIGSERIAL PRIMARY KEY,
@@ -2896,6 +2936,162 @@ func (s *sqlstore) DeleteRegion(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete region: %w", err)
 	}
 	return nil
+}
+
+// ---- RBAC (DB-managed policies and bindings) ----
+
+const rbacPolicyCols = `id, role, resource, action, object, created_at`
+const rbacBindingCols = `id, group_name, role, created_at`
+
+func scanRBACPolicy(row interface{ Scan(...any) error }) (model.RBACPolicy, error) {
+	var p model.RBACPolicy
+	var created string
+	if err := row.Scan(&p.ID, &p.Role, &p.Resource, &p.Action, &p.Object, &created); err != nil {
+		return p, err
+	}
+	p.CreatedAt = parseTime(created)
+	return p, nil
+}
+
+func scanRBACBinding(row interface{ Scan(...any) error }) (model.RBACBinding, error) {
+	var b model.RBACBinding
+	var created string
+	if err := row.Scan(&b.ID, &b.Group, &b.Role, &created); err != nil {
+		return b, err
+	}
+	b.CreatedAt = parseTime(created)
+	return b, nil
+}
+
+func (s *sqlstore) ListRBACPolicies(ctx context.Context) ([]model.RBACPolicy, error) {
+	rows, err := s.query(ctx, `SELECT `+rbacPolicyCols+` FROM rbac_policies ORDER BY role, resource, action, object`)
+	if err != nil {
+		return nil, wrap(err, "list rbac policies")
+	}
+	defer rows.Close()
+	out := []model.RBACPolicy{}
+	for rows.Next() {
+		p, err := scanRBACPolicy(rows)
+		if err != nil {
+			return nil, wrap(err, "scan rbac policy")
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) CreateRBACPolicy(ctx context.Context, in model.RBACPolicy) (model.RBACPolicy, error) {
+	if in.Object == "" {
+		in.Object = "*"
+	}
+	in.CreatedAt = nowCtx(ctx)
+	id, err := s.insertID(ctx,
+		`INSERT INTO rbac_policies (role, resource, action, object, created_at) VALUES (?,?,?,?,?)`,
+		in.Role, in.Resource, in.Action, in.Object, tm(in.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrConflict
+		}
+		return in, fmt.Errorf("create rbac policy: %w", err)
+	}
+	in.ID = id
+	return in, nil
+}
+
+func (s *sqlstore) DeleteRBACPolicy(ctx context.Context, id int64) error {
+	_, err := s.exec(ctx, `DELETE FROM rbac_policies WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete rbac policy: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) ListRBACBindings(ctx context.Context) ([]model.RBACBinding, error) {
+	rows, err := s.query(ctx, `SELECT `+rbacBindingCols+` FROM rbac_bindings ORDER BY group_name, role`)
+	if err != nil {
+		return nil, wrap(err, "list rbac bindings")
+	}
+	defer rows.Close()
+	out := []model.RBACBinding{}
+	for rows.Next() {
+		b, err := scanRBACBinding(rows)
+		if err != nil {
+			return nil, wrap(err, "scan rbac binding")
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) CreateRBACBinding(ctx context.Context, in model.RBACBinding) (model.RBACBinding, error) {
+	in.CreatedAt = nowCtx(ctx)
+	id, err := s.insertID(ctx,
+		`INSERT INTO rbac_bindings (group_name, role, created_at) VALUES (?,?,?)`,
+		in.Group, in.Role, tm(in.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrAlreadyBound
+		}
+		return in, fmt.Errorf("create rbac binding: %w", err)
+	}
+	in.ID = id
+	return in, nil
+}
+
+func (s *sqlstore) DeleteRBACBinding(ctx context.Context, id int64) error {
+	_, err := s.exec(ctx, `DELETE FROM rbac_bindings WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete rbac binding: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) CountRBACConfig(ctx context.Context) (int, int, error) {
+	var policies, bindings int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM rbac_policies`).Scan(&policies); err != nil {
+		return 0, 0, wrap(err, "count rbac policies")
+	}
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM rbac_bindings`).Scan(&bindings); err != nil {
+		return 0, 0, wrap(err, "count rbac bindings")
+	}
+	return policies, bindings, nil
+}
+
+func (s *sqlstore) ReplaceRBACConfig(ctx context.Context, cfg model.RBACConfig) error {
+	release, err := s.AcquireLock(ctx, "rbac-config")
+	if err != nil {
+		return err
+	}
+	defer release()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rbac tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, s.rebind(`DELETE FROM rbac_policies`)); err != nil {
+		return fmt.Errorf("clear rbac policies: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.rebind(`DELETE FROM rbac_bindings`)); err != nil {
+		return fmt.Errorf("clear rbac bindings: %w", err)
+	}
+	now := tm(nowCtx(ctx))
+	for _, p := range cfg.Policies {
+		obj := p.Object
+		if obj == "" {
+			obj = "*"
+		}
+		if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO rbac_policies (role, resource, action, object, created_at) VALUES (?,?,?,?,?)`),
+			p.Role, p.Resource, p.Action, obj, now); err != nil {
+			return fmt.Errorf("insert rbac policy: %w", err)
+		}
+	}
+	for _, b := range cfg.Bindings {
+		if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO rbac_bindings (group_name, role, created_at) VALUES (?,?,?)`),
+			b.Group, b.Role, now); err != nil {
+			return fmt.Errorf("insert rbac binding: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // ---- Sync windows ----

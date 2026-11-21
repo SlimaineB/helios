@@ -1,0 +1,13 @@
+# Default RBAC for the single-host compose hub.
+#
+# The file is optional: built-in role:admin and role:readonly always exist and
+# the local Basic admin is always role:admin. With empty policies/bindings,
+# OIDC users get no roles until you bind them below.
+#
+# To enable OIDC group roles on-prem:
+#   cp ../rbac.example.yaml rbac.yaml
+#   edit rbac.yaml
+#   set HELIOS_OIDC_* in .env
+#   docker compose up -d
+policies: []
+bindings: []

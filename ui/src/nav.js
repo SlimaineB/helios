@@ -1,5 +1,5 @@
 import {
-  Clock, Database, FileText, Gauge, GitBranch, Layers, MapPin,
+  Clock, Database, FileText, Gauge, GitBranch, KeyRound, Layers, MapPin,
   RefreshCw, Server, Settings as SettingsIcon, Terminal, TriangleAlert,
 } from 'lucide-react'
 
@@ -31,6 +31,7 @@ export const NAV_GROUPS = [
     label: 'System',
     items: [
       { path: '/audit', label: 'Audit log', icon: FileText, perm: 'audit.get' },
+      { path: '/rbac', label: 'RBAC', icon: KeyRound, perm: 'rbac.get' },
       { path: '/settings', label: 'Settings', icon: SettingsIcon, perm: 'settings.get' },
     ],
   },

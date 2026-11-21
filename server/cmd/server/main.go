@@ -20,6 +20,7 @@ import (
 	"github.com/slim/helios/server/internal/auth"
 	"github.com/slim/helios/server/internal/envutil"
 	"github.com/slim/helios/server/internal/metrics"
+	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
 	"github.com/slim/helios/server/internal/oidc"
 	"github.com/slim/helios/server/internal/rbac"
@@ -94,6 +95,30 @@ func main() {
 		log.Error("failed to load RBAC", "error", err)
 		os.Exit(1)
 	}
+	// First run only: import the bootstrap YAML into the database so the API/UI
+	// becomes the source of truth. Later edits happen through /api/v1/rbac.
+	if *rbacFile != "" {
+		if policies, bindings, err := st.CountRBACConfig(context.Background()); err == nil && policies == 0 && bindings == 0 {
+			if cfg, err := rbac.ReadConfig(*rbacFile); err == nil && (len(cfg.Policies) > 0 || len(cfg.Bindings) > 0) {
+				dbCfg := model.RBACConfig{Policies: []model.RBACPolicy{}, Bindings: []model.RBACBinding{}}
+				for _, line := range cfg.Policies {
+					if role, res, act, obj, err := rbac.ParsePolicyLine(line); err == nil {
+						dbCfg.Policies = append(dbCfg.Policies, model.RBACPolicy{Role: role, Resource: res, Action: act, Object: obj})
+					}
+				}
+				for _, line := range cfg.Bindings {
+					if group, role, err := rbac.ParseBindingLine(line); err == nil {
+						dbCfg.Bindings = append(dbCfg.Bindings, model.RBACBinding{Group: group, Role: role})
+					}
+				}
+				if err := st.ReplaceRBACConfig(context.Background(), dbCfg); err != nil {
+					log.Warn("rbac file import failed; continuing with file policy", "error", err)
+				} else {
+					log.Info("imported RBAC file into database", "file", *rbacFile, "policies", len(dbCfg.Policies), "bindings", len(dbCfg.Bindings))
+				}
+			}
+		}
+	}
 
 	secure := strings.HasPrefix(*baseURL, "https://")
 
@@ -159,6 +184,9 @@ func main() {
 	}
 
 	srv := api.New(st, log, oa, secure)
+	if err := srv.ReloadRBAC(context.Background()); err != nil {
+		log.Warn("rbac reload failed; keeping bootstrap policy", "error", err)
+	}
 	srv.SetRepoCache(repoCache)
 	webhook := notify.FromEnv(log)
 	srv.SetNotifier(webhook)

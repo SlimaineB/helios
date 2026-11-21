@@ -1,0 +1,48 @@
+# Helios RBAC example for any non-Kubernetes runtime (systemd, Docker Compose,
+# bare binary, VM, on-prem server).
+#
+# Point the server at this file with:
+#   HELIOS_RBAC_FILE=/etc/helios/rbac.yaml
+#
+# systemd installer:
+#   sudo ./deploy/install-server.sh --binary ... --ui ... \
+#     --operator-password ... --rbac ./deploy/rbac.example.yaml
+#
+# compose:
+#   cp deploy/rbac.example.yaml deploy/compose/rbac.yaml
+#   docker compose -f deploy/compose/compose.yaml up -d
+#
+# Built-in roles always exist and do not need policies:
+#   role:admin     -> every action on every resource
+#   role:readonly  -> get on every resource
+# The local Basic admin is always role:admin, independent of this file.
+
+policies:
+  # Global deployer: full fleet access across projects.
+  - "p, role:deployer, applications, *, *"
+  - "p, role:deployer, instances, *, *"
+  - "p, role:deployer, commands, *, *"
+  - "p, role:deployer, runs, get, *"
+  - "p, role:deployer, repositories, *, *"
+  - "p, role:deployer, windows, get, *"
+  - "p, role:deployer, projects, get, *"
+  - "p, role:deployer, regions, get, *"
+
+  # Tenant example: full access only inside the acme-prod project.
+  - "p, role:tenant-acme, applications, *, acme-prod"
+  - "p, role:tenant-acme, instances, *, acme-prod"
+  - "p, role:tenant-acme, commands, *, acme-prod"
+  - "p, role:tenant-acme, runs, get, acme-prod"
+  - "p, role:tenant-acme, repositories, *, acme-prod"
+  - "p, role:tenant-acme, windows, get, acme-prod"
+  - "p, role:tenant-acme, projects, get, acme-prod"
+  - "p, role:tenant-acme, regions, get, acme-prod"
+
+  # Project create/update/delete and settings/audit are global-only in the
+  # API. If a role should create projects, grant it explicitly on "*":
+  # - "p, role:deployer, projects, create, *"
+
+bindings:
+  - "g, sre@example.com, role:admin"
+  - "g, sre@example.com, role:deployer"
+  - "g, acme-team@example.com, role:tenant-acme"

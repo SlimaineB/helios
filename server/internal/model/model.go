@@ -371,6 +371,31 @@ type Region struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// RBACPolicy is one database-managed `p` rule. The file-based policy is only a
+// bootstrap: once rows exist in the database, the API/UI is the source of truth.
+type RBACPolicy struct {
+	ID        int64     `json:"id"`
+	Role      string    `json:"role"`
+	Resource  string    `json:"resource"`
+	Action    string    `json:"action"`
+	Object    string    `json:"object"` // "*" or a project name
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RBACBinding maps an OIDC group/claim value to a role (`g` rule).
+type RBACBinding struct {
+	ID        int64     `json:"id"`
+	Group     string    `json:"group"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RBACConfig is the editable policy set returned by the admin API.
+type RBACConfig struct {
+	Policies []RBACPolicy  `json:"policies"`
+	Bindings []RBACBinding `json:"bindings"`
+}
+
 // SyncWindow freezes or allows syncs for all applications (AppID 0) or one
 // application. Kinds: "deny" freezes while active; "allow" freezes outside the
 // window when at least one allow window exists for that scope.

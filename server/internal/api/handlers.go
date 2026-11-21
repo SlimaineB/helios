@@ -23,6 +23,7 @@ import (
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
 	"github.com/slim/helios/server/internal/ratelimit"
+	"github.com/slim/helios/server/internal/rbac"
 	"github.com/slim/helios/server/internal/reconciler"
 	"github.com/slim/helios/server/internal/repocache"
 	"github.com/slim/helios/server/internal/retention"
@@ -38,6 +39,10 @@ type Server struct {
 	mux           *http.ServeMux
 	opAuth        *OpAuth
 	secureCookies bool
+	// rbac is the live policy set. It starts as the file-loaded OpAuth.RBAC and
+	// is reloaded from the database whenever rbac_policies/rbac_bindings change.
+	rbacMu sync.RWMutex
+	rbac   *rbac.RBAC
 	// maxHealStreak is the number of consecutive apply→after-apply cycles that
 	// may fail to converge before an assignment is flagged stuck (autoheal
 	// stops until the playbook converges again).
@@ -137,6 +142,9 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 		bgCtx:         bgCtx,
 		bgCancel:      bgCancel,
 		events:        newEventHub(),
+	}
+	if opAuth != nil {
+		s.rbac = opAuth.RBAC
 	}
 	if v := envutil.Get("HELIOS_HEAL_MAX_STREAK"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

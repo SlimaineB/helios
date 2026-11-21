@@ -41,6 +41,7 @@ const (
 	ResConfigRepos  = "configrepos"
 	ResSettings     = "settings"
 	ResEvents       = "events"
+	ResRBAC         = "rbac"
 )
 
 const (
@@ -52,7 +53,7 @@ const (
 )
 
 // AllResources is used by the built-in roles.
-var AllResources = []string{ResApplications, ResInstances, ResRepositories, ResRuns, ResCommands, ResWindows, ResAudit, ResProjects, ResRegions, ResConfigRepos, ResSettings, ResEvents}
+var AllResources = []string{ResApplications, ResInstances, ResRepositories, ResRuns, ResCommands, ResWindows, ResAudit, ResProjects, ResRegions, ResConfigRepos, ResSettings, ResEvents, ResRBAC}
 
 // AllActions is used by the built-in admin role.
 var AllActions = []string{ActionGet, ActionCreate, ActionUpdate, ActionDelete, ActionSync}
@@ -99,17 +100,27 @@ type Config struct {
 // FromFile loads a policy file. An empty/missing file yields only the
 // built-in roles.
 func FromFile(path string) (*RBAC, error) {
+	cfg, err := ReadConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return New(cfg)
+}
+
+// ReadConfig loads only the policy/binding YAML, without building the matcher.
+// The server uses it to bootstrap the database-managed RBAC tables on first run.
+func ReadConfig(path string) (Config, error) {
 	var cfg Config
 	if path != "" {
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read rbac file: %w", err)
+			return cfg, fmt.Errorf("read rbac file: %w", err)
 		}
 		if err := yaml.Unmarshal(raw, &cfg); err != nil {
-			return nil, fmt.Errorf("parse rbac file: %w", err)
+			return cfg, fmt.Errorf("parse rbac file: %w", err)
 		}
 	}
-	return New(cfg)
+	return cfg, nil
 }
 
 // New builds the RBAC policy set from a Config.
@@ -130,6 +141,24 @@ func New(cfg Config) (*RBAC, error) {
 		r.bindings = append(r.bindings, b)
 	}
 	return r, nil
+}
+
+// ParsePolicyLine exports parsePolicy for the DB bootstrap path.
+func ParsePolicyLine(line string) (role, resource, action, object string, err error) {
+	r, err := parsePolicy(line)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return r.Role, r.Resource, r.Action, r.Object, nil
+}
+
+// ParseBindingLine exports parseBinding for the DB bootstrap path.
+func ParseBindingLine(line string) (group, role string, err error) {
+	b, err := parseBinding(line)
+	if err != nil {
+		return "", "", err
+	}
+	return b.Group, b.Role, nil
 }
 
 // parsePolicy handles "p, <rolename>, <resource>, <action>, <object>". The

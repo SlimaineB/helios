@@ -74,7 +74,7 @@ func (s *Server) op(operation string, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		res, act, _ := strings.Cut(operation, ".")
-		if s.opAuth != nil && s.opAuth.RBAC != nil && !s.opAuth.RBAC.AuthorizeAny(pr.Groups, pr.Roles, res, act) {
+		if rb := s.currentRBAC(); rb != nil && !rb.AuthorizeAny(pr.Groups, pr.Roles, res, act) {
 			writeErr(w, http.StatusForbidden, fmt.Sprintf("forbidden: missing %s", operation))
 			return
 		}
@@ -161,8 +161,8 @@ func (s *Server) resolvePrincipal(r *http.Request) (*principal, bool) {
 			if sess, ok := oa.Sessions.Get(r.Context(), c.Value); ok {
 				s.authSuccess(r)
 				roles := []string(nil)
-				if oa.RBAC != nil {
-					roles = oa.RBAC.RolesForGroups(sess.Groups)
+				if rb := s.currentRBAC(); rb != nil {
+					roles = rb.RolesForGroups(sess.Groups)
 				}
 				return &principal{
 					Sub: sess.Sub, Email: sess.Email, Name: sess.Name,
@@ -305,8 +305,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"roles":       pr.Roles,
 		"permissions": []string{},
 	}
-	if s.opAuth != nil && s.opAuth.RBAC != nil {
-		resp["permissions"] = s.opAuth.RBAC.Permissions(pr.Groups, pr.Roles)
+	if rb := s.currentRBAC(); rb != nil {
+		resp["permissions"] = rb.Permissions(pr.Groups, pr.Roles)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

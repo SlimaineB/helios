@@ -19,6 +19,26 @@ curl -fsS http://localhost:8080/api/v1/health
 Open `http://localhost:8080` and sign in with `HELIOS_OPERATOR_USER` /
 `HELIOS_OPERATOR_PASSWORD`.
 
+## OIDC + RBAC on-prem
+
+This compose file is not Kubernetes-specific. It mounts `./rbac.yaml` to
+`/etc/helios/rbac.yaml` and sets `HELIOS_RBAC_FILE` for you. The default
+`rbac.yaml` has empty `policies`/`bindings`; built-in `role:admin` and
+`role:readonly` still exist, and the local Basic admin is always `role:admin`.
+
+To use OIDC group roles on-prem:
+
+```sh
+cp ../rbac.example.yaml rbac.yaml
+$EDITOR rbac.yaml
+# set HELIOS_OIDC_* in .env
+docker compose up -d
+```
+
+The same `HELIOS_RBAC_FILE` works with the systemd installer
+(`deploy/install-server.sh --rbac FILE`) or any bare process. The k8s
+ConfigMap is only one delivery mechanism for the same YAML.
+
 ## PostgreSQL
 
 ```sh

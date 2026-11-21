@@ -138,8 +138,9 @@ runs its SQLite/Postgres migrations automatically at startup.
 
 OIDC and RBAC are configured with environment variables or a mounted file. See
 [Operator authentication & RBAC](AUTH.md).
-The compose file is intentionally small; add `env_file:` or extra volumes for
-your own OIDC/RBAC files.
+The compose file mounts `deploy/compose/rbac.yaml` to `/etc/helios/rbac.yaml`
+and passes `HELIOS_RBAC_FILE` plus `HELIOS_OIDC_*`; start from
+[`deploy/rbac.example.yaml`](../deploy/rbac.example.yaml) for on-prem group roles.
 
 ## Option B — systemd binary (no containers)
 

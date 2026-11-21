@@ -43,6 +43,14 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/settings/scanning", s.op("settings.update", s.handleUpdateScanning))
 	m.HandleFunc("POST /api/v1/settings/webhook/test", s.op("settings.update", s.handleTestWebhook))
 
+	// DB-managed RBAC (the YAML file is only a first-run bootstrap).
+	m.HandleFunc("GET /api/v1/rbac", s.op("rbac.get", s.handleGetRBAC))
+	m.HandleFunc("DELETE /api/v1/rbac", s.op("rbac.update", s.handleResetRBAC))
+	m.HandleFunc("POST /api/v1/rbac/policies", s.op("rbac.update", s.handleCreateRBACPolicy))
+	m.HandleFunc("DELETE /api/v1/rbac/policies/{id}", s.op("rbac.update", s.handleDeleteRBACPolicy))
+	m.HandleFunc("POST /api/v1/rbac/bindings", s.op("rbac.update", s.handleCreateRBACBinding))
+	m.HandleFunc("DELETE /api/v1/rbac/bindings/{id}", s.op("rbac.update", s.handleDeleteRBACBinding))
+
 	m.HandleFunc("GET /api/v1/downloads", s.op("instances.get", s.handleListDownloads))
 	m.HandleFunc("GET /api/v1/instances", s.op("instances.get", s.handleListInstances))
 	m.HandleFunc("GET /api/v1/overview", s.op("instances.get", s.handleOverview))

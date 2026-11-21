@@ -1,5 +1,8 @@
 # Tenant-scoped RBAC for the Poddy-compatible Dex users.
 #
+# Kubernetes delivery only: this file is mounted as a ConfigMap. On-prem/systemd/
+# compose use the same policy shape via HELIOS_RBAC_FILE (see deploy/rbac.example.yaml).
+#
 # A tenant is a Helios project. Each identity gets read/write access inside its
 # OIDC groups and a personal project, including that project's repository
 # credentials. Global resources (config repos, settings, audit) remain

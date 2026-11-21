@@ -357,6 +357,17 @@ Operator preferences persisted across restarts and shared by every replica.
 The fleet scan interval and jitter live here (`scan_interval_seconds`,
 `scan_jitter_percent`). Agents receive the policy in their checkin response.
 
+### `rbac_policies` / `rbac_bindings`
+
+Database-managed RBAC rules (`p`/`g`), editable via `/api/v1/rbac*` and
+reloaded live by every server replica. The YAML file is imported here only on
+first run when both tables are empty.
+
+`rbac_policies`: `id` PK, `role`, `resource`, `action`, `object` (`*` or a
+project name), `created_at`; unique `(role, resource, action, object)`.
+`rbac_bindings`: `id` PK, `group_name`, `role`, `created_at`; unique
+`(group_name, role)`.
+
 ### `audit_log`
 
 One row per mutating operator action. It is append-only from the server's point

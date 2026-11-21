@@ -20,7 +20,7 @@ func (s *Server) principal(r *http.Request) *principal {
 
 // allow reports whether the caller may run operation within object (project).
 func (s *Server) allow(r *http.Request, operation, object string) bool {
-	if s.opAuth == nil || s.opAuth.RBAC == nil {
+	if s.opAuth == nil || s.currentRBAC() == nil {
 		return true // dev mode: no operator auth configured
 	}
 	pr := s.principal(r)
@@ -28,7 +28,7 @@ func (s *Server) allow(r *http.Request, operation, object string) bool {
 		return false
 	}
 	res, act, _ := strings.Cut(operation, ".")
-	return s.opAuth.RBAC.Authorize(pr.Groups, pr.Roles, res, act, object)
+	return s.currentRBAC().Authorize(pr.Groups, pr.Roles, res, act, object)
 }
 
 // requireObject checks a project scope and writes 403 on failure.
@@ -47,14 +47,14 @@ func (s *Server) requireGlobal(w http.ResponseWriter, r *http.Request, operation
 
 // visibleProjects returns the projects a caller may read for a resource.
 func (s *Server) visibleProjects(r *http.Request, resource, action string) (bool, []string) {
-	if s.opAuth == nil || s.opAuth.RBAC == nil {
+	if s.opAuth == nil || s.currentRBAC() == nil {
 		return true, nil // dev mode
 	}
 	pr := s.principal(r)
 	if pr == nil {
 		return false, nil
 	}
-	return s.opAuth.RBAC.VisibleObjects(pr.Groups, pr.Roles, resource, action)
+	return s.currentRBAC().VisibleObjects(pr.Groups, pr.Roles, resource, action)
 }
 
 // validateAppProject ensures a project exists and that its repository

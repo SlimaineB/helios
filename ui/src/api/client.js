@@ -99,6 +99,12 @@ export const api = {
 
   audit: (query) => request('GET', `/api/v1/audit${query || ''}`),
   settings: () => request('GET', '/api/v1/settings'),
+  rbac: () => request('GET', '/api/v1/rbac'),
+  createRBACPolicy: (p) => request('POST', '/api/v1/rbac/policies', p),
+  deleteRBACPolicy: (id) => request('DELETE', `/api/v1/rbac/policies/${id}`),
+  createRBACBinding: (b) => request('POST', '/api/v1/rbac/bindings', b),
+  deleteRBACBinding: (id) => request('DELETE', `/api/v1/rbac/bindings/${id}`),
+  resetRBAC: () => request('DELETE', '/api/v1/rbac'),
   updateScanning: (scanning) => request('PUT', '/api/v1/settings/scanning', scanning),
   testWebhook: () => request('POST', '/api/v1/settings/webhook/test'),
   bulkCommands: (action, instanceIds, appId) =>

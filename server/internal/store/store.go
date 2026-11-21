@@ -174,6 +174,16 @@ type Store interface {
 	UpdateRegion(ctx context.Context, in model.Region) error
 	DeleteRegion(ctx context.Context, id int64) error
 
+	// RBAC (database-managed policies/bindings; the YAML file is bootstrap only)
+	ListRBACPolicies(ctx context.Context) ([]model.RBACPolicy, error)
+	CreateRBACPolicy(ctx context.Context, in model.RBACPolicy) (model.RBACPolicy, error)
+	DeleteRBACPolicy(ctx context.Context, id int64) error
+	ListRBACBindings(ctx context.Context) ([]model.RBACBinding, error)
+	CreateRBACBinding(ctx context.Context, in model.RBACBinding) (model.RBACBinding, error)
+	DeleteRBACBinding(ctx context.Context, id int64) error
+	CountRBACConfig(ctx context.Context) (policies int, bindings int, err error)
+	ReplaceRBACConfig(ctx context.Context, cfg model.RBACConfig) error
+
 	// Config repos (optional GitOps sources of truth)
 	ListConfigRepos(ctx context.Context) ([]model.ConfigRepo, error)
 	GetConfigRepo(ctx context.Context, id int64) (model.ConfigRepo, error)

@@ -8,6 +8,7 @@ import ApplicationDetailPage from './pages/ApplicationDetailPage.jsx'
 import Repositories from './pages/Repositories.jsx'
 import SyncWindows from './pages/SyncWindows.jsx'
 import Audit from './pages/Audit.jsx'
+import Rbac from './pages/Rbac.jsx'
 import Projects from './pages/Projects.jsx'
 import Regions from './pages/Regions.jsx'
 import Runners from './pages/Runners.jsx'
@@ -161,6 +162,7 @@ export default function App() {
                 <Route path="/repositories" element={<Repositories />} />
                 <Route path="/gitops" element={<ConfigRepos />} />
                 <Route path="/audit" element={<Audit />} />
+                <Route path="/rbac" element={<Rbac />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Routes>
             </ErrorBoundary>

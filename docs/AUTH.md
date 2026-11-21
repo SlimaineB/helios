@@ -50,8 +50,18 @@ the limit.
 
 ## Authorization
 
-`-rbac` / `HELIOS_RBAC_FILE` points to a YAML file of `p` (policy) and
-`g` (group → role binding) rules:
+RBAC is **database-managed at runtime** and editable from **System → RBAC** (or
+`GET/POST/DELETE /api/v1/rbac*`, permission `rbac.get` / `rbac.update`). Changes
+are reloaded immediately and audited; existing OIDC sessions pick up new roles
+on their next request because roles are resolved from the live policy set.
+
+`-rbac` / `HELIOS_RBAC_FILE` is only a **first-run bootstrap**: when the
+`rbac_policies` / `rbac_bindings` tables are empty, the server imports the YAML
+file into the database. After that, edit rules in the UI/API, not the file. The
+file is runtime-agnostic: systemd unit (`deploy/install-server.sh --rbac FILE`),
+Docker Compose (`deploy/compose/rbac.yaml` mounted to `/etc/helios/rbac.yaml`),
+or any bare process. The k8s ConfigMap in `deploy/k3s/rbac.yaml` is only one way
+to deliver the bootstrap file.
 
 ```yaml
 policies:
@@ -107,6 +117,7 @@ Example tenant roles and bindings are in `deploy/k3s/rbac.yaml`.
 | `configrepos.*` | Optional GitOps config repositories, including `sync` |
 | `windows.*` | Sync windows |
 | `audit.get` | Audit log |
+| `rbac.get` / `rbac.update` | RBAC policies and bindings |
 
 `repositories.*`, `projects.get`, `windows.get` and `regions.get` are
 tenant-scoped. Region writes, project writes, `configrepos.*`, `settings.*`
