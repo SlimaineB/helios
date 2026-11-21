@@ -1193,58 +1193,28 @@ details summary { cursor: pointer; color: var(--muted); }
   color: var(--accent);
 }
 
-.app-detail-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-.app-detail-name { font-size: 18px; letter-spacing: -.01em; }
-.app-detail-sub {
+.detail-section-heading {
   display: flex;
   align-items: center;
   gap: .5rem;
-  flex-wrap: wrap;
-  margin-top: .3rem;
-  font-size: 11.5px;
-  color: var(--muted);
 }
-.app-assign {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0 14px;
-}
+.detail-section-heading svg { color: var(--muted); }
+.detail-section-heading .detail-count { margin-left: -2px; }
 
-.app-assign select { min-width: 240px; }
+.app-detail-page .stats { margin-bottom: 1rem; }
+.app-config-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.app-config-grid .detail-wide { grid-column: span 2; }
+.app-instances-table {
+  margin-top: 0;
+}
+.app-instances-table td { vertical-align: middle; }
+.app-instances-table .project-badge { white-space: nowrap; }
+.table-note { margin: .6rem 0 0; font-size: 12px; }
 
-.app-detail-actions {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-  flex-wrap: wrap;
-  margin: 1rem 0 1.2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border-soft);
-}
-.app-detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: .9rem 1.25rem;
-  margin-bottom: 1rem;
-}
-.app-detail-ignore { margin-bottom: 1rem; }
-.app-detail-ignore label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  color: var(--muted-2);
-}
-.app-detail-ignore pre { margin: .35rem 0 0; }
 @media (max-width: 640px) {
-  .app-detail-grid { grid-template-columns: 1fr; }
+  .detail-page-head .detail-head-actions { width: 100%; }
+  .app-detail-page .filters { align-items: flex-start; }
+  .app-config-grid .detail-wide { grid-column: auto; }
 }
 
 .project-metrics {

@@ -118,7 +118,6 @@ export default function ApplicationDetailPage() {
 
   return (
     <section>
-      <Link to="/applications" className="back-link">← Applications</Link>
       <ApplicationDetail
         app={app}
         stats={stats}
