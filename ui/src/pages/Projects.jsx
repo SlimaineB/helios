@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api/client.js'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { LayoutGrid, List } from 'lucide-react'
+import { api, instanceOnline, projectLabel, stateLabel } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import TagList from '../components/TagList.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -10,16 +13,180 @@ import ProjectCard from '../components/ProjectCard.jsx'
 
 const empty = { name: '', repo_patterns: '' }
 
-const DEFAULT_PROJECT = {
+const GLOBAL_PROJECT = {
   id: '__default__',
   name: 'default (global)',
+  key: '',
   repo_patterns: '',
   system: true,
 }
 
+const normalizeState = (state) => {
+  if (state === 'failed') return 'error'
+  return state || 'unknown'
+}
+
+async function fetchAllInstances() {
+  const limit = 200
+  let offset = 0
+  let total = 0
+  const out = []
+  do {
+    const page = await api.instances(`?limit=${limit}&offset=${offset}`)
+    const items = Array.isArray(page.items) ? page.items : []
+    out.push(...items)
+    total = Number(page.total) || 0
+    offset += items.length
+    if (!items.length || out.length >= total) break
+  } while (out.length < total)
+  return out
+}
+
+function buildSummaries(projects, applications, instances) {
+  const map = new Map()
+  const projectByName = new Map(projects.map((project) => [project.name, project]))
+
+  const ensure = (key) => {
+    let summary = map.get(key)
+    if (!summary) {
+      const project = key ? projectByName.get(key) || {
+        id: `project:${key}`,
+        name: key,
+        repo_patterns: '',
+        created_at: '',
+      } : GLOBAL_PROJECT
+      summary = {
+        key,
+        project,
+        appIds: new Set(),
+        instances: 0,
+        online: 0,
+        tags: new Map(),
+        modes: new Set(),
+        states: new Set(),
+        search: [project.name, project.repo_patterns || ''],
+      }
+      map.set(key, summary)
+    }
+    return summary
+  }
+
+  ensure('')
+  for (const project of projects) ensure(project.name)
+
+  for (const app of applications) {
+    const summary = ensure(app.project || '')
+    summary.appIds.add(app.id)
+    summary.search.push(app.name)
+  }
+
+  for (const inst of instances) {
+    const summary = ensure(inst.project || '')
+    const isOnline = instanceOnline(inst)
+    summary.instances++
+    if (isOnline) summary.online++
+    summary.modes.add(inst.execution_mode || 'agent')
+    summary.states.add(normalizeState(!isOnline ? 'offline' : inst.state))
+    summary.search.push(inst.name, inst.id, inst.region || '', ...(inst.tags || []))
+    for (const tag of inst.tags || []) {
+      const key = tag.toLowerCase()
+      if (!summary.tags.has(key)) summary.tags.set(key, tag)
+    }
+    for (const app of inst.apps || []) {
+      if (app.application) {
+        summary.appIds.add(app.application.id)
+        summary.search.push(app.application.name)
+      }
+      summary.states.add(normalizeState(app.latest_check?.status))
+    }
+  }
+
+  return [...map.values()].map((summary) => {
+    const tags = [...summary.tags.values()].sort((a, b) => a.localeCompare(b))
+    return {
+      ...summary,
+      apps: summary.appIds.size,
+      tags,
+      tagKeys: new Set(tags.map((tag) => tag.toLowerCase())),
+      searchText: summary.search.join(' ').toLowerCase(),
+    }
+  })
+}
+
+function ProjectTable({ rows, onEdit, onDelete, can }) {
+  return (
+    <div className="table-wrap">
+      <table className="grid summary-table">
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th style={{ width: '30%' }}>Allowed repositories</th>
+            <th style={{ width: '90px' }}>Apps</th>
+            <th style={{ width: '120px' }}>Instances</th>
+            <th style={{ width: '130px' }}>Created</th>
+            <th style={{ width: '250px' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((summary) => {
+            const project = summary.project
+            return (
+              <tr key={summary.key || '__global__'} className="summary-row">
+                <td>
+                  <div className="cell-title">
+                    <strong>{project.name}</strong>
+                    {project.system && <span className="project-badge">system</span>}
+                    <span className="cell-sub">
+                      {summary.tags.length > 0 ? <TagList tags={summary.tags} /> : <span className="muted">no instance tags</span>}
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  {project.repo_patterns ? (
+                    <span className="mono project-pattern-cell" title={project.repo_patterns}>{project.repo_patterns}</span>
+                  ) : (
+                    <span className="muted">any repository</span>
+                  )}
+                </td>
+                <td>
+                  <strong className="mono">{summary.apps}</strong>
+                </td>
+                <td>
+                  <div className="cell-title">
+                    <strong className="mono">{summary.instances}</strong>
+                    <span className="cell-sub">{summary.online} online · {summary.instances - summary.online} offline</span>
+                  </div>
+                </td>
+                <td className="muted">
+                  {project.created_at ? new Date(project.created_at).toLocaleDateString() : '—'}
+                </td>
+                <td>
+                  <div className="row-actions">
+                    <Link className="btn ghost small" to={`/instances?project=${encodeURIComponent(project.system ? '__global__' : project.name)}`}>Instances</Link>
+                    <Link className="btn ghost small" to={`/applications?project=${encodeURIComponent(project.system ? '__global__' : project.name)}`}>Applications</Link>
+                    {!project.system && (
+                      <>
+                        <button className="btn ghost small" disabled={!can('projects', 'update')} onClick={() => onEdit(project)}>Edit</button>
+                        <button className="btn danger small" disabled={!can('projects', 'delete')} onClick={() => onDelete(project)}>Delete</button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function Projects() {
   const { can } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
+  const [applications, setApplications] = useState([])
+  const [instances, setInstances] = useState([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -27,11 +194,39 @@ export default function Projects() {
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirm, setConfirm] = useState(null)
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [stateFilter, setStateFilter] = useState('')
+  const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
+  const [tagFilter, setTagFilter] = useState('')
+  const [appFilter, setAppFilter] = useState('')
+  const [modeFilter, setModeFilter] = useState('')
+  const [onlineOnly, setOnlineOnly] = useState(false)
+  const [view, setView] = useState(() => {
+    const saved = localStorage.getItem('helios_projects_view')
+    return saved === 'list' ? 'list' : 'cards'
+  })
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim().toLowerCase()), 250)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  useEffect(() => {
+    setProjectFilter(searchParams.get('project') || '')
+  }, [searchParams])
 
   const refresh = useCallback(async () => {
     try {
       setLoading(true)
-      setProjects(await api.projects())
+      const [projectList, appList, instanceList] = await Promise.all([
+        api.projects(),
+        api.applications().catch(() => []),
+        fetchAllInstances().catch(() => []),
+      ])
+      setProjects(projectList)
+      setApplications(appList)
+      setInstances(instanceList)
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -39,6 +234,94 @@ export default function Projects() {
     }
   }, [])
   useEffect(() => { refresh() }, [refresh])
+
+  const summaries = useMemo(
+    () => buildSummaries(projects, applications, instances),
+    [projects, applications, instances],
+  )
+
+  const projectOptions = useMemo(
+    () => summaries
+      .filter((summary) => summary.key)
+      .map((summary) => summary.key)
+      .sort((a, b) => a.localeCompare(b)),
+    [summaries],
+  )
+
+  const tagOptions = useMemo(() => {
+    const tags = new Map()
+    for (const summary of summaries) {
+      for (const tag of summary.tags) tags.set(tag.toLowerCase(), tag)
+    }
+    if (tagFilter && !tags.has(tagFilter.toLowerCase())) tags.set(tagFilter.toLowerCase(), tagFilter)
+    return [...tags.values()].sort((a, b) => a.localeCompare(b))
+  }, [summaries, tagFilter])
+
+  const appOptions = useMemo(() => {
+    const list = [...applications].sort((a, b) => a.name.localeCompare(b.name))
+    if (appFilter && !list.some((app) => String(app.id) === appFilter)) {
+      list.unshift({ id: Number(appFilter), name: `#${appFilter}` })
+    }
+    return list
+  }, [applications, appFilter])
+
+  const filtered = useMemo(() => summaries.filter((summary) => {
+    if (projectFilter) {
+      if (projectFilter === '__global__') {
+        if (summary.key) return false
+      } else if (summary.key !== projectFilter) {
+        return false
+      }
+    }
+    if (stateFilter && !summary.states.has(stateFilter)) return false
+    if (modeFilter && !summary.modes.has(modeFilter)) return false
+    if (tagFilter && !summary.tagKeys.has(tagFilter.toLowerCase())) return false
+    if (appFilter && !summary.appIds.has(Number(appFilter))) return false
+    if (onlineOnly && summary.online === 0) return false
+    if (search && !summary.searchText.includes(search)) return false
+    return true
+  }).sort((a, b) => {
+    if (!a.key) return -1
+    if (!b.key) return 1
+    return a.key.localeCompare(b.key)
+  }), [summaries, projectFilter, stateFilter, modeFilter, tagFilter, appFilter, onlineOnly, search])
+
+  const stats = useMemo(() => filtered.reduce((acc, summary) => ({
+    projects: acc.projects + 1,
+    apps: acc.apps + summary.apps,
+    instances: acc.instances + summary.instances,
+    online: acc.online + summary.online,
+  }), { projects: 0, apps: 0, instances: 0, online: 0 }), [filtered])
+
+  const filtersActive = !!(search || stateFilter || projectFilter || tagFilter || appFilter || modeFilter || onlineOnly)
+
+  const setParam = (key, value) => {
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set(key, value)
+    else next.delete(key)
+    setSearchParams(next, { replace: true })
+  }
+  const applyProjectFilter = (value) => {
+    setProjectFilter(value)
+    setParam('project', value)
+  }
+
+  const clearFilters = () => {
+    setSearchInput('')
+    setSearch('')
+    setStateFilter('')
+    setProjectFilter('')
+    setTagFilter('')
+    setAppFilter('')
+    setModeFilter('')
+    setOnlineOnly(false)
+    setSearchParams({}, { replace: true })
+  }
+
+  const changeView = (next) => {
+    setView(next)
+    localStorage.setItem('helios_projects_view', next)
+  }
 
   const openNew = () => { setEditing(null); setForm(empty); setFormError(''); setShowForm(true) }
   const openEdit = (p) => { setEditing(p); setForm({ name: p.name, repo_patterns: p.repo_patterns || '' }); setFormError(''); setShowForm(true) }
@@ -72,30 +355,105 @@ export default function Projects() {
     return <section><h1>Projects</h1><div className="skeleton-grid">{[1,2,3,4,5].map(i => <SkeletonCard key={i} />)}</div></section>
   }
 
-  const all = [DEFAULT_PROJECT, ...projects]
-
   return (
     <section>
       <h1>Projects</h1>
       <p className="muted">Projects scope applications and instances (RBAC object), and can restrict which git repositories their applications may use. The built-in <strong>default</strong> project is global and cannot be deleted.</p>
 
+      <div className="stats">
+        <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{stats.projects}</span><span className="stat-label">Projects</span></div>
+        <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{stats.apps}</span><span className="stat-label">Applications</span></div>
+        <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{stats.online}</span><span className="stat-label">Online hosts</span></div>
+        <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{stats.instances - stats.online}</span><span className="stat-label">Offline hosts</span></div>
+      </div>
+
+      <div className="filters">
+        <input
+          type="search"
+          className="filter-search"
+          placeholder="Search project, repo pattern, instance, tag or application…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
+        <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} aria-label="State">
+          <option value="">All states</option>
+          <option value="ok">Synced</option>
+          <option value="drift">Drift</option>
+          <option value="error">Failed</option>
+          <option value="unknown">Unknown</option>
+        </select>
+        <select value={projectFilter} onChange={(e) => applyProjectFilter(e.target.value)} aria-label="Project">
+          <option value="">All projects</option>
+          <option value="__global__">Global</option>
+          {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} aria-label="Execution mode">
+          <option value="">All modes</option>
+          <option value="agent">Agent</option>
+          <option value="tunnel">Tunnel · bastion</option>
+        </select>
+        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
+          <option value="">All tags</option>
+          {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+        </select>
+        <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)} aria-label="Application">
+          <option value="">All applications</option>
+          {appOptions.map((app) => <option key={app.id} value={String(app.id)}>{app.name}</option>)}
+        </select>
+        <label className="row small filter-check">
+          <input type="checkbox" checked={onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked)} />
+          Online only
+        </label>
+        {filtersActive && <button type="button" className="ghost small" onClick={clearFilters}>Clear</button>}
+        <button type="button" className="filter-add" onClick={openNew} disabled={!can('projects', 'create')}>＋ New project</button>
+      </div>
+
+      {(projectFilter || stateFilter || modeFilter || tagFilter || appFilter) && (
+        <div className="active-filter">
+          <span>Showing</span>
+          {projectFilter && <span className="filter-chip">Project: {projectLabel(projectFilter === '__global__' ? '' : projectFilter)}</span>}
+          {stateFilter && <span className="filter-chip">State: {stateLabel(stateFilter)}</span>}
+          {modeFilter && <span className="filter-chip">Mode: {modeFilter === 'tunnel' ? 'tunnel · bastion' : 'agent'}</span>}
+          {tagFilter && <span className="filter-chip">Tag: {tagFilter}</span>}
+          {appFilter && <span className="filter-chip">Application: {appOptions.find((app) => String(app.id) === appFilter)?.name || `#${appFilter}`}</span>}
+          <span className="spacer" />
+          <button type="button" className="ghost small" onClick={clearFilters}>Clear filters</button>
+        </div>
+      )}
+
       <div className="row-toolbar">
-        <span className="muted">{all.length} project{all.length === 1 ? '' : 's'}</span>
-        <button onClick={openNew} disabled={!can('projects', 'create')}>＋ New project</button>
+        <span className="muted">{filtered.length} of {summaries.length} project{summaries.length === 1 ? '' : 's'}</span>
+        <div className="toolbar-right">
+          <div className="seg" role="group" aria-label="View mode">
+            <button type="button" className={'seg-btn' + (view === 'list' ? ' active' : '')} onClick={() => changeView('list')} title="List view">
+              <List size={14} /> List
+            </button>
+            <button type="button" className={'seg-btn' + (view === 'cards' ? ' active' : '')} onClick={() => changeView('cards')} title="Card view">
+              <LayoutGrid size={14} /> Cards
+            </button>
+          </div>
+        </div>
       </div>
 
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
 
-      <div className="cards-grid">
-        {all.map((p) => (
-          <ProjectCard
-            key={p.id}
-            project={p}
-            onEdit={openEdit}
-            onDelete={confirmDelete}
-          />
-        ))}
-      </div>
+      {filtered.length === 0 ? (
+        <div className="empty"><p className="muted">No project matches these filters.</p></div>
+      ) : view === 'list' ? (
+        <ProjectTable rows={filtered} onEdit={openEdit} onDelete={confirmDelete} can={can} />
+      ) : (
+        <div className="cards-grid">
+          {filtered.map((summary) => (
+            <ProjectCard
+              key={summary.key || '__global__'}
+              project={summary.project}
+              summary={summary}
+              onEdit={openEdit}
+              onDelete={confirmDelete}
+            />
+          ))}
+        </div>
+      )}
 
       {showForm && (
         <Modal title={editing ? `Edit ${editing.name}` : 'New project'} onClose={closeForm}>

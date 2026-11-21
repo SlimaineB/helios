@@ -10,6 +10,7 @@ import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Pager from '../components/Pager.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import RegionPicker from '../components/RegionPicker.jsx'
 import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import TopologyView from '../components/TopologyView.jsx'
@@ -199,6 +200,7 @@ export default function Instances() {
   const [regTags, setRegTags] = useState('')
   const [regMode, setRegMode] = useState('agent')
   const [projects, setProjects] = useState([])
+  const [regions, setRegions] = useState([])
   const [regResult, setRegResult] = useState(null)
   const [regError, setRegError] = useState('')
   const [downloads, setDownloads] = useState([])
@@ -239,9 +241,10 @@ export default function Instances() {
       if (modeFilter) params.set('mode', modeFilter)
       if (tagFilter) params.set('tag', tagFilter)
       if (onlineOnly) params.set('online', '1')
-      const [d, projectList] = await Promise.all([
+      const [d, projectList, regionList] = await Promise.all([
         api.instances(`?${params}`),
         api.projects().catch(() => []),
+        api.regions().catch(() => []),
       ])
       if (seq !== reqSeq.current) return
       const items = Array.isArray(d.items) ? d.items : []
@@ -251,6 +254,7 @@ export default function Instances() {
       setFacets(d.facets || { projects: [], tags: [], apps: [] })
       setServerStats(d.stats || null)
       setProjects(projectList)
+      setRegions(regionList)
       if (!items.length && pageOff > 0 && nextTotal > 0) {
         const last = Math.floor((nextTotal - 1) / PAGE_SIZE) * PAGE_SIZE
         setPageOff(last)
@@ -726,7 +730,20 @@ export default function Instances() {
             <form className="form-card" onSubmit={addInstance}>
               <label>Instance name<input autoFocus value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="e.g. web-prod-01" /></label>
               <label>Project<select required value={regProject} onChange={(e) => setRegProject(e.target.value)}><option value={DEFAULT_PROJECT}>default (global)</option>{regProject !== DEFAULT_PROJECT && !projects.some((p) => p.name === regProject) && <option value={regProject}>{regProject}</option>}{projects.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}</select><span className="sub">Required · scopes RBAC and the repository allowlist.</span></label>
-              <label>Region<input value={regRegion} onChange={(e) => setRegRegion(e.target.value)} placeholder="e.g. eu-west-1, dc-paris-1" /><span className="sub">Optional · shown on the world map and used by filters.</span></label>
+              <div className="form-field">
+                <span className="form-field-label">Region</span>
+                <RegionPicker
+                  value={regRegion}
+                  onChange={setRegRegion}
+                  regions={regions}
+                  onRegionCreated={(region) => setRegions((prev) =>
+                    [...prev.filter((r) => r.id !== region.id), region].sort((a, b) => a.name.localeCompare(b.name)))}
+                />
+                <span className="sub">
+                  Optional · shown on the world map and used by filters.{' '}
+                  <Link to="/regions">Manage regions</Link>
+                </span>
+              </div>
               <label>Tags<input value={regTags} onChange={(e) => setRegTags(e.target.value)} placeholder="e.g. prod, team-a" /><span className="sub">Optional · comma-separated labels for search and grouping.</span></label>
               <label>Registration mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="tunnel">Tunnel · reverse SSH (optional lightweight agent)</option></select><span className="sub">Tunnel mode lets an outbound-only host be managed by the hub runner; the tunnel can be kept open by a lightweight agent.</span></label>
               {regError && <div className="error">{regError}</div>}

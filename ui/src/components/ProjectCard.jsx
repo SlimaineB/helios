@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom'
 import CopyButton from './CopyButton.jsx'
+import TagList from './TagList.jsx'
 import { useAuth } from '../App.jsx'
-import { toast } from '../components/Toast.jsx'
 
-export default function ProjectCard({ project, onEdit, onDelete }) {
+export default function ProjectCard({ project, summary, onEdit, onDelete }) {
   const { can } = useAuth()
 
   return (
@@ -22,6 +22,16 @@ export default function ProjectCard({ project, onEdit, onDelete }) {
       </header>
 
       <div className="card-body">
+        <div className="project-metrics">
+          <span><b>{summary?.apps ?? 0}</b> applications</span>
+          <span><b>{summary?.instances ?? 0}</b> instances</span>
+          <span><b>{summary?.online ?? 0}</b> online</span>
+          {summary?.states?.has?.('drift') && <span className="drift-text">drift detected</span>}
+          {summary?.states?.has?.('error') && <span className="error-text">failures</span>}
+        </div>
+        {summary?.tags?.length > 0 && (
+          <div className="project-tags"><TagList tags={summary.tags} /></div>
+        )}
         <div className="detail">
           <label>Allowed repositories</label>
           <div className="value mono">
@@ -47,7 +57,7 @@ export default function ProjectCard({ project, onEdit, onDelete }) {
           </Link>
           <Link
             className="btn ghost small"
-            to={`/?project=${encodeURIComponent(project.system ? '__global__' : project.name)}`}
+            to={`/applications?project=${encodeURIComponent(project.system ? '__global__' : project.name)}`}
           >
             Applications
           </Link>

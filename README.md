@@ -215,7 +215,9 @@ attempt). This is the ArgoCD maintenance-window analogue, evaluated server-side.
   library dependency.
 - **Audit**: every mutating operator API call (POST/PUT/PATCH/DELETE) is stored
   in `audit_log` with user, method, path, HTTP status and remote IP, and exposed
-  at `/api/v1/audit` (UI **Audit** page).
+  at `/api/v1/audit` (UI **Audit** page). The endpoint accepts `q`, `method`,
+  `status` (`ok`, `error`, `4xx`, `5xx`), `user`, `from` and `to`
+  (`YYYY-MM-DD`) filters and returns distinct method/user facets for the UI.
 
 ### Projects and project-scoped RBAC
 
@@ -224,7 +226,9 @@ their applications may use (`repo_patterns`, newline-separated globs; empty =
 any). Applications and instances carry a `project` (empty = global/default), an
 application can only be assigned to an instance in the same project, and its
 `repo_url` must match the project's patterns. Renaming a project cascades to its
-applications/instances.
+applications/instances. Regions are a separate operator-managed catalog used by
+the instance region dropdown, world map and filters; renaming a region cascades
+to instances already using it.
 
 RBAC rules may scope an operation to a project through the rule object:
 
@@ -240,7 +244,8 @@ A project-scoped rule never grants access to the global scope; `*` still means
 every project. List endpoints filter by the caller's visible projects, and
 detail/mutation handlers enforce the object scope (the web UI hides controls it
 knows are unavailable, but the server is authoritative). Repositories, projects,
-sync windows, config repositories and the audit log are global-admin surfaces.
+regions, sync windows, config repositories and the audit log are global-admin
+surfaces.
 
 ### Optional GitOps
 
@@ -365,6 +370,11 @@ POST   /api/v1/projects          {name, repo_patterns}
 PUT    /api/v1/projects/{projectId}
 DELETE /api/v1/projects/{projectId}
 
+GET    /api/v1/regions           # region catalog for instance forms
+POST   /api/v1/regions           {name, description}
+PUT    /api/v1/regions/{regionId}
+DELETE /api/v1/regions/{regionId}
+
 GET    /api/v1/config-repos
 POST   /api/v1/config-repos      {name, url, branch, path, poll_interval, enabled, prune}
 PUT    /api/v1/config-repos/{repoId}
@@ -376,7 +386,7 @@ POST   /api/v1/sync-windows      {name, kind, app_id, timezone, days, start_min,
 PUT    /api/v1/sync-windows/{windowId}
 DELETE /api/v1/sync-windows/{windowId}
 
-GET    /api/v1/audit?limit=&offset=
+GET    /api/v1/audit?limit=&offset=&q=&method=&status=&user=&from=&to=
 GET    /metrics                        # Prometheus text (public, IDs only)
 ```
 > Repositories = the git-connections registry, referenced by applications via
@@ -487,10 +497,11 @@ lists). Unauthenticated → `401`; unprivileged → `403`.
 Route map (what each permission unlocks in the UI): `instances.get` list/detail,
 `instances.create` register, `instances.update` assign/unassign/auto-sync,
 `commands.create` Sync/Check and bulk actions, `runs.get` logs/diffs, plus the
-natural `applications.*`, `repositories.*`, `projects.*`, `configrepos.*`,
-`windows.*`, `audit.get`, `settings.get` and `events.get` pairs.
-`repositories.*`, `projects.*`, `configrepos.*`, `windows.*`, `audit.get` and
-`settings.*` require the global (`*`) object scope.
+natural `applications.*`, `repositories.*`, `projects.*`, `regions.*`,
+`configrepos.*`, `windows.*`, `audit.get`, `settings.get` and `events.get`
+pairs. `repositories.*`, `projects.*`, `regions.get`, `configrepos.*`,
+`windows.*`, `audit.get` and `settings.*` are project-scoped or require the
+global (`*`) object scope for writes.
 
 ## Install the hub
 

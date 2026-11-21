@@ -29,6 +29,7 @@ data:
       - "p, role:backend, repositories, *, backend"
       - "p, role:backend, windows, get, backend"
       - "p, role:backend, projects, get, backend"
+      - "p, role:backend, regions, get, backend"
 
       - "p, role:frontend, applications, *, frontend"
       - "p, role:frontend, instances, *, frontend"
@@ -37,6 +38,7 @@ data:
       - "p, role:frontend, repositories, *, frontend"
       - "p, role:frontend, windows, get, frontend"
       - "p, role:frontend, projects, get, frontend"
+      - "p, role:frontend, regions, get, frontend"
 
       - "p, role:go-users, applications, *, go-users"
       - "p, role:go-users, instances, *, go-users"
@@ -45,6 +47,7 @@ data:
       - "p, role:go-users, repositories, *, go-users"
       - "p, role:go-users, windows, get, go-users"
       - "p, role:go-users, projects, get, go-users"
+      - "p, role:go-users, regions, get, go-users"
 
       # Personal tenants (user-scoped resources).
       - "p, role:dev, applications, *, dev"
@@ -54,6 +57,7 @@ data:
       - "p, role:dev, repositories, *, dev"
       - "p, role:dev, windows, get, dev"
       - "p, role:dev, projects, get, dev"
+      - "p, role:dev, regions, get, dev"
 
       - "p, role:alice, applications, *, alice"
       - "p, role:alice, instances, *, alice"
@@ -62,6 +66,7 @@ data:
       - "p, role:alice, repositories, *, alice"
       - "p, role:alice, windows, get, alice"
       - "p, role:alice, projects, get, alice"
+      - "p, role:alice, regions, get, alice"
 
       - "p, role:bob, applications, *, bob"
       - "p, role:bob, instances, *, bob"
@@ -70,6 +75,7 @@ data:
       - "p, role:bob, repositories, *, bob"
       - "p, role:bob, windows, get, bob"
       - "p, role:bob, projects, get, bob"
+      - "p, role:bob, regions, get, bob"
 
       - "p, role:carol, applications, *, carol"
       - "p, role:carol, instances, *, carol"
@@ -78,6 +84,7 @@ data:
       - "p, role:carol, repositories, *, carol"
       - "p, role:carol, windows, get, carol"
       - "p, role:carol, projects, get, carol"
+      - "p, role:carol, regions, get, carol"
 
       - "p, role:dave, applications, *, dave"
       - "p, role:dave, instances, *, dave"
@@ -86,6 +93,7 @@ data:
       - "p, role:dave, repositories, *, dave"
       - "p, role:dave, windows, get, dave"
       - "p, role:dave, projects, get, dave"
+      - "p, role:dave, regions, get, dave"
 
       - "p, role:erin, applications, *, erin"
       - "p, role:erin, instances, *, erin"
@@ -94,6 +102,7 @@ data:
       - "p, role:erin, repositories, *, erin"
       - "p, role:erin, windows, get, erin"
       - "p, role:erin, projects, get, erin"
+      - "p, role:erin, regions, get, erin"
 
     bindings:
       - "g, admin@example.com, role:admin"

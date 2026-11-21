@@ -83,6 +83,11 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/v1/projects/{projectId}", s.op("projects.update", s.handleUpdateProject))
 	m.HandleFunc("DELETE /api/v1/projects/{projectId}", s.op("projects.delete", s.handleDeleteProject))
 
+	m.HandleFunc("GET /api/v1/regions", s.op("regions.get", s.handleListRegions))
+	m.HandleFunc("POST /api/v1/regions", s.op("regions.create", s.handleCreateRegion))
+	m.HandleFunc("PUT /api/v1/regions/{regionId}", s.op("regions.update", s.handleUpdateRegion))
+	m.HandleFunc("DELETE /api/v1/regions/{regionId}", s.op("regions.delete", s.handleDeleteRegion))
+
 	m.HandleFunc("GET /api/v1/sync-windows", s.op("windows.get", s.handleListSyncWindows))
 	m.HandleFunc("POST /api/v1/sync-windows", s.op("windows.create", s.handleCreateSyncWindow))
 	m.HandleFunc("PUT /api/v1/sync-windows/{windowId}", s.op("windows.update", s.handleUpdateSyncWindow))

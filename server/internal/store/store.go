@@ -167,6 +167,13 @@ type Store interface {
 	CountApplicationsInProject(ctx context.Context, project string) (int, error)
 	CountInstancesInProject(ctx context.Context, project string) (int, error)
 
+	// Regions (operator-managed location labels offered to instances)
+	ListRegions(ctx context.Context) ([]model.Region, error)
+	GetRegionByID(ctx context.Context, id int64) (model.Region, error)
+	CreateRegion(ctx context.Context, in model.Region) (model.Region, error)
+	UpdateRegion(ctx context.Context, in model.Region) error
+	DeleteRegion(ctx context.Context, id int64) error
+
 	// Config repos (optional GitOps sources of truth)
 	ListConfigRepos(ctx context.Context) ([]model.ConfigRepo, error)
 	GetConfigRepo(ctx context.Context, id int64) (model.ConfigRepo, error)
@@ -190,7 +197,8 @@ type Store interface {
 
 	// Audit log (mutating operator actions)
 	AppendAudit(ctx context.Context, e model.AuditEntry) error
-	ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error)
+	ListAudit(ctx context.Context, f model.AuditFilter) ([]model.AuditEntry, int, error)
+	AuditFacets(ctx context.Context) (model.AuditFacets, error)
 	PruneAudit(ctx context.Context, before time.Time) (int64, error)
 
 	// Operator sessions (shared by all server replicas).

@@ -1259,12 +1259,52 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, offset := paginate(r, 50)
-	entries, total, err := s.store.ListAudit(r.Context(), limit, offset)
+	q := r.URL.Query()
+	filter := model.AuditFilter{
+		Query:  strings.TrimSpace(q.Get("q")),
+		Method: strings.TrimSpace(q.Get("method")),
+		Status: strings.TrimSpace(q.Get("status")),
+		User:   strings.TrimSpace(q.Get("user")),
+		Limit:  limit,
+		Offset: offset,
+	}
+	if v := strings.TrimSpace(q.Get("from")); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid from date")
+			return
+		}
+		filter.Since = t
+	}
+	if v := strings.TrimSpace(q.Get("to")); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid to date")
+			return
+		}
+		filter.Until = t.Add(24*time.Hour - time.Nanosecond)
+	}
+	if !filter.Since.IsZero() && !filter.Until.IsZero() && filter.Since.After(filter.Until) {
+		writeErr(w, http.StatusBadRequest, "from date must be before to date")
+		return
+	}
+	entries, total, err := s.store.ListAudit(r.Context(), filter)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	writePage(w, entries, total, limit, offset)
+	facets, err := s.store.AuditFacets(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Items  []model.AuditEntry `json:"items"`
+		Total  int                `json:"total"`
+		Limit  int                `json:"limit"`
+		Offset int                `json:"offset"`
+		Facets model.AuditFacets  `json:"facets"`
+	}{Items: entries, Total: total, Limit: limit, Offset: offset, Facets: facets})
 }
 
 // ---- sync windows (operator) ----

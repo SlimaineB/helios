@@ -360,6 +360,17 @@ type Project struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// Region is an operator-managed location label offered when registering or
+// editing instances. Instances store the region name as a plain string, so
+// renaming a region cascades to hosts already using it.
+type Region struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Instances   int       `json:"instances"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // SyncWindow freezes or allows syncs for all applications (AppID 0) or one
 // application. Kinds: "deny" freezes while active; "allow" freezes outside the
 // window when at least one allow window exists for that scope.
@@ -423,4 +434,22 @@ type AuditEntry struct {
 	Path     string    `json:"path"`
 	Status   int       `json:"status"`
 	RemoteIP string    `json:"remote_ip,omitempty"`
+}
+
+// AuditFilter narrows the audit log query.
+type AuditFilter struct {
+	Query  string
+	Method string
+	Status string
+	User   string
+	Since  time.Time
+	Until  time.Time
+	Limit  int
+	Offset int
+}
+
+// AuditFacets lists the distinct values available for audit filters.
+type AuditFacets struct {
+	Methods []string `json:"methods"`
+	Users   []string `json:"users"`
 }

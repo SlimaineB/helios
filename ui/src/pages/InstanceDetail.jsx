@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, instanceOnline, stateLabel } from '../api/client.js'
+import { ArrowLeft, ClipboardCheck, Clock, Filter, MapPin, Pencil, Play, Server, Trash2 } from 'lucide-react'
+import { api, instanceOnline, projectLabel, stateLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
 import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import StatusIcon from '../components/StatusIcon.jsx'
@@ -10,6 +11,7 @@ import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
 import VariableEditor from '../components/VariableEditor.jsx'
 import Pager from '../components/Pager.jsx'
+import RegionPicker from '../components/RegionPicker.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Modal from '../components/Modal.jsx'
 import CopyButton from '../components/CopyButton.jsx'
@@ -41,17 +43,14 @@ export default function InstanceDetail() {
   const [regionValue, setRegionValue] = useState('')
   const [tagsValue, setTagsValue] = useState('')
   const [renaming, setRenaming] = useState(false)
+  const [regions, setRegions] = useState([])
+  const historyRef = useRef(null)
 
   const appNamesById = useMemo(
     () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
     [inst]
   )
-  const filteredRuns = useMemo(
-    () => runs.filter((r) =>
-      !appFilter || (appNamesById.get(r.app_id) || '').toLowerCase().includes(appFilter.toLowerCase())
-    ),
-    [runs, appFilter, appNamesById]
-  )
+  const appFilterName = appNamesById.get(Number(appFilter))
 
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
@@ -67,7 +66,7 @@ export default function InstanceDetail() {
       loadedRef.current = true
       setLoading(false)
     }
-  }, [id, runsOff])
+  }, [id, runsOff, appFilter])
 
   const commands = useCommandRunner(refresh)
   const modalOpen = !!logRun || !!diffRun || !!varsApp || !!confirm
@@ -75,6 +74,10 @@ export default function InstanceDetail() {
     refresh()
   }, [refresh])
   useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
+
+  useEffect(() => {
+    api.regions().then(setRegions).catch(() => setRegions([]))
+  }, [id])
 
   useEffect(() => {
     setRunsOff(0)
@@ -211,9 +214,9 @@ export default function InstanceDetail() {
   if (!inst) {
     return (
       <section>
-        <Link to="/instances" className="back-link">← Instances</Link>
+        <Link to="/instances" className="back-link"><ArrowLeft size={14} /> Back to instances</Link>
         <h1>Instance Detail</h1>
-        <SkeletonCard />
+        {loading ? <SkeletonCard /> : <div className="empty"><p className="muted">Instance not found.</p></div>}
       </section>
     )
   }
@@ -221,6 +224,7 @@ export default function InstanceDetail() {
   if (loading) {
     return (
       <section>
+        <Link to="/instances" className="back-link"><ArrowLeft size={14} /> Back to instances</Link>
         <h1>{inst.name} <Badge state={inst.state} label={stateLabel(inst.state)} /></h1>
         <div className="meta"><SkeletonTable rows={5} columns={1} /></div>
         <h2>Applications</h2>
@@ -231,86 +235,134 @@ export default function InstanceDetail() {
     )
   }
 
+  const anyPending = Object.keys(commands.pending).some((key) => key.startsWith(`${inst.id}:`))
+  const runAll = (action) => {
+    for (const app of inst.apps || []) commands.run(inst.id, app.application.id, action)
+  }
+  const filterAppLogs = (app) => {
+    setAppFilter(String(app.application.id))
+    requestAnimationFrame(() => {
+      historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
   return (
     <section>
-      <Link to="/instances" className="back-link">← Instances</Link>
-      <h1>
-        {inst.name} <Badge state={inst.state} label={stateLabel(inst.state)} />
-        {isTunnel && <Badge state="tunnel" label="tunnel" small />}
-        <span className={`dot ${online ? 'online' : 'offline'}`} />
-        <span className="actions" style={{ marginLeft: 12 }}>
-          {can('instances', 'update') && <button className="small" onClick={openRename}>Edit</button>}
-          {can('instances', 'delete') && <button className="small danger" onClick={askDelete}>Delete</button>}
-        </span>
-      </h1>
-      <div className="meta">
-        <div><b>ID</b> <CopyButton value={String(inst.id)} label="" size="small" title="Copy ID" />{inst.id}</div>
-        <div><b>Hostname</b> {inst.hostname || '—'}</div>
-        <div><b>Region</b> {inst.region || '—'}</div>
-        <div><b>Tags</b> {inst.tags?.length ? <TagList tags={inst.tags} /> : '—'}</div>
-        <div><b>Platform</b> {inst.platform || '—'}</div>
-        <div><b>Version</b> {inst.version || '—'}</div>
-        {inst.host_info?.os && <div><b>OS</b> {inst.host_info.os}</div>}
-        {inst.host_info?.arch && <div><b>Arch</b> {inst.host_info.arch}</div>}
-        {inst.host_info?.cpu_count > 0 && <div><b>CPU</b> {inst.host_info.cpu_count} vCPU</div>}
-        {inst.host_info?.memory_mb > 0 && <div><b>Memory</b> {inst.host_info.memory_mb} MB</div>}
-        {inst.host_info?.python && <div><b>Python</b> {inst.host_info.python}</div>}
-        {inst.host_info?.ansible && <div><b>Ansible</b> {inst.host_info.ansible}</div>}
-        <div><b>Mode</b> {isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div>
-        {isTunnel && <div><b>Bastion</b> <span className="mono">{inst.tunnel_gateway || '—'}</span></div>}
-        {isTunnel && <div><b>Tunnel port</b> <span className="mono">{inst.tunnel_port || '—'}</span></div>}
-        {isTunnel && <div><b>Last tunnel</b> {inst.last_tunnel_at ? new Date(inst.last_tunnel_at).toLocaleString() : 'never'}</div>}
-        <div><b>Last seen</b> {inst.last_seen ? new Date(inst.last_seen).toLocaleString() : 'never'}</div>
-      </div>
+      <Link to="/instances" className="back-link"><ArrowLeft size={14} /> Back to instances</Link>
 
-      <div className="card host-autoheal-card">
-        <div className="card-head">
-          <strong>Host auto-apply</strong>
-          <AutoHealChip
-            enabled={hostAutoHealOn(inst)}
-            scope="host"
-            reason={hostAutoHealOn(inst)
-              ? 'Every application on this host may apply drift automatically'
-              : 'Drift is still detected but nothing is applied automatically on this host'}
-          />
-          <label className="switch" title={hostAutoHealOn(inst) ? 'Turn off auto-apply for every app on this host' : 'Turn on auto-apply for this host'}>
-            <input
-              type="checkbox"
-              checked={hostAutoHealOn(inst)}
-              disabled={!can('instances', 'update')}
-              onChange={() => toggleHostAutoHeal(!hostAutoHealOn(inst))}
-            />
-            <span className="slider" />
-          </label>
-          <span className="sub muted">
-            Master switch for this host. Per-application switches below still apply (most restrictive wins).
-          </span>
-        </div>
-      </div>
-
-      {isTunnel && (
-        <div className="card">
-          <div className="card-head">
-            <strong>Reverse SSH tunnel</strong>
-            <Badge state="tunnel" label="tunnel" small />
+      <div className="detail-page-head">
+        <div className="detail-page-title">
+          <h1>{inst.name}</h1>
+          <div className="detail-chips">
+            <Badge state={inst.state} label={stateLabel(inst.state)} />
+            {isTunnel && <Badge state="tunnel" label="tunnel" small />}
+            <span className={`detail-chip ${online ? 'online' : 'offline'}`}>
+              <span className={`dot ${online ? 'online' : 'offline'}`} />
+              {online ? 'Online' : 'Offline'}
+            </span>
+            <span className="project-badge">{projectLabel(inst.project)}</span>
+            {inst.region && <span className="detail-chip"><MapPin size={13} /> {inst.region}</span>}
+            <span className="detail-chip"><Clock size={13} /> {inst.last_seen ? `seen ${new Date(inst.last_seen).toLocaleString()}` : 'never seen'}</span>
+            {inst.apps.length > 0 && (
+              <span className="detail-chip">{inst.apps.length} application{inst.apps.length === 1 ? '' : 's'}</span>
+            )}
           </div>
-          <p className="sub">
-            A lightweight Helios tunnel agent can keep this reverse tunnel open and report health without Ansible. You can also run the SSH command manually; the runner on the bastion executes Ansible through the tunnel.
-          </p>
-          <TunnelDiagram port={inst.tunnel_port} gateway={inst.tunnel_gateway} />
-          {tunnelCommand ? (
+          {inst.tags?.length > 0 && <TagList tags={inst.tags} className="detail-tags" />}
+        </div>
+        <div className="detail-head-actions">
+          {inst.apps.length > 0 && can('commands', 'create') && (
             <>
-              <p><strong>Keep this tunnel running on the host</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
-              <pre className="token-pre">{tunnelCommand}</pre>
-              <p className="sub">Use a dedicated SSH key restricted to port forwarding. The bastion runner connects to 127.0.0.1:{inst.tunnel_port}.</p>
+              <button type="button" className="btn ghost" disabled={anyPending} onClick={() => runAll('check')}>
+                <ClipboardCheck size={15} /> Check all
+              </button>
+              <button type="button" className="btn" disabled={anyPending} onClick={() => runAll('apply')}>
+                <Play size={15} /> Apply all
+              </button>
             </>
-          ) : (
-            <p className="error">Tunnel gateway is not configured on the hub (HELIOS_TUNNEL_GATEWAY).</p>
+          )}
+          {can('instances', 'update') && (
+            <button type="button" className="btn ghost" onClick={openRename}>
+              <Pencil size={15} /> Edit
+            </button>
+          )}
+          {can('instances', 'delete') && (
+            <button type="button" className="btn danger" onClick={askDelete}>
+              <Trash2 size={15} /> Delete
+            </button>
           )}
         </div>
-      )}
+      </div>
 
-      <h2>Applications</h2>
+      <div className="host-setting-bar">
+        <div className="host-setting-copy">
+          <strong>Host auto-apply</strong>
+          <span className="sub muted">Master switch for this host. Per-application switches below still apply (most restrictive wins).</span>
+        </div>
+        <AutoHealChip
+          enabled={hostAutoHealOn(inst)}
+          scope="host"
+          reason={hostAutoHealOn(inst)
+            ? 'Every application on this host may apply drift automatically'
+            : 'Drift is still detected but nothing is applied automatically on this host'}
+        />
+        <label className="switch" title={hostAutoHealOn(inst) ? 'Turn off auto-apply for every app on this host' : 'Turn on auto-apply for this host'}>
+          <input
+            type="checkbox"
+            checked={hostAutoHealOn(inst)}
+            disabled={!can('instances', 'update')}
+            onChange={() => toggleHostAutoHeal(!hostAutoHealOn(inst))}
+          />
+          <span className="slider" />
+        </label>
+      </div>
+
+      <details className="detail-panel">
+        <summary><Server size={15} /> Host details</summary>
+        <div className="detail-panel-body">
+          <div className="host-detail-grid">
+            <div className="detail"><label>ID</label><div className="value mono"><CopyButton value={String(inst.id)} label="" size="small" title="Copy ID" />{inst.id}</div></div>
+            <div className="detail"><label>Hostname</label><div className="value">{inst.hostname || '—'}</div></div>
+            <div className="detail"><label>Platform</label><div className="value">{inst.platform || '—'}</div></div>
+            <div className="detail"><label>Version</label><div className="value">{inst.version || '—'}</div></div>
+            <div className="detail"><label>Mode</label><div className="value">{isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div></div>
+            {inst.host_info?.os && <div className="detail"><label>OS</label><div className="value">{inst.host_info.os}</div></div>}
+            {inst.host_info?.arch && <div className="detail"><label>Arch</label><div className="value">{inst.host_info.arch}</div></div>}
+            {inst.host_info?.cpu_count > 0 && <div className="detail"><label>CPU</label><div className="value">{inst.host_info.cpu_count} vCPU</div></div>}
+            {inst.host_info?.memory_mb > 0 && <div className="detail"><label>Memory</label><div className="value">{inst.host_info.memory_mb} MB</div></div>}
+            {inst.host_info?.python && <div className="detail"><label>Python</label><div className="value">{inst.host_info.python}</div></div>}
+            {inst.host_info?.ansible && <div className="detail"><label>Ansible</label><div className="value">{inst.host_info.ansible}</div></div>}
+          </div>
+
+          {isTunnel && (
+            <div className="detail-subsection">
+              <div className="detail-section-head">
+                <strong>Reverse SSH tunnel</strong>
+                <Badge state="tunnel" label="tunnel" small />
+              </div>
+              <div className="host-detail-grid">
+                <div className="detail"><label>Bastion</label><div className="value mono">{inst.tunnel_gateway || '—'}</div></div>
+                <div className="detail"><label>Tunnel port</label><div className="value mono">{inst.tunnel_port || '—'}</div></div>
+                <div className="detail"><label>Last tunnel</label><div className="value">{inst.last_tunnel_at ? new Date(inst.last_tunnel_at).toLocaleString() : 'never'}</div></div>
+              </div>
+              <p className="sub">
+                A lightweight Helios tunnel agent can keep this reverse tunnel open and report health without Ansible. You can also run the SSH command manually; the runner on the bastion executes Ansible through the tunnel.
+              </p>
+              <TunnelDiagram port={inst.tunnel_port} gateway={inst.tunnel_gateway} />
+              {tunnelCommand ? (
+                <>
+                  <p><strong>Keep this tunnel running on the host</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
+                  <pre className="token-pre">{tunnelCommand}</pre>
+                  <p className="sub">Use a dedicated SSH key restricted to port forwarding. The bastion runner connects to 127.0.0.1:{inst.tunnel_port}.</p>
+                </>
+              ) : (
+                <p className="error">Tunnel gateway is not configured on the hub (HELIOS_TUNNEL_GATEWAY).</p>
+              )}
+            </div>
+          )}
+        </div>
+      </details>
+
+      <h2>Applications <span className="muted detail-count">{inst.apps.length}</span></h2>
       {inst.apps.length === 0 && <SkeletonEmpty lines={2} />}
       {inst.apps.map((a) => {
         const pending = commands.pending[`${inst.id}:${a.application.id}`]
@@ -340,6 +392,7 @@ export default function InstanceDetail() {
             <span className="mono muted"><CopyButton value={a.application.repo_url} label="" size="small" title="Copy repo URL" />{a.application.repo_url}</span>
             <span className="actions">
               <button className="small" disabled={!can('instances', 'update')} onClick={() => setVarsApp(a.application)}>Host vars</button>{' '}
+              <button className="small" title="Filter run history to this application" onClick={() => filterAppLogs(a)}><Filter size={13} /> Filter logs</button>{' '}
               <button className="small warn" title="Apply the desired configuration now" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'apply'} onClick={() => commands.run(inst.id, a.application.id, 'apply')}>{pending?.action === 'apply' && <span className="spinner xs" aria-hidden="true" />}Apply now</button>{' '}
               <button className="small" title="Check for drift without changing the host" disabled={!can('commands', 'create') || !!pending} aria-busy={pending?.action === 'check'} onClick={() => commands.run(inst.id, a.application.id, 'check')}>{pending?.action === 'check' && <span className="spinner xs" aria-hidden="true" />}Check now</button>{' '}
               <button className="small danger" disabled={!can('instances', 'update')} onClick={() => confirmUnassign(a)} title="Remove this application from this instance only">Unassign</button>
@@ -382,22 +435,33 @@ export default function InstanceDetail() {
       })}
 
       {inst && inst.apps.length && (
-        <div className="filters" style={{ marginBottom: '12px' }}>
-          <label>Application</label>
-          <input
-            className="filter-search"
+        <div className="filters" style={{ marginBottom: '12px' }} ref={historyRef}>
+          <label htmlFor="history-app-filter">Application</label>
+          <select
+            id="history-app-filter"
             value={appFilter}
             onChange={(e) => setAppFilter(e.target.value)}
-            placeholder="Filter by application…"
-            title="Filter runs by application name"
-          />
+            title="Filter run history by application"
+          >
+            <option value="">All applications</option>
+            {inst.apps.map((a) => (
+              <option key={a.application.id} value={String(a.application.id)}>{a.application.name}</option>
+            ))}
+            {appFilter && !appFilterName && <option value={appFilter}>Application #{appFilter}</option>}
+          </select>
+          {appFilter && (
+            <button type="button" className="ghost small" onClick={() => setAppFilter('')}>Clear</button>
+          )}
         </div>
       )}
-      <h2>Run history</h2>
+      <h2>
+        Run history
+        {appFilterName && <span className="filter-chip history-filter-chip">{appFilterName}</span>}
+      </h2>
       <table className="grid">
         <thead><tr><th>#</th><th>Mode</th><th>Status</th><th style={{ width: '140px' }}>Application</th><th>Trigger</th><th>Commit</th><th>Summary</th><th>When</th><th></th></tr></thead>
         <tbody>
-          {filteredRuns.map((r) => (
+          {runs.map((r) => (
             <tr key={r.id}>
               <td className="mono"><CopyButton value={String(r.id)} label="" size="small" title="Copy run ID" />{r.id}</td>
               <td>{r.mode === 'apply' ? 'Apply' : 'Check'}</td>
@@ -414,7 +478,7 @@ export default function InstanceDetail() {
               </td>
             </tr>
           ))}
-          {runs.length === 0 && <tr><td colSpan={9} className="muted">No runs yet.</td></tr>}
+          {runs.length === 0 && <tr><td colSpan={9} className="muted">{appFilter ? 'No runs for this application.' : 'No runs yet.'}</td></tr>}
         </tbody>
       </table>
 
@@ -427,9 +491,17 @@ export default function InstanceDetail() {
             <label>Instance name
               <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)} />
             </label>
-            <label>Region
-              <input value={regionValue} onChange={(e) => setRegionValue(e.target.value)} placeholder="e.g. eu-west-1, dc-paris-1" />
-            </label>
+            <div className="form-field">
+              <span className="form-field-label">Region</span>
+              <RegionPicker
+                value={regionValue}
+                onChange={setRegionValue}
+                regions={regions}
+                onRegionCreated={(region) => setRegions((prev) =>
+                  [...prev.filter((r) => r.id !== region.id), region].sort((a, b) => a.name.localeCompare(b.name)))}
+              />
+              <span className="sub">Managed from the Regions page or created here.</span>
+            </div>
             <label>Tags
               <input value={tagsValue} onChange={(e) => setTagsValue(e.target.value)} placeholder="e.g. prod, team-a" />
               <span className="sub">Comma-separated labels for search and grouping.</span>
@@ -442,7 +514,7 @@ export default function InstanceDetail() {
         </Modal>
       )}
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
-      <Pager total={appFilter ? filteredRuns.length : runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
+      <Pager total={runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
     </section>
   )
 }

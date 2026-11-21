@@ -424,7 +424,7 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		entries, total, err := st.ListAudit(context.Background(), 10, 0)
+		entries, total, err := st.ListAudit(context.Background(), model.AuditFilter{Limit: 10})
 		if err == nil && total > 0 {
 			if entries[0].Method != http.MethodPost || entries[0].Path != "/api/v1/projects" || entries[0].Status != http.StatusCreated {
 				t.Fatalf("audit entry = %+v", entries[0])
@@ -434,6 +434,62 @@ func TestAuditLogRecordsMutations(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("audit entry was not written")
+}
+
+func TestAuditFiltersAndFacets(t *testing.T) {
+	_, st := newTestServer(t)
+	ctx := context.Background()
+	entries := []model.AuditEntry{
+		{User: "alice", Method: http.MethodPost, Path: "/api/v1/projects", Status: http.StatusCreated, RemoteIP: "10.0.0.1"},
+		{User: "bob", Method: http.MethodDelete, Path: "/api/v1/projects/1", Status: http.StatusForbidden, RemoteIP: "10.0.0.2"},
+		{User: "alice", Method: http.MethodPost, Path: "/api/v1/applications", Status: http.StatusInternalServerError, RemoteIP: "10.0.0.1"},
+	}
+	for _, e := range entries {
+		if err := st.AppendAudit(ctx, e); err != nil {
+			t.Fatalf("append audit: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		filter model.AuditFilter
+		want   int
+	}{
+		{name: "user", filter: model.AuditFilter{User: "alice"}, want: 2},
+		{name: "method", filter: model.AuditFilter{Method: "delete"}, want: 1},
+		{name: "status 4xx", filter: model.AuditFilter{Status: "4xx"}, want: 1},
+		{name: "status 5xx", filter: model.AuditFilter{Status: "5xx"}, want: 1},
+		{name: "status error", filter: model.AuditFilter{Status: "error"}, want: 2},
+		{name: "path search", filter: model.AuditFilter{Query: "applications"}, want: 1},
+		{name: "user search", filter: model.AuditFilter{Query: "alice"}, want: 2},
+		{name: "ip search", filter: model.AuditFilter{Query: "10.0.0.2"}, want: 1},
+		{name: "since", filter: model.AuditFilter{Since: time.Now().Add(-time.Minute)}, want: 3},
+		{name: "until", filter: model.AuditFilter{Until: time.Now().Add(time.Minute)}, want: 3},
+		{name: "future since", filter: model.AuditFilter{Since: time.Now().Add(time.Hour)}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.filter.Limit = 10
+			got, total, err := st.ListAudit(ctx, tt.filter)
+			if err != nil {
+				t.Fatalf("list audit: %v", err)
+			}
+			if total != tt.want || len(got) != tt.want {
+				t.Fatalf("total=%d len=%d want %d", total, len(got), tt.want)
+			}
+		})
+	}
+
+	facets, err := st.AuditFacets(ctx)
+	if err != nil {
+		t.Fatalf("audit facets: %v", err)
+	}
+	if strings.Join(facets.Users, ",") != "alice,bob" {
+		t.Fatalf("users = %v", facets.Users)
+	}
+	if strings.Join(facets.Methods, ",") != "DELETE,POST" {
+		t.Fatalf("methods = %v", facets.Methods)
+	}
 }
 
 func TestConfigRepoCRUD(t *testing.T) {

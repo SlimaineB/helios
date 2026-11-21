@@ -1,5 +1,5 @@
 import {
-  Clock, Database, FileText, Gauge, GitBranch, Layers,
+  Clock, Database, FileText, Gauge, GitBranch, Layers, MapPin,
   RefreshCw, Server, Settings as SettingsIcon, TriangleAlert,
 } from 'lucide-react'
 
@@ -11,6 +11,7 @@ export const NAV_GROUPS = [
       { path: '/', label: 'Overview', icon: Gauge, perm: 'instances.get' },
       { path: '/instances', label: 'Instances', icon: Server, perm: 'instances.get' },
       { path: '/drift', label: 'Drift', icon: TriangleAlert, perm: 'instances.get' },
+      { path: '/regions', label: 'Regions', icon: MapPin, perm: 'regions.get' },
     ],
   },
   {

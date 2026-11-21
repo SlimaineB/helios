@@ -85,8 +85,8 @@ registry row in their own project. Sync windows are visible when global
 the concrete object, so a scoped policy cannot update another project's
 resources by guessing an ID.
 
-Global resources (`configrepos.*`, `settings.*`, `audit.get` and project
-create/update/delete) remain admin-only. A scoped role should therefore not
+Global resources (`configrepos.*`, `settings.*`, `audit.get`, region
+create/update/delete and project create/update/delete) remain admin-only. A scoped role should therefore not
 bind users to `role:readonly`, which grants `get` on `*`.
 
 Example tenant roles and bindings are in `deploy/k3s/rbac.yaml`.
@@ -103,13 +103,14 @@ Example tenant roles and bindings are in `deploy/k3s/rbac.yaml`.
 | `applications.*` | Application management |
 | `repositories.*` | Repository registry |
 | `projects.*` | Projects and project-scoped access |
+| `regions.*` | Region catalog offered in instance forms |
 | `configrepos.*` | Optional GitOps config repositories, including `sync` |
 | `windows.*` | Sync windows |
 | `audit.get` | Audit log |
 
-`repositories.*`, `projects.get` and `windows.get` are tenant-scoped.
-Project writes, `configrepos.*`, `settings.*` and `audit.get` require the
-global (`*`) object scope.
+`repositories.*`, `projects.get`, `windows.get` and `regions.get` are
+tenant-scoped. Region writes, project writes, `configrepos.*`, `settings.*`
+and `audit.get` require the global (`*`) object scope.
 
 For a production setup, see [Install](INSTALL.md) and the
 [configuration section](INSTALL.md#compose-configuration) for the relevant

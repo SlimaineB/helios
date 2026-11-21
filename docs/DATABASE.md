@@ -40,6 +40,9 @@ run the additive migrations.
 - **Projects** are logical names, not foreign keys. The empty project name is
   the implicit global/default scope. Renaming a project cascades to
   `applications.project` and `instances.project`.
+- **Regions** are an operator-managed catalog. `instances.region` stores the
+  region name as text, not a foreign key; renaming a region cascades to
+  instances already using it.
 - **Repository credentials** are matched to applications by
   `(applications.project, applications.repo_url)` ->
   `(repositories.project, repositories.url)`; this is a logical reference,
@@ -240,6 +243,18 @@ RBAC scopes and repository allowlists.
 | `repo_patterns` | `TEXT NOT NULL DEFAULT ''` | Newline-separated globs allowed for applications in the project |
 | `created_at` | `TEXT NOT NULL` | Creation timestamp |
 
+### `regions`
+
+Operator-managed locations offered in instance forms and used by the world map
+and filters.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | Region ID |
+| `name` | `TEXT NOT NULL UNIQUE` | Region label; renames cascade to `instances.region` |
+| `description` | `TEXT NOT NULL DEFAULT ''` | Optional operator note |
+| `created_at` | `TEXT NOT NULL` | Creation timestamp |
+
 ### `sync_windows`
 
 Freeze (`deny`) or allow (`allow`) schedules for checks/applies.
@@ -369,6 +384,7 @@ commands are never pruned. Tune with `HELIOS_RETENTION_*`.
 | `applications.name` unique | Unique application names |
 | `repositories (project, url)` unique | One registry entry per URL per tenant |
 | `projects.name` unique | Unique project names |
+| `regions.name` unique | Unique region labels |
 | `config_repos.name` unique | Unique config repository names |
 | `gitops_managed` PK `(config_repo_id, kind, name)` | One ownership record per config repo/object |
 | `operator_sessions.token_hash` PK | One row per login session |

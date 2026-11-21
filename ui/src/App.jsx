@@ -9,6 +9,7 @@ import Repositories from './pages/Repositories.jsx'
 import SyncWindows from './pages/SyncWindows.jsx'
 import Audit from './pages/Audit.jsx'
 import Projects from './pages/Projects.jsx'
+import Regions from './pages/Regions.jsx'
 import ConfigRepos from './pages/ConfigRepos.jsx'
 import SettingsPage from './pages/Settings.jsx'
 import WorldMap from './pages/WorldMap.jsx'
@@ -150,6 +151,7 @@ export default function App() {
                 <Route path="/instances" element={<Instances />} />
                 <Route path="/drift" element={<Drift />} />
                 <Route path="/instances/:id" element={<InstanceDetail />} />
+                <Route path="/regions" element={<Regions />} />
                 <Route path="/map" element={<WorldMap />} />
                 <Route path="/topology" element={<Navigate to="/" replace />} />
                 <Route path="/projects" element={<Projects />} />

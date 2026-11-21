@@ -147,6 +147,13 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS regions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_windows (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL,
@@ -349,6 +356,13 @@ CREATE TABLE IF NOT EXISTS projects (
   name          TEXT NOT NULL UNIQUE,
   repo_patterns TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS regions (
+  id          BIGSERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sync_windows (
@@ -2780,6 +2794,110 @@ func (s *sqlstore) CountInstancesInProject(ctx context.Context, project string) 
 	return n, nil
 }
 
+// ---- Regions ----
+
+const regionCols = `r.id, r.name, r.description, r.created_at, (SELECT COUNT(*) FROM instances i WHERE i.region=r.name)`
+
+func scanRegion(row interface{ Scan(...any) error }) (model.Region, error) {
+	var r model.Region
+	var created string
+	if err := row.Scan(&r.ID, &r.Name, &r.Description, &created, &r.Instances); err != nil {
+		return r, err
+	}
+	r.CreatedAt = parseTime(created)
+	return r, nil
+}
+
+func (s *sqlstore) ListRegions(ctx context.Context) ([]model.Region, error) {
+	rows, err := s.query(ctx, `SELECT `+regionCols+` FROM regions r ORDER BY lower(r.name)`)
+	if err != nil {
+		return nil, wrap(err, "list regions")
+	}
+	defer rows.Close()
+	out := []model.Region{}
+	for rows.Next() {
+		r, err := scanRegion(rows)
+		if err != nil {
+			return nil, wrap(err, "scan region")
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) GetRegionByID(ctx context.Context, id int64) (model.Region, error) {
+	r, err := scanRegion(s.queryRow(ctx, `SELECT `+regionCols+` FROM regions r WHERE r.id=?`, id))
+	if err != nil {
+		return r, wrap(err, "get region")
+	}
+	return r, nil
+}
+
+func (s *sqlstore) createOrUpdateRegionConflict(ctx context.Context, name string, excludeID int64) (bool, error) {
+	var n int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM regions WHERE lower(name)=lower(?) AND id<>?`, name, excludeID).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (s *sqlstore) CreateRegion(ctx context.Context, in model.Region) (model.Region, error) {
+	conflict, err := s.createOrUpdateRegionConflict(ctx, in.Name, 0)
+	if err != nil {
+		return in, wrap(err, "check region name")
+	}
+	if conflict {
+		return in, ErrConflict
+	}
+	in.CreatedAt = nowCtx(ctx)
+	id, err := s.insertID(ctx,
+		`INSERT INTO regions (name, description, created_at) VALUES (?,?,?)`,
+		in.Name, in.Description, tm(in.CreatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return in, ErrConflict
+		}
+		return in, fmt.Errorf("create region: %w", err)
+	}
+	in.ID = id
+	in.Instances = 0
+	return in, nil
+}
+
+func (s *sqlstore) UpdateRegion(ctx context.Context, in model.Region) error {
+	var old string
+	if err := s.queryRow(ctx, `SELECT name FROM regions WHERE id=?`, in.ID).Scan(&old); err != nil {
+		return wrap(err, "get region name")
+	}
+	conflict, err := s.createOrUpdateRegionConflict(ctx, in.Name, in.ID)
+	if err != nil {
+		return wrap(err, "check region name")
+	}
+	if conflict {
+		return ErrConflict
+	}
+	if _, err := s.exec(ctx, `UPDATE regions SET name=?, description=? WHERE id=?`, in.Name, in.Description, in.ID); err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
+		return fmt.Errorf("update region: %w", err)
+	}
+	if old != in.Name {
+		if _, err := s.exec(ctx, `UPDATE instances SET region=? WHERE region=?`, in.Name, old); err != nil {
+			return fmt.Errorf("cascade instance region: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteRegion(ctx context.Context, id int64) error {
+	_, err := s.exec(ctx, `DELETE FROM regions WHERE id=?`, id)
+	if err != nil {
+		return fmt.Errorf("delete region: %w", err)
+	}
+	return nil
+}
+
 // ---- Sync windows ----
 
 const windowCols = `id, name, kind, app_id, timezone, days, start_min, end_min, enabled, created_at`
@@ -3156,15 +3274,70 @@ func (s *sqlstore) PruneAudit(ctx context.Context, before time.Time) (int64, err
 	return n, nil
 }
 
-func (s *sqlstore) ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error) {
+func auditWhere(f model.AuditFilter) (string, []any) {
+	var clauses []string
+	var args []any
+
+	if q := strings.TrimSpace(f.Query); q != "" {
+		like := "%" + strings.ToLower(q) + "%"
+		clauses = append(clauses,
+			`(lower("user") LIKE ? OR lower(path) LIKE ? OR lower(remote_ip) LIKE ? OR CAST(id AS TEXT) LIKE ?)`)
+		args = append(args, like, like, like, like)
+	}
+	if method := strings.ToUpper(strings.TrimSpace(f.Method)); method != "" {
+		clauses = append(clauses, `method = ?`)
+		args = append(args, method)
+	}
+	if user := strings.TrimSpace(f.User); user != "" {
+		clauses = append(clauses, `"user" = ?`)
+		args = append(args, user)
+	}
+	switch strings.ToLower(strings.TrimSpace(f.Status)) {
+	case "ok", "success":
+		clauses = append(clauses, `status < 400`)
+	case "error", "failed":
+		clauses = append(clauses, `status >= 400`)
+	case "4xx":
+		clauses = append(clauses, `status >= 400 AND status < 500`)
+	case "5xx":
+		clauses = append(clauses, `status >= 500`)
+	}
+	if !f.Since.IsZero() {
+		clauses = append(clauses, `at >= ?`)
+		args = append(args, tm(f.Since))
+	}
+	if !f.Until.IsZero() {
+		clauses = append(clauses, `at <= ?`)
+		args = append(args, tm(f.Until))
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func (s *sqlstore) ListAudit(ctx context.Context, f model.AuditFilter) ([]model.AuditEntry, int, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 50
 	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	where, args := auditWhere(f)
+
 	var total int
-	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&total); err != nil {
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM audit_log`+where, args...).Scan(&total); err != nil {
 		return nil, 0, wrap(err, "count audit")
 	}
-	rows, err := s.query(ctx, `SELECT id, at, "user", method, path, status, remote_ip FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`, limit, offset)
+	listArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.query(ctx,
+		`SELECT id, at, "user", method, path, status, remote_ip FROM audit_log`+where+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+		listArgs...)
 	if err != nil {
 		return nil, 0, wrap(err, "list audit")
 	}
@@ -3180,6 +3353,42 @@ func (s *sqlstore) ListAudit(ctx context.Context, limit, offset int) ([]model.Au
 		out = append(out, e)
 	}
 	return out, total, rows.Err()
+}
+
+func (s *sqlstore) AuditFacets(ctx context.Context) (model.AuditFacets, error) {
+	out := model.AuditFacets{Methods: []string{}, Users: []string{}}
+
+	rows, err := s.query(ctx, `SELECT method FROM audit_log WHERE method <> '' GROUP BY method ORDER BY method`)
+	if err != nil {
+		return out, wrap(err, "audit methods")
+	}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return out, wrap(err, "scan audit methods")
+		}
+		out.Methods = append(out.Methods, v)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, wrap(err, "iterate audit methods")
+	}
+	rows.Close()
+
+	rows, err = s.query(ctx, `SELECT "user" FROM audit_log WHERE "user" <> '' GROUP BY "user" ORDER BY lower("user")`)
+	if err != nil {
+		return out, wrap(err, "audit users")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return out, wrap(err, "scan audit users")
+		}
+		out.Users = append(out.Users, v)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqlstore) SetAssignmentTargetRevision(ctx context.Context, instanceID string, appID int64, revision string) error {

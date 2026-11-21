@@ -108,6 +108,11 @@ export const api = {
   updateSyncWindow: (id, w) => request('PUT', `/api/v1/sync-windows/${id}`, w),
   deleteSyncWindow: (id) => request('DELETE', `/api/v1/sync-windows/${id}`),
 
+  regions: () => request('GET', '/api/v1/regions'),
+  createRegion: (region) => request('POST', '/api/v1/regions', region),
+  updateRegion: (id, region) => request('PUT', `/api/v1/regions/${id}`, region),
+  deleteRegion: (id) => request('DELETE', `/api/v1/regions/${id}`),
+
   projects: () => request('GET', '/api/v1/projects'),
   createProject: (p) => request('POST', '/api/v1/projects', p),
   updateProject: (id, p) => request('PUT', `/api/v1/projects/${id}`, p),
