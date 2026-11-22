@@ -1,13 +1,16 @@
-# Dev/testbed harness. Everything runs on the host network so the SSO (Dex)
+# Dev/testbed harness. App services use the host network so the SSO (Dex)
 # issuer, the API and the repo are all reachable as "localhost" from both the
-# containers and the browser. Not meant for production networking. The fixed
-# credentials below are lab fixtures, not secrets.
+# containers and the browser. Postgres stays on a bridge and is published on
+# localhost:55432 so it cannot collide with a local Postgres on 5432. Not meant
+# for production networking. The fixed credentials below are lab fixtures,
+# not secrets.
 name: helios
 
 services:
   db:
     image: postgres:16-alpine
-    network_mode: host
+    ports:
+      - "127.0.0.1:${HELIOS_DB_PORT:-55432}:5432"
     environment:
       POSTGRES_USER: helios
       POSTGRES_PASSWORD: helios
@@ -27,7 +30,7 @@ services:
       dockerfile: Dockerfile
     network_mode: host
     environment:
-      HELIOS_DB: postgres://helios:helios@localhost:5432/helios?sslmode=disable
+      HELIOS_DB: postgres://helios:helios@localhost:${HELIOS_DB_PORT:-55432}/helios?sslmode=disable
       HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-admin}
       HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-changeme}
       HELIOS_BASE_URL: http://localhost:8080
@@ -37,6 +40,11 @@ services:
       HELIOS_OIDC_CLIENT_SECRET: dex-client-secret
       HELIOS_OIDC_GROUP_CLAIM: email
       HELIOS_OIDC_SCOPES: openid, profile, email, groups
+      # Enabled only by `./hack/demo.sh --runner` (or when you export these).
+      HELIOS_RUNNER_TOKEN: ${HELIOS_RUNNER_TOKEN:-}
+      HELIOS_TUNNEL_GATEWAY: ${HELIOS_TUNNEL_GATEWAY:-}
+      HELIOS_TUNNEL_PORT_MIN: ${HELIOS_TUNNEL_PORT_MIN:-22000}
+      HELIOS_TUNNEL_PORT_MAX: ${HELIOS_TUNNEL_PORT_MAX:-22999}
     volumes:
       - ./hack/dex/rbac.yaml:/etc/helios/rbac.yaml:ro
     depends_on:
@@ -105,6 +113,57 @@ services:
       - bootstrap
     restart: unless-stopped
 
+  # Optional tunnel-mode lab. Start with `./hack/demo.sh --runner` (or
+  # `docker compose --profile runner up -d --build`). A managed host opens a
+  # reverse SSH tunnel to a bastion; only the bastion runner executes Ansible.
+  runner-bootstrap:
+    profiles: ["runner"]
+    build:
+      context: .
+      dockerfile: hack/runner-demo/Dockerfile.bootstrap
+    network_mode: host
+    environment:
+      HELIOS_SERVER: http://localhost:8080
+      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-admin}
+      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-changeme}
+      HELIOS_RUNNER_TOKEN: ${HELIOS_RUNNER_TOKEN:-}
+      DEMO_REPO_URL: ${DEMO_REPO_URL:-http://localhost:8000/demo.git}
+    volumes:
+      - runnerconf:/conf
+    depends_on:
+      - server
+      - repo
+    restart: "no"
+
+  runner:
+    profiles: ["runner"]
+    build:
+      context: .
+      dockerfile: hack/runner-demo/Dockerfile.runner
+    network_mode: host
+    volumes:
+      - runnerconf:/conf
+      - runnerstate:/var/lib/helios/runner
+    depends_on:
+      - runner-bootstrap
+    restart: unless-stopped
+
+  tunnel-host:
+    profiles: ["runner"]
+    build:
+      context: .
+      dockerfile: hack/runner-demo/Dockerfile.tunnel-host
+    network_mode: host
+    volumes:
+      - runnerconf:/conf
+      - tunnelstate:/var/lib/helios/agent
+    depends_on:
+      - runner-bootstrap
+    restart: unless-stopped
+
 volumes:
   dbdata:
   agentconf:
+  runnerconf:
+  runnerstate:
+  tunnelstate:

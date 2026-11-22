@@ -83,6 +83,11 @@ See the complete walkthrough:
 reference section in
 [Tunnel mode](docs/INSTALL.md#tunnel-mode--reverse-ssh).
 
+Want to try it locally? `./hack/demo.sh --runner` (or `make demo-runner`) adds a
+managed tunnel host, a bastion with `helios-runner`, a reverse SSH tunnel and a
+`runner-demo` application to the Docker lab. It verifies that the check/apply
+actually ran through the runner.
+
 **Large fleet?** Enable the hub's [repo snapshot cache](docs/INSTALL.md#repo-snapshot-cache)
 so agents download one immutable tarball per commit instead of cloning the same
 repository on every host. It is size- and age-capped, and agents fall back to

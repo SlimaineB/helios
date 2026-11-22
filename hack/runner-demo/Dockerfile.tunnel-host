@@ -1,0 +1,20 @@
+# Managed tunnel host for the optional `--runner` lab profile.
+# It runs sshd + the tunnel-only agent, and deliberately has NO Ansible.
+FROM golang:1.25-alpine AS build
+WORKDIR /build
+COPY agent/go.mod agent/go.sum ./
+RUN go mod download
+COPY agent/ ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/helios-agent ./cmd/agent
+
+FROM python:3.11-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates openssh-client openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd /var/lib/helios/agent /conf
+COPY --from=build /out/helios-agent /usr/local/bin/helios-agent
+COPY hack/runner-demo/tunnel-host-entrypoint.sh /usr/local/bin/tunnel-host-entrypoint.sh
+RUN chmod +x /usr/local/bin/tunnel-host-entrypoint.sh
+EXPOSE 2222
+ENTRYPOINT ["/usr/local/bin/tunnel-host-entrypoint.sh"]

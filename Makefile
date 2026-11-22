@@ -1,4 +1,4 @@
-.PHONY: build build-agent build-server ui build-local test test-race test-ui demo smoke loop-test docs docs-build docs-serve release airgap compose-up compose-down compose-logs compose-clean example-env example-up example-smoke example-demo example-logs example-psql example-down example-clean clean
+.PHONY: build build-agent build-server ui build-local test test-race test-ui demo demo-runner smoke loop-test docs docs-build docs-serve release airgap compose-up compose-down compose-logs compose-clean example-env example-up example-smoke example-demo example-logs example-psql example-down example-clean clean
 
 ## Local development (no docker)
 ui:
@@ -38,6 +38,10 @@ docs-serve:
 ## One-command lab demo (build + start + wait + smoke)
 demo:
 	./hack/demo.sh
+
+## Optional tunnel mode: managed host + bastion runner in the lab
+demo-runner:
+	./hack/demo.sh --runner
 
 ## Running compose stack (start it first: make compose-up)
 smoke:

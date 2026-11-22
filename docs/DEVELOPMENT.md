@@ -53,8 +53,9 @@ demo SSO accounts (`admin@example.com` / `admin123`,
 `reader@example.com` / `reader123`). Both agents should be **Synced** within a
 minute.
 
-> This compose file is a lab: host networking, demo credentials, local SSO and
-> a demo git server. Do not expose it to the internet.
+> This compose file is a lab: app services use host networking, Postgres is
+> published on `localhost:55432`, and credentials, SSO and the git server are
+> demo fixtures. Do not expose it to the internet.
 
 ### Watch drift live
 
@@ -72,6 +73,65 @@ or enable `autoheal` on the app.
 make compose-down     # stop, keep the database and agent state
 make compose-clean    # stop and delete the compose volumes
 ```
+
+### Tunnel mode + bastion runner demo
+
+The default demo uses agent mode. To also exercise the agentless path, start the
+optional `runner` profile:
+
+```sh
+./hack/demo.sh --runner
+# or
+make demo-runner
+```
+
+This adds three containers on top of the normal stack:
+
+| Service | Role |
+|---------|------|
+| `runner-bootstrap` | one-shot: creates the `runner-demo` app + `runner-tunnel` instance, generates both SSH keys and writes configs |
+| `tunnel-host` | managed host: `sshd` on `127.0.0.1:2222` + tunnel-only agent; **no Ansible installed** |
+| `runner` | bastion: `sshd` on `127.0.0.1:2223`, `helios-runner` + Ansible; executes the playbook over `ssh 127.0.0.1:<port>` |
+
+The flow is the real one: the managed host opens a reverse SSH tunnel to the
+bastion, the runner discovers the tunnel instance from `/api/v1/runner/instances`,
+and only the runner runs `ansible-playbook`. The hub allocates a loopback port in
+`HELIOS_TUNNEL_PORT_MIN..HELIOS_TUNNEL_PORT_MAX` (default `22000..22999`).
+
+Open **Runners** in the UI: the API must be `On`, configured, and `runner-tunnel`
+online. The instance detail shows the tunnel gateway, port and last tunnel
+activity; the topology shows `hub → helios-runner → tunnel host`.
+
+Trigger drift through the tunnel:
+
+```sh
+docker compose --profile runner exec tunnel-host \
+  sh -c 'echo broken > /tmp/helios-demo/state.txt'
+docker compose --profile runner logs -f runner tunnel-host
+```
+
+`runner-demo` turns **Drift** and autoheal converges it back via the runner. To
+watch a manual command instead, use **Check**/**Sync** on the instance.
+
+Lab defaults are overridable before starting:
+
+```sh
+HELIOS_RUNNER_TOKEN=my-token \
+HELIOS_TUNNEL_GATEWAY=root@127.0.0.1 \
+HELIOS_TUNNEL_PORT_MIN=23000 HELIOS_TUNNEL_PORT_MAX=23010 \
+./hack/demo.sh --runner
+```
+
+This is a lab only: the app containers use host networking, Postgres is
+published on `localhost:55432`, and the runner demo uses root SSH keys inside
+the demo. Do not reuse these keys or expose the ports. Stop it with:
+
+```sh
+docker compose --profile runner down -v
+```
+
+If you keep the database volume but delete the runner config volume, the
+bootstrap recreates the stale tunnel instance so the token can be issued again.
 
 ### Full Dex + PostgreSQL example
 

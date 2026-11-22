@@ -27,6 +27,13 @@ lightweight tunnel-only agent, which never executes Ansible.
 The UI topology mirrors this: `hub → helios-runner (bastion) → tunnel host →
 applications`. Normal agent instances keep the direct `hub → agent` edge.
 
+> **Want a local end-to-end lab?** From the repository root run
+> `./hack/demo.sh --runner` (or `make demo-runner`). It starts this topology in
+> Docker with a real reverse SSH tunnel, a bastion runner and a `runner-demo`
+> app, then verifies a runner-executed check. See
+> [Development → Tunnel mode + bastion runner demo](../../../docs/DEVELOPMENT.md#tunnel-mode--bastion-runner-demo).
+> The rest of this page is the production-oriented walkthrough.
+
 ## Components and prerequisites
 
 | Where | Needs |
