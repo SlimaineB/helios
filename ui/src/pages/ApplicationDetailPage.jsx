@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client.js'
 import ApplicationDetail from '../components/ApplicationDetail.jsx'
+import { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import ApplicationHistory from '../components/ApplicationHistory.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
@@ -62,41 +63,51 @@ export default function ApplicationDetailPage() {
   useEffect(() => { refresh() }, [refresh])
   useLiveRefresh(refresh, { interval: 30000, enabled: !historyOpen && !varsOpen && !confirm })
 
-  const edit = () => navigate(`/applications?edit=${app.id}`)
+  const edit = () => {
+    if (managedByGitOps(app)) return toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
+    navigate(`/applications?edit=${app.id}`)
+  }
 
-  const remove = () => setConfirm({
-    title: 'Delete application',
-    message: `Delete "${app.name}"? This cannot be undone.`,
-    variant: 'danger',
-    onConfirm: async () => {
-      setConfirm(null)
-      try {
-        await api.deleteApplication(app.id)
-        toast.success('Application deleted')
-        navigate('/applications')
-      } catch (e) {
-        toast.error(e.message)
-      }
-    },
-  })
+  const remove = () => {
+    if (managedByGitOps(app)) return toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
+    setConfirm({
+      title: 'Delete application',
+      message: `Delete "${app.name}"? This cannot be undone.`,
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirm(null)
+        try {
+          await api.deleteApplication(app.id)
+          toast.success('Application deleted')
+          navigate('/applications')
+        } catch (e) {
+          toast.error(e.message)
+        }
+      },
+    })
+  }
 
-  const unassign = (inst) => setConfirm({
-    title: 'Unassign application',
-    message: `Unassign "${app.name}" from "${inst.name}"? The application stays on other instances.`,
-    variant: 'danger',
-    onConfirm: async () => {
-      setConfirm(null)
-      try {
-        await api.unassign(inst.id, app.id)
-        toast.success('Application unassigned')
-        refresh()
-      } catch (e) {
-        toast.error(e.message)
-      }
-    },
-  })
+  const unassign = (inst) => {
+    if (managedByGitOps(app)) return toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
+    setConfirm({
+      title: 'Unassign application',
+      message: `Unassign "${app.name}" from "${inst.name}"? The application stays on other instances.`,
+      variant: 'danger',
+      onConfirm: async () => {
+        setConfirm(null)
+        try {
+          await api.unassign(inst.id, app.id)
+          toast.success('Application unassigned')
+          refresh()
+        } catch (e) {
+          toast.error(e.message)
+        }
+      },
+    })
+  }
 
   const assign = async (inst) => {
+    if (managedByGitOps(app)) return toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
     try {
       await api.assign(inst.id, app.id)
       toast.success('Application assigned')
@@ -128,7 +139,10 @@ export default function ApplicationDetailPage() {
         availableTotal={availableTotal}
         can={can}
         onEdit={edit}
-        onVars={() => setVarsOpen(true)}
+        onVars={() => {
+          if (managedByGitOps(app)) return toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
+          setVarsOpen(true)
+        }}
         onHistory={() => setHistoryOpen(true)}
         onDelete={remove}
         onUnassign={unassign}

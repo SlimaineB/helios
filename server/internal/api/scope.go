@@ -118,6 +118,10 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		out = filtered
 	}
+	if err := s.annotateProjects(r.Context(), out); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -130,6 +134,8 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	in.ManagedBy = ""
+	in.ManagedByRepoID = 0
 	in.Name = strings.TrimSpace(in.Name)
 	if !projects.ValidName(in.Name) || in.Name == projects.Global {
 		writeErr(w, http.StatusBadRequest, "invalid project name")
@@ -141,6 +147,10 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "project already exists")
 			return
 		}
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.annotateProject(r.Context(), &out); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -161,6 +171,8 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	in.ManagedBy = ""
+	in.ManagedByRepoID = 0
 	in.Name = strings.TrimSpace(in.Name)
 	if !projects.ValidName(in.Name) || in.Name == projects.Global {
 		writeErr(w, http.StatusBadRequest, "invalid project name")
@@ -176,6 +188,10 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusConflict, "project name already exists")
 			return
 		}
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.annotateProject(r.Context(), &in); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

@@ -136,8 +136,9 @@ export default function ConfigRepos() {
       <h1>GitOps</h1>
       <p className="muted page-intro">
         Optional Git sources of truth. Enabled repositories are polled and their Helios YAML manifests
-        reconcile projects, repositories, applications and assignments. The rest of the UI stays fully manual:
-        resources are only pruned when <strong>prune</strong> is explicitly enabled.
+        reconcile projects, repositories, applications and assignments. GitOps-owned objects show a
+        <strong> GitOps</strong> badge and are read-only in the UI; other resources stay fully manual and are
+        only pruned when <strong>prune</strong> is explicitly enabled.
       </p>
 
       <details className="card" style={{ marginBottom: '1rem' }}>

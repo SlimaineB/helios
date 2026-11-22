@@ -1,10 +1,12 @@
 import { Link } from 'react-router-dom'
 import CopyButton from './CopyButton.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from './GitOpsBadge.jsx'
 import TagList from './TagList.jsx'
 import { useAuth } from '../App.jsx'
 
 export default function ProjectCard({ project, summary, onEdit, onDelete }) {
   const { can } = useAuth()
+  const readOnly = !project.system && managedByGitOps(project)
 
   return (
     <article className="project-card">
@@ -19,6 +21,7 @@ export default function ProjectCard({ project, summary, onEdit, onDelete }) {
           </span>
         </div>
         {project.system && <span className="project-badge">system</span>}
+        {!project.system && <GitOpsBadge obj={project} />}
       </header>
 
       <div className="card-body">
@@ -63,8 +66,8 @@ export default function ProjectCard({ project, summary, onEdit, onDelete }) {
           </Link>
           {!project.system && (
             <>
-              <button className="btn ghost small" disabled={!can('projects', 'update')} onClick={() => onEdit(project)}>Edit</button>
-              <button className="btn danger small" disabled={!can('projects', 'delete')} onClick={() => onDelete(project)}>Delete</button>
+              <button className="btn ghost small" disabled={readOnly || !can('projects', 'update')} title={managedTitle(project)} onClick={() => onEdit(project)}>Edit</button>
+              <button className="btn danger small" disabled={readOnly || !can('projects', 'delete')} title={managedTitle(project)} onClick={() => onDelete(project)}>Delete</button>
             </>
           )}
         </div>

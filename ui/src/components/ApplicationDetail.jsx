@@ -13,6 +13,7 @@ import {
   Variable,
 } from 'lucide-react'
 import Badge from './Badge.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from './GitOpsBadge.jsx'
 import AutoHealChip from './AutoHealChip.jsx'
 import HealthBadge from './HealthBadge.jsx'
 import CopyButton from './CopyButton.jsx'
@@ -60,11 +61,12 @@ export default function ApplicationDetail({
   const [assigning, setAssigning] = useState(false)
   const [toggling, setToggling] = useState(false)
   const [autoheal, setAutoheal] = useState(app.autoheal)
+  const readOnly = managedByGitOps(app)
 
   useEffect(() => { setAutoheal(app.autoheal) }, [app.id, app.autoheal])
 
   const toggleAppAutoHeal = async () => {
-    if (!can('applications', 'update') || toggling) return
+    if (readOnly || !can('applications', 'update') || toggling) return
     setToggling(true)
     try {
       await api.setAppAutoHeal(app.id, !autoheal)
@@ -131,6 +133,7 @@ export default function ApplicationDetail({
           <div className="detail-chips">
             <HealthBadge state={health} label={healthLabel} size={16} />
             <span className="project-badge">{projectLabel(app.project)}</span>
+            <GitOpsBadge obj={app} />
             <span className="detail-chip"><Server size={13} /> {s.instances} instance{s.instances === 1 ? '' : 's'}</span>
             <span className="detail-chip"><GitBranch size={13} /> {app.branch || '—'}</span>
             {s.revision && (
@@ -142,16 +145,16 @@ export default function ApplicationDetail({
           <Link className="btn ghost" to={`/instances?app=${app.id}`}>
             <Server size={15} /> Open fleet
           </Link>
-          <button type="button" className="btn ghost" disabled={!can('applications', 'update')} onClick={() => onEdit(app)}>
+          <button type="button" className="btn ghost" disabled={readOnly || !can('applications', 'update')} title={managedTitle(app)} onClick={() => onEdit(app)}>
             <Pencil size={15} /> Edit
           </button>
-          <button type="button" className="btn ghost" disabled={!can('applications', 'update')} onClick={() => onVars(app)}>
+          <button type="button" className="btn ghost" disabled={readOnly || !can('applications', 'update')} title={managedTitle(app)} onClick={() => onVars(app)}>
             <Variable size={15} /> Variables
           </button>
           <button type="button" className="btn ghost" onClick={() => onHistory(app)}>
             <History size={15} /> History
           </button>
-          <button type="button" className="btn danger" disabled={!can('applications', 'delete')} onClick={() => onDelete(app)}>
+          <button type="button" className="btn danger" disabled={readOnly || !can('applications', 'delete')} title={managedTitle(app)} onClick={() => onDelete(app)}>
             <Trash2 size={15} /> Delete
           </button>
         </div>
@@ -169,11 +172,11 @@ export default function ApplicationDetail({
             ? 'Auto-apply is enabled for this application on every host (unless a host disables it)'
             : 'Auto-apply is disabled for this application on every host'}
         />
-        <label className="switch" title={`Auto-apply on drift is ${autoheal ? 'enabled' : 'disabled'} for every host`}>
+        <label className="switch" title={readOnly ? managedTitle(app) : `Auto-apply on drift is ${autoheal ? 'enabled' : 'disabled'} for every host`}>
           <input
             type="checkbox"
             checked={autoheal}
-            disabled={!can('applications', 'update') || toggling}
+            disabled={readOnly || !can('applications', 'update') || toggling}
             onChange={() => toggleAppAutoHeal()}
           />
           <span className="slider" />
@@ -250,6 +253,8 @@ export default function ApplicationDetail({
           <select
             id="assign-instance"
             value={assignTo}
+            disabled={readOnly}
+            title={managedTitle(app)}
             onChange={(e) => setAssignTo(e.target.value)}
           >
             <option value="">Choose an instance…</option>
@@ -262,7 +267,8 @@ export default function ApplicationDetail({
           <button
             type="button"
             className="btn"
-            disabled={!assignTo || assigning || !can('instances', 'update')}
+            disabled={!assignTo || assigning || readOnly || !can('instances', 'update')}
+            title={managedTitle(app)}
             onClick={assign}
           >
             {assigning ? 'Assigning…' : 'Assign'}
@@ -293,6 +299,7 @@ export default function ApplicationDetail({
               <tbody>
                 {assigned.map(({ inst, assignment }) => {
                   const state = appState(assignment)
+                  const assignmentReadOnly = readOnly || managedByGitOps(assignment)
                   return (
                     <tr key={inst.id}>
                       <td>
@@ -301,6 +308,7 @@ export default function ApplicationDetail({
                             <strong>{inst.name}</strong>
                           </Link>
                           <span className="cell-sub mono">{inst.id}</span>
+                          <GitOpsBadge obj={assignment} />
                         </div>
                       </td>
                       <td><span className="project-badge">{projectLabel(inst.project)}</span></td>
@@ -321,7 +329,8 @@ export default function ApplicationDetail({
                                   label: 'Unassign application',
                                   icon: Trash2,
                                   danger: true,
-                                  disabled: !can('instances', 'update'),
+                                  disabled: assignmentReadOnly || !can('instances', 'update'),
+                                  title: managedTitle(assignment) || managedTitle(app),
                                   onClick: () => onUnassign(inst),
                                 }
                               : null,

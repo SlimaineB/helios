@@ -29,9 +29,10 @@ A config repository is **enabled** by default and polled every 300 seconds
 (minimum 10). It can also be disabled and synced manually. Creating or updating
 an enabled config repo triggers an immediate best-effort sync.
 
-> The feature is deliberately optional. Manual create/update/delete through the
-> UI and API is never blocked. A resource managed by Git may be overwritten by
-> the next reconcile, so pick one owner per object.
+> The feature is deliberately optional. The UI marks GitOps-owned objects with a
+> **GitOps · <repo>** badge and makes their forms read-only; API writes remain
+> available as an explicit override. A resource managed by Git may be
+> overwritten by the next reconcile, so pick one owner per object.
 
 ## Repository layout
 
@@ -213,7 +214,8 @@ assignment from Git if it is also managed.
 
 ### Ownership and manual operations
 
-The hub stores ownership in `gitops_managed`. Deleting a config repository
+The hub stores ownership in `gitops_managed`; API objects owned this way carry
+`managed_by` (config repo name) and `managed_by_repo_id`. Deleting a config repository
 removes its ownership records but keeps the objects it created; they simply
 become manually managed. This lets you turn GitOps off without a destructive
 migration.
@@ -297,8 +299,9 @@ project-scoped objects.
 - Config repository `branch` is a branch name only (no semver ranges or tags).
 - Instances are not created by manifests; they register through the agent token
   flow.
-- Managed objects are not marked in the Applications/Projects UI yet; use the
-  GitOps page and the `gitops_managed` table.
+- Managed objects show a **GitOps** badge in Applications, Projects, Repositories
+  and instance assignments, and their edit/delete controls are disabled in the
+  UI. API responses include `managed_by` / `managed_by_repo_id`.
 - The server image now includes `git` and `openssh-client`. Source/binary
   installs need `git` available on the hub.
 

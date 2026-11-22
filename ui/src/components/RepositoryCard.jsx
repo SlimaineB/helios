@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom'
 import { PlugZap } from 'lucide-react'
 import CopyButton from './CopyButton.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from './GitOpsBadge.jsx'
 import { useAuth } from '../App.jsx'
 import { projectLabel } from '../api/client.js'
 
 export default function RepositoryCard({ repo, onEdit, onDelete, onCheck, checking }) {
   const { can } = useAuth()
+  const readOnly = managedByGitOps(repo)
 
   return (
     <article className="repo-card">
@@ -17,6 +19,7 @@ export default function RepositoryCard({ repo, onEdit, onDelete, onCheck, checki
             {repo.url}
           </div>
         </div>
+        <GitOpsBadge obj={repo} />
       </header>
 
       <div className="card-body">
@@ -48,8 +51,8 @@ export default function RepositoryCard({ repo, onEdit, onDelete, onCheck, checki
           <button className="btn ghost small" disabled={checking} onClick={() => onCheck(repo)} title="Test Git connection">
             <PlugZap size={13} /> {checking ? 'Testing…' : 'Test'}
           </button>
-          <button className="btn ghost small" disabled={!can('repositories', 'update')} onClick={() => onEdit(repo)}>Edit</button>
-          <button className="btn danger small" disabled={!can('repositories', 'delete')} onClick={() => onDelete(repo)}>Delete</button>
+          <button className="btn ghost small" disabled={readOnly || !can('repositories', 'update')} title={managedTitle(repo)} onClick={() => onEdit(repo)}>Edit</button>
+          <button className="btn danger small" disabled={readOnly || !can('repositories', 'delete')} title={managedTitle(repo)} onClick={() => onDelete(repo)}>Delete</button>
         </div>
       </footer>
     </article>

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ClipboardCheck, Clock, Filter, MapPin, Pencil, Play, Server, Trash2 } from 'lucide-react'
 import { api, instanceOnline, projectLabel, stateLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import AutoHealChip, { appAutoHealMeta, hostAutoHealOn } from '../components/AutoHealChip.jsx'
 import StatusIcon from '../components/StatusIcon.jsx'
 import LogsModal from '../components/LogsModal.jsx'
@@ -50,6 +51,10 @@ export default function InstanceDetail() {
 
   const appNamesById = useMemo(
     () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
+    [inst]
+  )
+  const managedByAppId = useMemo(
+    () => new Map((inst?.apps || []).filter((a) => a.managed_by).map((a) => [a.application.id, a.managed_by])),
     [inst]
   )
   const appFilterName = appNamesById.get(Number(appFilter))
@@ -394,26 +399,28 @@ export default function InstanceDetail() {
       {inst.apps.map((a) => {
         const pending = commands.pending[`${inst.id}:${a.application.id}`]
         const ah = appAutoHealMeta(inst, a)
+        const readOnly = managedByGitOps(a)
         return (
         <div className="card" key={a.application.id}>
           <div className="card-head">
             <strong>{a.application.name}</strong>
+            <GitOpsBadge obj={a} />
             {a.stuck && <Badge state="stuck" label="stuck" small />}
             {a.frozen && <Badge state="failed" label="auto-apply paused" small />}
             <StatusIcon state={a.latest_check?.status || 'unknown'} size={16} />
             <Badge state={a.latest_check?.status || 'unknown'} label={a.latest_check?.status || 'no check yet'} small />
             {a.stuck ? (
-              <button className="small warn" title="Resume auto-apply once the playbook is fixed" disabled={!can('instances', 'update')} onClick={() => rearm(a)}>Resume auto-apply</button>
+              <button className="small warn" title="Resume auto-apply once the playbook is fixed" disabled={readOnly || !can('instances', 'update')} onClick={() => rearm(a)}>Resume auto-apply</button>
             ) : (
-              <label className="switch" title={ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
-                <input type="checkbox" checked={a.autoheal} disabled={!can('instances', 'update') || ah.locked} onChange={() => toggleAutoHeal(a)} /><span className="slider" />
+              <label className="switch" title={readOnly ? managedTitle(a) : ah.locked ? ah.reason : 'Auto-apply on drift for this application on this host'}>
+                <input type="checkbox" checked={a.autoheal} disabled={readOnly || !can('instances', 'update') || ah.locked} onChange={() => toggleAutoHeal(a)} /><span className="slider" />
               </label>
             )}
             <span className="sub">{ah.label}</span>
             {a.target_revision && (
               <>
                 <Badge state="pinned" label={`pinned @${a.target_revision.slice(0, 9)}`} small />
-                <button className="small" disabled={!can('instances', 'update')} onClick={() => trackBranch(a)} title="resume tracking the application branch">Track branch</button>
+                <button className="small" disabled={readOnly || !can('instances', 'update')} title={readOnly ? managedTitle(a) : 'resume tracking the application branch'} onClick={() => trackBranch(a)}>Track branch</button>
               </>
             )}
             <span className="mono muted"><CopyButton value={a.application.repo_url} label="" size="small" title="Copy repo URL" />{a.application.repo_url}</span>
@@ -424,8 +431,8 @@ export default function InstanceDetail() {
               <QuickMenu
                 label={`More actions for ${a.application.name}`}
                 items={[
-                  { label: 'Host variables', onClick: () => setVarsApp(a.application), disabled: !can('instances', 'update') },
-                  { label: 'Unassign application', onClick: () => confirmUnassign(a), disabled: !can('instances', 'update'), danger: true },
+                  { label: 'Host variables', onClick: () => setVarsApp(a.application), disabled: readOnly || !can('instances', 'update'), title: managedTitle(a) },
+                  { label: 'Unassign application', onClick: () => confirmUnassign(a), disabled: readOnly || !can('instances', 'update'), danger: true, title: managedTitle(a) },
                 ]}
               />
             </span>
@@ -522,7 +529,13 @@ export default function InstanceDetail() {
                           { label: 'View logs', onClick: () => setLogRun({ runId: r.id, view: 'text' }) },
                           r.commit_after ? { separator: true } : null,
                           r.commit_after
-                            ? { label: 'Rollback to this commit', onClick: () => confirmRollback(r), disabled: !can('instances', 'update'), danger: true }
+                            ? {
+                                label: 'Rollback to this commit',
+                                onClick: () => confirmRollback(r),
+                                disabled: managedByAppId.has(r.app_id) || !can('instances', 'update'),
+                                danger: true,
+                                title: managedByAppId.has(r.app_id) ? `Managed by GitOps config repo "${managedByAppId.get(r.app_id)}". Edit the manifest in Git.` : '',
+                              }
                             : null,
                         ]}
                       />

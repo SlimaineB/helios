@@ -287,8 +287,10 @@ Credentials come from the existing **Repositories** registry, matched by URL.
 Prune is disabled by default: deleting a manifest stops reconciling the object
 but does not delete it unless prune is explicitly enabled. Ownership is tracked
 in `gitops_managed`; deleting a config repository releases its objects without
-deleting them. Manual edits remain possible, but they are overwritten on the
-next reconcile while the object is still managed.
+deleting them. The UI shows a **GitOps** badge on owned objects and disables
+their edit/delete controls; API responses include `managed_by`. Manual API edits
+remain possible as an explicit override, but they are overwritten on the next
+reconcile while the object is still managed.
 
 The server runtime needs `git` and `openssh-client`; the container image ships
 them. Each replica uses its own scratch mirror under

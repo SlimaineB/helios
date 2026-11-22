@@ -4,6 +4,7 @@ import CopyButton from './CopyButton.jsx'
 import HealthBadge from './HealthBadge.jsx'
 import AutoHealChip from './AutoHealChip.jsx'
 import QuickMenu from './QuickMenu.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from './GitOpsBadge.jsx'
 import { projectLabel } from '../api/client.js'
 
 const EMPTY = { instances: 0, synced: 0, unknown: 0, drift: 0, error: 0, stuck: 0, autoheal: 0 }
@@ -31,16 +32,17 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
           : `${s.synced}/${s.instances} synced`
 
   const canRun = s.instances > 0 && can('commands', 'create')
+  const readOnly = managedByGitOps(app)
   const menu = [
     { label: 'View nodes', icon: Network, to: `/instances?app=${app.id}` },
     { label: 'Check all nodes', icon: ClipboardCheck, onClick: onCheckAll, disabled: !canRun },
     { label: 'Apply to all nodes', icon: Play, onClick: onApplyAll, disabled: !canRun },
     { label: 'History', icon: History, onClick: () => onHistory(app) },
     { separator: true },
-    { label: 'Edit', icon: Pencil, onClick: () => onEdit(app), disabled: !can('applications', 'update') },
-    { label: 'Variables', icon: Variable, onClick: () => onVars(app), disabled: !can('applications', 'update') },
+    { label: 'Edit', icon: Pencil, onClick: () => onEdit(app), disabled: readOnly || !can('applications', 'update'), title: managedTitle(app) },
+    { label: 'Variables', icon: Variable, onClick: () => onVars(app), disabled: readOnly || !can('applications', 'update'), title: managedTitle(app) },
     { separator: true },
-    { label: 'Delete', icon: Trash2, onClick: () => onDelete(app), disabled: !can('applications', 'delete'), danger: true },
+    { label: 'Delete', icon: Trash2, onClick: () => onDelete(app), disabled: readOnly || !can('applications', 'delete'), danger: true, title: managedTitle(app) },
   ]
 
   return (
@@ -63,6 +65,7 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
         </div>
         <div className="card-actions">
           <span className="project-badge">{projectLabel(app.project)}</span>
+          <GitOpsBadge obj={app} />
           <HealthBadge state={health} label={healthLabel} size={16} />
           <QuickMenu label={`Actions for ${app.name}`} items={menu} />
         </div>

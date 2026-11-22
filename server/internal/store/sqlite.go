@@ -3300,6 +3300,25 @@ func (s *sqlstore) ListManagedResources(ctx context.Context, configRepoID int64)
 	return out, rows.Err()
 }
 
+func (s *sqlstore) ListManagedOwnership(ctx context.Context) ([]model.ManagedOwner, error) {
+	rows, err := s.query(ctx, `SELECT m.config_repo_id, c.name, m.kind, m.name
+		FROM gitops_managed m JOIN config_repos c ON c.id = m.config_repo_id
+		ORDER BY c.name, m.kind, m.name`)
+	if err != nil {
+		return nil, wrap(err, "list managed ownership")
+	}
+	defer rows.Close()
+	out := []model.ManagedOwner{}
+	for rows.Next() {
+		var m model.ManagedOwner
+		if err := rows.Scan(&m.ConfigRepoID, &m.ConfigRepoName, &m.Kind, &m.Name); err != nil {
+			return nil, wrap(err, "scan managed owner")
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqlstore) SetManagedResource(ctx context.Context, configRepoID int64, kind, name string) error {
 	_, err := s.exec(ctx,
 		`INSERT INTO gitops_managed (config_repo_id, kind, name, created_at) VALUES (?,?,?,?)

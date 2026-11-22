@@ -194,6 +194,7 @@ type Store interface {
 
 	// Ownership of objects reconciled from a ConfigRepo.
 	ListManagedResources(ctx context.Context, configRepoID int64) ([]model.ManagedResource, error)
+	ListManagedOwnership(ctx context.Context) ([]model.ManagedOwner, error)
 	SetManagedResource(ctx context.Context, configRepoID int64, kind, name string) error
 	DeleteManagedResource(ctx context.Context, configRepoID int64, kind, name string) error
 	DeleteManagedResourcesForRepo(ctx context.Context, configRepoID int64) error

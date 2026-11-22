@@ -733,6 +733,9 @@ func (s *Server) appsForInstances(ctx context.Context, insts []model.Instance, w
 		}
 		out[inst.ID] = append(out[inst.ID], as)
 	}
+	if err := s.annotateAppStatusMap(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -1560,6 +1563,10 @@ func (s *Server) handleListApplications(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, err)
 		return
 	}
+	if err := s.annotateApplications(r.Context(), apps); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, apps)
 }
 
@@ -1581,6 +1588,10 @@ func (s *Server) handleGetApplication(w http.ResponseWriter, r *http.Request) {
 	if !s.requireObject(w, r, "applications.get", app.Project) {
 		return
 	}
+	if err := s.annotateApplication(r.Context(), &app); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, app)
 }
 
@@ -1590,6 +1601,8 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	in.ManagedBy = ""
+	in.ManagedByRepoID = 0
 	if in.Name == "" || in.RepoURL == "" {
 		writeErr(w, http.StatusBadRequest, "name and repo_url are required")
 		return
@@ -1632,6 +1645,10 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 		s.internalError(w, r, err)
 		return
 	}
+	if err := s.annotateApplication(r.Context(), &app); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusCreated, app)
 }
 
@@ -1651,6 +1668,8 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	in.ManagedBy = ""
+	in.ManagedByRepoID = 0
 	var present map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &present); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -1724,6 +1743,10 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 			writeErr(w, http.StatusConflict, "application name already exists")
 			return
 		}
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.annotateApplication(r.Context(), &in); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -1826,6 +1849,8 @@ type repoView struct {
 	SSHKeySet          bool      `json:"ssh_key_set"`
 	InsecureSkipVerify bool      `json:"insecure_skip_verify"`
 	CreatedAt          time.Time `json:"created_at"`
+	ManagedBy          string    `json:"managed_by,omitempty"`
+	ManagedByRepoID    int64     `json:"managed_by_repo_id,omitempty"`
 }
 
 func toRepoView(r model.Repository) repoView {
@@ -1839,6 +1864,8 @@ func toRepoView(r model.Repository) repoView {
 		SSHKeySet:          r.SSHKey != "",
 		InsecureSkipVerify: r.InsecureSkipVerify,
 		CreatedAt:          r.CreatedAt,
+		ManagedBy:          r.ManagedBy,
+		ManagedByRepoID:    r.ManagedByRepoID,
 	}
 }
 
@@ -1862,6 +1889,10 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 		}
 		repos = filtered
 	}
+	if err := s.annotateRepositories(r.Context(), repos); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	out := make([]repoView, 0, len(repos))
 	for _, repo := range repos {
 		out = append(out, toRepoView(repo))
@@ -1875,6 +1906,8 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	in.ManagedBy = ""
+	in.ManagedByRepoID = 0
 	if in.URL == "" {
 		writeErr(w, http.StatusBadRequest, "url is required")
 		return
@@ -1899,6 +1932,10 @@ func (s *Server) handleCreateRepository(w http.ResponseWriter, r *http.Request) 
 			writeErr(w, http.StatusConflict, "repository url already exists in this project")
 			return
 		}
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.annotateRepository(r.Context(), &repo); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -1929,6 +1966,8 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	in.ManagedBy = ""
+	in.ManagedByRepoID = 0
 	var present map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &present); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -1988,6 +2027,10 @@ func (s *Server) handleUpdateRepository(w http.ResponseWriter, r *http.Request) 
 			writeErr(w, http.StatusConflict, "repository url already exists in this project")
 			return
 		}
+		s.internalError(w, r, err)
+		return
+	}
+	if err := s.annotateRepository(r.Context(), &in); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

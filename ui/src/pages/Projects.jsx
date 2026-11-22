@@ -9,6 +9,7 @@ import TagList from '../components/TagList.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import ProjectCard from '../components/ProjectCard.jsx'
 
 const empty = { name: '', repo_patterns: '' }
@@ -130,12 +131,14 @@ function ProjectTable({ rows, onEdit, onDelete, can }) {
         <tbody>
           {rows.map((summary) => {
             const project = summary.project
+            const readOnly = !project.system && managedByGitOps(project)
             return (
               <tr key={summary.key || '__global__'} className="summary-row">
                 <td>
                   <div className="cell-title">
                     <strong>{project.name}</strong>
                     {project.system && <span className="project-badge">system</span>}
+                    {!project.system && <GitOpsBadge obj={project} />}
                     <span className="cell-sub">
                       {summary.tags.length > 0 ? <TagList tags={summary.tags} /> : <span className="muted">no instance tags</span>}
                     </span>
@@ -166,8 +169,8 @@ function ProjectTable({ rows, onEdit, onDelete, can }) {
                     <Link className="btn ghost small" to={`/applications?project=${encodeURIComponent(project.system ? '__global__' : project.name)}`}>Applications</Link>
                     {!project.system && (
                       <>
-                        <button className="btn ghost small" disabled={!can('projects', 'update')} onClick={() => onEdit(project)}>Edit</button>
-                        <button className="btn danger small" disabled={!can('projects', 'delete')} onClick={() => onDelete(project)}>Delete</button>
+                        <button className="btn ghost small" disabled={readOnly || !can('projects', 'update')} title={managedTitle(project)} onClick={() => onEdit(project)}>Edit</button>
+                        <button className="btn danger small" disabled={readOnly || !can('projects', 'delete')} title={managedTitle(project)} onClick={() => onDelete(project)}>Delete</button>
                       </>
                     )}
                   </div>
@@ -324,7 +327,13 @@ export default function Projects() {
   }
 
   const openNew = () => { setEditing(null); setForm(empty); setFormError(''); setShowForm(true) }
-  const openEdit = (p) => { setEditing(p); setForm({ name: p.name, repo_patterns: p.repo_patterns || '' }); setFormError(''); setShowForm(true) }
+  const openEdit = (p) => {
+    if (managedByGitOps(p)) {
+      toast.info(managedTitle(p) || 'Managed by GitOps; edit in Git')
+      return
+    }
+    setEditing(p); setForm({ name: p.name, repo_patterns: p.repo_patterns || '' }); setFormError(''); setShowForm(true)
+  }
   const closeForm = () => { setShowForm(false); setEditing(null); setFormError('') }
 
   const submit = async (e) => {
@@ -339,12 +348,18 @@ export default function Projects() {
     finally { setSaving(false) }
   }
 
-  const confirmDelete = (p) => setConfirm({
-    title: 'Delete project',
-    message: `Delete "${p.name}"? Projects still used by applications or instances cannot be deleted.`,
-    onConfirm: () => doDelete(p),
-    variant: 'danger'
-  })
+  const confirmDelete = (p) => {
+    if (managedByGitOps(p)) {
+      toast.info(managedTitle(p) || 'Managed by GitOps; edit in Git')
+      return
+    }
+    setConfirm({
+      title: 'Delete project',
+      message: `Delete "${p.name}"? Projects still used by applications or instances cannot be deleted.`,
+      onConfirm: () => doDelete(p),
+      variant: 'danger'
+    })
+  }
   const doDelete = async (p) => {
     try { await api.deleteProject(p.id); toast.success('Project deleted'); refresh() }
     catch (e) { toast.error(e.message) }

@@ -86,4 +86,8 @@ type AppStatus struct {
 	TargetRevision string `json:"target_revision,omitempty"`
 	// Frozen means a maintenance window currently blocks syncs for this app.
 	Frozen bool `json:"frozen"`
+	// ManagedBy is the GitOps config repo name when this assignment is owned by
+	// a config repository. Empty means manually managed.
+	ManagedBy       string `json:"managed_by,omitempty"`
+	ManagedByRepoID int64  `json:"managed_by_repo_id,omitempty"`
 }

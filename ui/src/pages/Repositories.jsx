@@ -8,6 +8,7 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
 import { SkeletonEmpty, SkeletonCard } from '../components/Skeleton.jsx'
 import { toast } from '../components/Toast.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import RepositoryCard from '../components/RepositoryCard.jsx'
 
 const empty = { name: '', url: '', project: DEFAULT_PROJECT, username: '', password: '', ssh_key: '', insecure_skip_verify: false }
@@ -62,7 +63,13 @@ export default function Repositories() {
   }, [repos, search, authFilter])
 
   const openNew = () => { setEditing(null); setForm({ ...empty, project: projects[0]?.name || DEFAULT_PROJECT }); setFormError(''); setShowForm(true) }
-  const openEdit = (repo) => { setEditing(repo); setForm({ ...empty, name: repo.name, url: repo.url, project: projectForUi(repo.project), username: repo.username, insecure_skip_verify: repo.insecure_skip_verify }); setFormError(''); setShowForm(true) }
+  const openEdit = (repo) => {
+    if (managedByGitOps(repo)) {
+      toast.info(managedTitle(repo) || 'Managed by GitOps; edit in Git')
+      return
+    }
+    setEditing(repo); setForm({ ...empty, name: repo.name, url: repo.url, project: projectForUi(repo.project), username: repo.username, insecure_skip_verify: repo.insecure_skip_verify }); setFormError(''); setShowForm(true)
+  }
   const closeForm = () => { setShowForm(false); setEditing(null); setForm(empty); setFormError('') }
 
   const submit = async (e) => {
@@ -90,7 +97,13 @@ export default function Repositories() {
     }
   }
 
-  const confirmDelete = (repo) => setConfirm({ title: 'Delete repository', message: `Delete "${repo.url}"? Repositories still used by applications cannot be deleted.`, onConfirm: () => doDelete(repo), variant: 'danger' })
+  const confirmDelete = (repo) => {
+    if (managedByGitOps(repo)) {
+      toast.info(managedTitle(repo) || 'Managed by GitOps; edit in Git')
+      return
+    }
+    setConfirm({ title: 'Delete repository', message: `Delete "${repo.url}"? Repositories still used by applications cannot be deleted.`, onConfirm: () => doDelete(repo), variant: 'danger' })
+  }
   const doDelete = async (repo) => { try { await api.deleteRepository(repo.id); toast.success('Repository deleted'); refresh() } catch (e) { toast.error(e.message) } finally { setConfirm(null) } }
 
   const f = (k) => ({ value: form[k], onChange: (e) => setForm((p) => ({ ...p, [k]: e.target.value })) })
@@ -177,7 +190,9 @@ export default function Repositories() {
               </tr>
             </thead>
             <tbody>
-              {filteredRepos.map((repo) => (
+              {filteredRepos.map((repo) => {
+                const readOnly = managedByGitOps(repo)
+                return (
                 <tr key={repo.id}>
                   <td>
                     <div className="cell-title">
@@ -185,6 +200,7 @@ export default function Repositories() {
                       <span className="cell-sub">
                         <CopyButton value={repo.url} size="small" title="Copy repository URL" />
                         <span className="mono">{repo.url}</span>
+                        <GitOpsBadge obj={repo} />
                       </span>
                     </div>
                   </td>
@@ -202,16 +218,17 @@ export default function Repositories() {
                       <button className="btn ghost small" disabled={checking === repo.id} onClick={() => checkRepo(repo)}>
                         <PlugZap size={13} /> {checking === repo.id ? 'Testing…' : 'Test'}
                       </button>
-                      <button className="btn ghost small" disabled={!can('repositories', 'update')} onClick={() => openEdit(repo)}>
+                      <button className="btn ghost small" disabled={readOnly || !can('repositories', 'update')} title={managedTitle(repo)} onClick={() => openEdit(repo)}>
                         <Pencil size={13} /> Edit
                       </button>
-                      <button className="btn danger small" disabled={!can('repositories', 'delete')} onClick={() => confirmDelete(repo)}>
+                      <button className="btn danger small" disabled={readOnly || !can('repositories', 'delete')} title={managedTitle(repo)} onClick={() => confirmDelete(repo)}>
                         <Trash2 size={13} /> Delete
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
               {filteredRepos.length === 0 && (
                 <tr><td colSpan={5} className="muted">{hasFilters ? 'No repository matches these filters.' : 'No repositories yet.'}</td></tr>
               )}

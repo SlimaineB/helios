@@ -459,6 +459,8 @@ label.row.small { font-size: 12px; }
 .badge.error, .badge.failed { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }
 .badge.unknown, .badge.pending { color: var(--muted); background: var(--unknown-soft); border-color: var(--border); }
 .badge.tunnel { color: var(--accent); background: var(--accent-soft); border-color: #c7d7fe; }
+
+.badge.gitops { color: #6b4fa1; background: #efe9fb; border-color: #d8c9f5; }
 .badge.agent { color: var(--muted); background: var(--panel-2); border-color: var(--border); }
 
 /* auto-apply state chips (host / application / override) */

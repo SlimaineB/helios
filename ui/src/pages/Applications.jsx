@@ -8,6 +8,7 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
 import HealthBadge from '../components/HealthBadge.jsx'
 import ApplicationCard from '../components/ApplicationCard.jsx'
+import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
 import AutoHealChip from '../components/AutoHealChip.jsx'
 import ApplicationHistory from '../components/ApplicationHistory.jsx'
@@ -159,6 +160,10 @@ export default function Applications() {
     setShowForm(true)
   }
   const openEdit = (app) => {
+    if (managedByGitOps(app)) {
+      toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
+      return
+    }
     setEditing(app)
     setForm({ name: app.name, branch: app.branch, path: app.path, autoheal: app.autoheal, sync_interval: app.sync_interval || 0, ignore_paths: app.ignore_paths || '', project: projectForUi(app.project) })
     const m = matchRepo(app.repo_url, app.project)
@@ -236,12 +241,18 @@ export default function Applications() {
     }
   }
 
-  const confirmDelete = (app) => setConfirm({
-    title: 'Delete application',
-    message: `Delete "${app.name}"? This cannot be undone.`,
-    onConfirm: () => doDelete(app),
-    variant: 'danger'
-  })
+  const confirmDelete = (app) => {
+    if (managedByGitOps(app)) {
+      toast.info(managedTitle(app) || 'Managed by GitOps; edit in Git')
+      return
+    }
+    setConfirm({
+      title: 'Delete application',
+      message: `Delete "${app.name}"? This cannot be undone.`,
+      onConfirm: () => doDelete(app),
+      variant: 'danger'
+    })
+  }
   const doDelete = async (app) => {
     try {
       await api.deleteApplication(app.id)
@@ -636,16 +647,17 @@ export default function Applications() {
                         ? 'Synced'
                         : `${s.synced}/${s.instances} synced`
                 const canRun = can('commands', 'create') && s.instances > 0
+                const readOnly = managedByGitOps(a)
                 const menu = [
                   { label: 'View nodes', icon: Network, to: `/instances?app=${a.id}` },
                   { label: 'Check all nodes', icon: ClipboardCheck, onClick: () => runApp(a, 'check'), disabled: !canRun },
                   { label: 'Apply to all nodes', icon: Play, onClick: () => runApp(a, 'apply'), disabled: !canRun },
                   { label: 'History', icon: History, onClick: () => setHistoryApp(a) },
                   { separator: true },
-                  { label: 'Edit', icon: Pencil, onClick: () => openEdit(a), disabled: !can('applications', 'update') },
-                  { label: 'Variables', icon: Variable, onClick: () => setVarsApp(a), disabled: !can('applications', 'update') },
+                  { label: 'Edit', icon: Pencil, onClick: () => openEdit(a), disabled: readOnly || !can('applications', 'update'), title: managedTitle(a) },
+                  { label: 'Variables', icon: Variable, onClick: () => setVarsApp(a), disabled: readOnly || !can('applications', 'update'), title: managedTitle(a) },
                   { separator: true },
-                  { label: 'Delete', icon: Trash2, onClick: () => confirmDelete(a), disabled: !can('applications', 'delete'), danger: true },
+                  { label: 'Delete', icon: Trash2, onClick: () => confirmDelete(a), disabled: readOnly || !can('applications', 'delete'), danger: true, title: managedTitle(a) },
                 ]
                 return (
                   <tr key={a.id} id={`app-${a.id}`} className={a.id === focusAppId ? 'is-focused' : undefined}>
@@ -664,7 +676,7 @@ export default function Applications() {
                         </span>
                       </div>
                     </td>
-                    <td><span className="project-badge">{projectLabel(a.project)}</span></td>
+                    <td><span className="project-badge">{projectLabel(a.project)}</span> <GitOpsBadge obj={a} /></td>
                     <td>
                       <div className="cell-title">
                         <strong className="mono">{s.synced}/{s.instances}</strong>

@@ -55,7 +55,7 @@ const TERMS = [
   },
   {
     term: 'GitOps config repo',
-    definition: 'A Git repository that declares projects, applications and assignments. Reconciling it updates Helios.',
+    definition: 'A Git repository that declares projects, applications and assignments. Reconciling it updates Helios; owned objects get a GitOps badge and are read-only in the UI.',
   },
   {
     term: 'Tunnel / bastion',

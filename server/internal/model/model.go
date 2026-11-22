@@ -117,6 +117,11 @@ type Application struct {
 	// Project scopes this application (empty = global/default project).
 	Project   string    `json:"project"`
 	CreatedAt time.Time `json:"created_at"`
+	// ManagedBy is the GitOps config repo name when this application is owned by
+	// a config repository. Empty means manually managed. It is read-only for
+	// API/UI clients.
+	ManagedBy       string `json:"managed_by,omitempty"`
+	ManagedByRepoID int64  `json:"managed_by_repo_id,omitempty"`
 	// Connection is the git auth resolved from the repositories registry at
 	// checkin time (sent to the agent). It is never persisted on the app.
 	Connection *Repository `json:"connection,omitempty"`
@@ -146,6 +151,10 @@ type Repository struct {
 	SSHKey             string    `json:"ssh_key,omitempty"`
 	InsecureSkipVerify bool      `json:"insecure_skip_verify"`
 	CreatedAt          time.Time `json:"created_at"`
+	// ManagedBy is the GitOps config repo name when this repository is owned by
+	// a config repository. Empty means manually managed. Read-only for clients.
+	ManagedBy       string `json:"managed_by,omitempty"`
+	ManagedByRepoID int64  `json:"managed_by_repo_id,omitempty"`
 }
 
 type Assignment struct {
@@ -167,6 +176,10 @@ type Assignment struct {
 	// Empty means "track the application branch".
 	TargetRevision string    `json:"target_revision,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+	// ManagedBy is the GitOps config repo name when this assignment is owned by
+	// a config repository. Empty means manually managed. Read-only for clients.
+	ManagedBy       string `json:"managed_by,omitempty"`
+	ManagedByRepoID int64  `json:"managed_by_repo_id,omitempty"`
 }
 
 type ChangedTask struct {
@@ -358,6 +371,10 @@ type Project struct {
 	Name         string    `json:"name"`
 	RepoPatterns string    `json:"repo_patterns"`
 	CreatedAt    time.Time `json:"created_at"`
+	// ManagedBy is the GitOps config repo name when this project is owned by a
+	// config repository. Empty means manually managed. Read-only for clients.
+	ManagedBy       string `json:"managed_by,omitempty"`
+	ManagedByRepoID int64  `json:"managed_by_repo_id,omitempty"`
 }
 
 // Region is an operator-managed location label offered when registering or
@@ -437,6 +454,15 @@ type ConfigRepo struct {
 type ManagedResource struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+}
+
+// ManagedOwner is a managed-resource row joined with its config repository, so
+// the API can annotate objects with a human-readable "managed by" badge.
+type ManagedOwner struct {
+	ConfigRepoID   int64  `json:"config_repo_id"`
+	ConfigRepoName string `json:"config_repo_name"`
+	Kind           string `json:"kind"`
+	Name           string `json:"name"`
 }
 
 // OperatorSession is a browser login session persisted in the shared database
