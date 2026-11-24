@@ -34,8 +34,7 @@ CREATE TABLE IF NOT EXISTS instances (
   region      TEXT NOT NULL DEFAULT '',
   tags        TEXT NOT NULL DEFAULT '[]',
   execution_mode TEXT NOT NULL DEFAULT 'agent',
-  tunnel_port INTEGER NOT NULL DEFAULT 0,
-  last_tunnel_at TEXT NOT NULL DEFAULT '',
+  inventory_host TEXT NOT NULL DEFAULT '',
   autoheal    INTEGER NOT NULL DEFAULT 1,
   poll_interval INTEGER NOT NULL DEFAULT 0,
   host_info   TEXT NOT NULL DEFAULT '{}',
@@ -265,8 +264,7 @@ CREATE TABLE IF NOT EXISTS instances (
   region      TEXT NOT NULL DEFAULT '',
   tags        TEXT NOT NULL DEFAULT '[]',
   execution_mode TEXT NOT NULL DEFAULT 'agent',
-  tunnel_port INTEGER NOT NULL DEFAULT 0,
-  last_tunnel_at TEXT NOT NULL DEFAULT '',
+  inventory_host TEXT NOT NULL DEFAULT '',
   autoheal    INTEGER NOT NULL DEFAULT 1,
   poll_interval INTEGER NOT NULL DEFAULT 0,
   host_info   TEXT NOT NULL DEFAULT '{}',
@@ -615,8 +613,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'agent'`,
-		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tunnel_port INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS last_tunnel_at TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS inventory_host TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS autoheal INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS poll_interval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS host_info TEXT NOT NULL DEFAULT '{}'`,
@@ -764,8 +761,7 @@ func migrate(db *sql.DB) error {
 		{"instances", "region", "ALTER TABLE instances ADD COLUMN region TEXT NOT NULL DEFAULT ''"},
 		{"instances", "tags", "ALTER TABLE instances ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"},
 		{"instances", "execution_mode", "ALTER TABLE instances ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent'"},
-		{"instances", "tunnel_port", "ALTER TABLE instances ADD COLUMN tunnel_port INTEGER NOT NULL DEFAULT 0"},
-		{"instances", "last_tunnel_at", "ALTER TABLE instances ADD COLUMN last_tunnel_at TEXT NOT NULL DEFAULT ''"},
+		{"instances", "inventory_host", "ALTER TABLE instances ADD COLUMN inventory_host TEXT NOT NULL DEFAULT ''"},
 		{"instances", "autoheal", "ALTER TABLE instances ADD COLUMN autoheal INTEGER NOT NULL DEFAULT 1"},
 		{"instances", "poll_interval", "ALTER TABLE instances ADD COLUMN poll_interval INTEGER NOT NULL DEFAULT 0"},
 		{"instances", "host_info", "ALTER TABLE instances ADD COLUMN host_info TEXT NOT NULL DEFAULT '{}'"},
@@ -842,7 +838,7 @@ func wrap(err error, what string) error {
 
 // ---- Instances ----
 
-const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, region, tags, execution_mode, tunnel_port, last_tunnel_at, autoheal, poll_interval, host_info, created_at`
+const instanceCols = `id, name, token_hash, version, state, last_commit, last_seen, hostname, platform, project, region, tags, execution_mode, inventory_host, autoheal, poll_interval, host_info, created_at`
 
 func decodeTags(raw string) []string {
 	tags := []string{}
@@ -871,15 +867,15 @@ func encodeTags(tags []string) string {
 
 func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	var (
-		inst                          model.Instance
-		lastSeen, lastTunnel, created string
-		tags                          string
-		hostInfo                      string
-		autoheal                      int
+		inst              model.Instance
+		lastSeen, created string
+		tags              string
+		hostInfo          string
+		autoheal          int
 	)
 	err := row.Scan(&inst.ID, &inst.Name, &inst.TokenHash, &inst.Version, &inst.State,
 		&inst.LastCommit, &lastSeen, &inst.Hostname, &inst.Platform, &inst.Project, &inst.Region, &tags,
-		&inst.ExecutionMode, &inst.TunnelPort, &lastTunnel, &autoheal, &inst.PollInterval, &hostInfo, &created)
+		&inst.ExecutionMode, &inst.InventoryHost, &autoheal, &inst.PollInterval, &hostInfo, &created)
 	if err != nil {
 		return inst, err
 	}
@@ -888,7 +884,6 @@ func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 		_ = json.Unmarshal([]byte(hostInfo), &inst.HostInfo)
 	}
 	inst.LastSeen = parseTime(lastSeen)
-	inst.LastTunnelAt = parseTime(lastTunnel)
 	inst.AutoHeal = autoheal != 0
 	inst.CreatedAt = parseTime(created)
 	return inst, nil
@@ -1114,9 +1109,9 @@ func (s *sqlstore) InstanceListStats(ctx context.Context, f model.InstanceListFi
 	where, whereArgs := instanceWhere(s, f)
 	online, onlineArgs := instanceOnlineExpr(s, f.Now)
 	q := `SELECT COUNT(*), COALESCE(SUM(CASE WHEN ` + online + ` THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN execution_mode=? THEN 1 ELSE 0 END),0) FROM instances WHERE ` + where
-	args := append(onlineArgs, model.ModeTunnel)
+	args := append(onlineArgs, model.ModeSSH)
 	args = append(args, whereArgs...)
-	if err := s.queryRow(ctx, q, args...).Scan(&out.Total, &out.Online, &out.Tunnel); err != nil {
+	if err := s.queryRow(ctx, q, args...).Scan(&out.Total, &out.Online, &out.SSH); err != nil {
 		return out, wrap(err, "instance stats")
 	}
 	out.Offline = out.Total - out.Online
@@ -1408,19 +1403,19 @@ func (s *sqlstore) DriftAssignmentFacets(ctx context.Context, all bool, projects
 	return out, rows.Err()
 }
 
-// ListTunnelInstances returns every agentless (reverse SSH) instance so a
-// runner can discover the loopback ports it should reach.
-func (s *sqlstore) ListTunnelInstances(ctx context.Context) ([]model.Instance, error) {
-	rows, err := s.query(ctx, `SELECT `+instanceCols+` FROM instances WHERE execution_mode=? ORDER BY name`, model.ModeTunnel)
+// ListRunnerInstances returns every runner-managed (ssh) instance so a runner
+// can discover the hosts it should execute against.
+func (s *sqlstore) ListRunnerInstances(ctx context.Context) ([]model.Instance, error) {
+	rows, err := s.query(ctx, `SELECT `+instanceCols+` FROM instances WHERE execution_mode=? ORDER BY name`, model.ModeSSH)
 	if err != nil {
-		return nil, wrap(err, "list tunnel instances")
+		return nil, wrap(err, "list runner instances")
 	}
 	defer rows.Close()
 	out := []model.Instance{}
 	for rows.Next() {
 		inst, err := scanInstance(rows)
 		if err != nil {
-			return nil, wrap(err, "scan tunnel instance")
+			return nil, wrap(err, "scan runner instance")
 		}
 		out = append(out, inst)
 	}
@@ -1475,8 +1470,8 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 		in.Tags = []string{}
 	}
 	res, err := s.exec(ctx,
-		`INSERT INTO instances (id, name, token_hash, state, project, region, tags, execution_mode, tunnel_port, autoheal, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.Region, encodeTags(in.Tags), in.ExecutionMode, in.TunnelPort, 1, tm(in.CreatedAt))
+		`INSERT INTO instances (id, name, token_hash, state, project, region, tags, execution_mode, inventory_host, autoheal, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		in.ID, in.Name, in.TokenHash, model.StateUnknown, in.Project, in.Region, encodeTags(in.Tags), in.ExecutionMode, in.InventoryHost, 1, tm(in.CreatedAt))
 	if err != nil {
 		return in, fmt.Errorf("create instance: %w", err)
 	}
@@ -1486,9 +1481,9 @@ func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model
 
 func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error {
 	_, err := s.exec(ctx,
-		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, region=?, tags=?, execution_mode=?, tunnel_port=?, last_tunnel_at=?, poll_interval=? WHERE id=?`,
+		`UPDATE instances SET name=?, version=?, state=?, last_commit=?, last_seen=?, hostname=?, platform=?, project=?, region=?, tags=?, execution_mode=?, inventory_host=?, poll_interval=? WHERE id=?`,
 		in.Name, in.Version, in.State, in.LastCommit, tm(in.LastSeen), in.Hostname, in.Platform, in.Project, in.Region, encodeTags(in.Tags),
-		in.ExecutionMode, in.TunnelPort, tm(in.LastTunnelAt), in.PollInterval, in.ID)
+		in.ExecutionMode, in.InventoryHost, in.PollInterval, in.ID)
 	if err != nil {
 		return fmt.Errorf("update instance: %w", err)
 	}
@@ -1498,16 +1493,12 @@ func (s *sqlstore) UpdateInstance(ctx context.Context, in model.Instance) error 
 // TouchInstance updates liveness fields without rewriting state or commit
 // metadata. pollInterval <= 0 keeps the previously reported value (older agents
 // do not send it).
-func (s *sqlstore) TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time, tunnel bool) error {
+func (s *sqlstore) TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time) error {
 	sets := []string{"version=?", "hostname=?", "platform=?", "last_seen=?"}
 	args := []any{version, hostname, platform, tm(now)}
 	if pollInterval > 0 {
 		sets = append(sets, "poll_interval=?")
 		args = append(args, pollInterval)
-	}
-	if tunnel {
-		sets = append(sets, "last_tunnel_at=?")
-		args = append(args, tm(now))
 	}
 	args = append(args, id)
 	q := `UPDATE instances SET ` + strings.Join(sets, ", ") + ` WHERE id=?`

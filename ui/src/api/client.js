@@ -76,7 +76,7 @@ export const api = {
   drift: (query) => request('GET', `/api/v1/drift${query || ''}`),
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),
-  createInstance: (name, project, executionMode = 'agent', region = '', tags = []) => request('POST', '/api/v1/instances', { name, project, region, tags, execution_mode: executionMode }),
+  createInstance: (name, project, executionMode = 'agent', region = '', tags = [], inventoryHost = '') => request('POST', '/api/v1/instances', { name, project, region, tags, execution_mode: executionMode, inventory_host: inventoryHost }),
   updateInstance: (id, name, project, region = '', tags = []) => request('PUT', `/api/v1/instances/${id}`, { name, project, region, tags }),
   deleteInstance: (id) => request('DELETE', `/api/v1/instances/${id}`),
   assign: (id, appId) => request('POST', `/api/v1/instances/${id}/assign`, { app_id: appId }),

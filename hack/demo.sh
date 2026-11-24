@@ -8,19 +8,16 @@ cd "$ROOT"
 
 CLEAN=0
 BUILD=1
-RUNNER=0
 for arg in "$@"; do
   case "$arg" in
     --clean) CLEAN=1 ;;
     --no-build) BUILD=0 ;;
-    --runner) RUNNER=1 ;;
     -h|--help)
       cat <<'EOF'
-Usage: ./hack/demo.sh [--clean] [--no-build] [--runner]
+Usage: ./hack/demo.sh [--clean] [--no-build]
 
   --clean     remove compose volumes first (fresh database and agents)
   --no-build  skip image rebuild (use the images already on the host)
-  --runner    also start the optional tunnel-host + bastion-runner example
 EOF
       exit 0
       ;;
@@ -38,15 +35,7 @@ env_compat() {
   printf '%s' "$value"
 }
 
-if [ "$RUNNER" -eq 1 ]; then
-  export HELIOS_RUNNER_TOKEN="${HELIOS_RUNNER_TOKEN:-helios-runner-demo-token}"
-  export HELIOS_TUNNEL_GATEWAY="${HELIOS_TUNNEL_GATEWAY:-root@127.0.0.1}"
-fi
-
 COMPOSE=(docker compose)
-if [ "$RUNNER" -eq 1 ]; then
-  COMPOSE+=(--profile runner)
-fi
 
 say "Checking prerequisites"
 if [ "$(uname -s)" != "Linux" ]; then
@@ -106,28 +95,6 @@ if [ "$status" != "exited" ] || [ "${exit_code:-1}" -ne 0 ]; then
   die "bootstrap failed (status=$status exit=$exit_code); see: docker compose logs bootstrap"
 fi
 
-if [ "$RUNNER" -eq 1 ]; then
-  say "Waiting for the runner demo bootstrap"
-  runner_bootstrap_id=""
-  for _ in $(seq 1 10); do
-    runner_bootstrap_id=$("${COMPOSE[@]}" ps -aq runner-bootstrap 2>/dev/null || true)
-    [ -n "$runner_bootstrap_id" ] && break
-    sleep 1
-  done
-  [ -n "$runner_bootstrap_id" ] || die "the runner-bootstrap container was not created"
-  for _ in $(seq 1 90); do
-    status=$(docker inspect -f '{{.State.Status}}' "$runner_bootstrap_id" 2>/dev/null || echo missing)
-    [ "$status" = "exited" ] && break
-    sleep 2
-  done
-  status=$(docker inspect -f '{{.State.Status}}' "$runner_bootstrap_id" 2>/dev/null || echo missing)
-  exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$runner_bootstrap_id" 2>/dev/null || echo 1)
-  if [ "$status" != "exited" ] || [ "${exit_code:-1}" -ne 0 ]; then
-    "${COMPOSE[@]}" logs --tail=40 runner-bootstrap || true
-    die "runner bootstrap failed (status=$status exit=$exit_code)"
-  fi
-fi
-
 say "Waiting for the demo agents"
 auth="$(env_compat OPERATOR_USER admin):$(env_compat OPERATOR_PASSWORD changeme)"
 app_name=$(env_compat SMOKE_APP demo)
@@ -144,11 +111,6 @@ done
 say "Running the smoke test"
 ./hack/smoke.sh
 
-if [ "$RUNNER" -eq 1 ]; then
-  say "Verifying the tunnel/bastion runner"
-  ./hack/runner-demo/verify.sh
-fi
-
 cat <<EOF
 
 Helios is ready.
@@ -161,17 +123,6 @@ Helios is ready.
 Try it:
   docker compose exec agent-2 sh -c 'echo broken > /tmp/helios-demo/state.txt'
   # agent-2 turns Drift in the UI; autoheal converges it back.
-
-EOF
-if [ "$RUNNER" -eq 1 ]; then
-  cat <<EOF
-Tunnel runner demo:
-  docker compose --profile runner exec tunnel-host sh -c 'echo broken > /tmp/helios-demo/state.txt'
-  # runner-demo turns Drift; the bastion runner autoheals through the tunnel.
-  docker compose --profile runner logs -f runner tunnel-host
-EOF
-fi
-cat <<EOF
 
 Useful commands:
   make compose-logs     # follow logs

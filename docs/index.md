@@ -36,10 +36,9 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
   the hub and read access to Git.
-- **Tunnel mode** — outbound-only hosts can use a lightweight tunnel agent or
-  stay agent-free: **only** the runner on a bastion executes Ansible, through a
-  reverse SSH tunnel opened by the host. The topology shows an explicit
-  `hub → runner → tunnel host` path.
+- **SSH runner** — hosts that should not run Ansible can be registered as
+  *SSH* instances. A `helios-runner` executes Ansible over SSH using the
+  inventory from the application repository; nothing is installed on the host.
 
 ## Architecture
 
@@ -47,34 +46,27 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
 |-----------|------|
 | **Hub** | Go API + React dashboard + SQLite/PostgreSQL. Stores desired state, runs, commands and audit history. |
 | **Agent** | One static Go binary per managed host. Polls the hub, clones the playbooks, runs Ansible, reports results. |
-| **Bastion runner** | `helios-runner`: polls the hub, discovers tunnel instances, and is the **only** Ansible executor for them. Reaches the host over a reverse SSH tunnel. |
-| **Git** | Source of truth for playbooks and variables. |
-| **Managed hosts** | Machines reconciled by the agents, or reached through the bastion runner. |
+| **Runner** | `helios-runner`: a stateless worker that leases SSH assignments and runs Ansible over SSH. |
+| **Git** | Source of truth for playbooks, inventory and variables. |
+| **Managed hosts** | Machines reconciled by the agents, or reached by a runner over SSH. |
 
 ```text
                     ┌──────────────┐
   Git repositories ─┤     Hub      ├─ Dashboard / API
                     └───┬──────┬───┘
                         │      │ HTTPS (poll, check-in, results)
-              ┌─────────▼─┐  ┌─▼───────────────┐
-              │  agent-1  │  │ bastion runner  │
-              └─────┬─────┘  └───────┬─────────┘
-                    │                │ ssh 127.0.0.1:<port>
-                    │                ▼
-                    │        reverse SSH tunnel
-                    │        (opened by host B)
-                    │                │
+              ┌─────────▼─┐  ┌─▼────────────┐
+              │  agent-1  │  │   runner     │
+              └─────┬─────┘  └───────┬──────┘
+                    │                │ ssh
               ┌─────▼─────┐    ┌─────▼─────┐
               │  host A   │    │  host B   │
               └───────────┘    └───────────┘
 ```
 
-Agent mode connects the hub directly to an agent that runs Ansible locally.
-Tunnel mode adds the bastion runner in the middle: the runner runs
-`ansible-playbook` over SSH to `127.0.0.1:<port>`, and the managed host only
-runs `sshd`, `python3` and optionally the tunnel-only agent. A complete
-walkthrough is in `deploy/examples/runner-tunnel/`; see also
-[Tunnel mode](INSTALL.md#tunnel-mode--reverse-ssh).
+Agent mode runs Ansible locally on the host. SSH mode adds a runner: it runs
+`ansible-playbook` over SSH, and the managed host only needs `sshd` and
+`python3`. See [Runners](RUNNERS.md) and [Inventory](INVENTORY.md).
 
 ## Install in 5 minutes
 
@@ -104,6 +96,8 @@ Building from source, running the development demo and tests:
 - [Airgap install](AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [k3s reference](K3S.md) — full cluster walkthrough.
 - [Optional GitOps](GITOPS.md) — manage Helios objects from Git manifests.
+- [Runners and SSH](RUNNERS.md) — the push model: tagged runners, leases, Kubernetes.
+- [Inventory and SSH keys](INVENTORY.md) — run playbooks from a standard inventory.
 - [High availability](HA.md) — run stateless server replicas on PostgreSQL.
 - [Authentication & RBAC](AUTH.md) — local admin, OIDC, ArgoCD-style policies.
 - [Releases and packages](RELEASES.md) — GitHub images, binaries and tarballs.

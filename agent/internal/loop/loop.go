@@ -60,28 +60,14 @@ func New(cfg config.Config, c *client.Client, log *slog.Logger) *Agent {
 	if cfg.Platform != "" {
 		platform = cfg.Platform
 	}
-	var target *ansible.Target
-	if cfg.TargetPort > 0 {
-		target = &ansible.Target{
-			Host:       cfg.TargetHost,
-			Port:       cfg.TargetPort,
-			User:       cfg.SSHUser,
-			KeyFile:    cfg.SSHKey,
-			CommonArgs: cfg.SSHCommonArgs,
-		}
-	}
-	// The runner executes this loop for a remote tunnel host. Its local host
-	// inventory would describe the bastion, not the managed host, so only a
-	// local agent reports it. The tunnel-only agent reports its own inventory
-	// through the tunnel health endpoint.
 	var info client.HostInfo
-	if cfg.TargetPort == 0 {
+	if !cfg.InventoryMode {
 		info = hostinfo.Collect(cfg.AnsibleBin)
 	}
 	return &Agent{
 		cfg:          cfg,
 		client:       c,
-		runner:       &ansible.Runner{Bin: cfg.AnsibleBin, Target: target},
+		runner:       &ansible.Runner{Bin: cfg.AnsibleBin},
 		log:          log,
 		hostname:     hostname,
 		version:      agentversion.Version,
@@ -328,8 +314,8 @@ func (a *Agent) heartbeat(ctx context.Context) {
 func (a *Agent) pass(ctx context.Context) {
 	checkin, err := a.client.Checkin(ctx, a.checkinPayload())
 	if err != nil {
-		if a.cfg.TargetPort > 0 {
-			a.log.Warn("tunnel checkin failed; waiting for tunnel", "error", err)
+		if a.cfg.InventoryMode {
+			a.log.Warn("runner checkin failed; skipping this pass", "error", err)
 		} else {
 			a.log.Error("checkin failed; skipping all apps and commands", "error", err)
 		}
@@ -530,7 +516,14 @@ func (a *Agent) syncRepo(ctx context.Context, app client.Application, st *appSta
 
 func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appState, playbook, commit, commitMsg, trigger string) error {
 	started := time.Now().UTC()
-	res, err := a.runner.Check(ctx, &gitops.Repo{Dir: st.RepoDir()}, playbook, app.Vars)
+	repo := &gitops.Repo{Dir: st.RepoDir()}
+	target, terr := a.targetFor(app, repo)
+	if terr != nil {
+		res := ansible.Result{Status: ansible.StatusFailed, Err: terr.Error()}
+		a.report(ctx, app, "check", res, commit, commitMsg, trigger, started, terr)
+		return terr
+	}
+	res, err := a.runner.Check(ctx, repo, playbook, app.Vars, target)
 	ansible.FilterIgnored(&res, app.IgnorePaths)
 
 	a.mu.Lock()
@@ -553,7 +546,7 @@ func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appSta
 		if a.autoHealSlot(st) {
 			a.log.Info("autohealing drift", "app", app.Name)
 			astarted := time.Now().UTC()
-			ares, aerr := a.runner.Apply(ctx, &gitops.Repo{Dir: st.RepoDir()}, playbook, app.Vars)
+			ares, aerr := a.runner.Apply(ctx, repo, playbook, app.Vars, target)
 			a.report(ctx, app, "apply", ares, commit, commitMsg, "autoheal", astarted, aerr)
 			if aerr == nil {
 				// Recheck right after to confirm convergence (no nested autoheal).
@@ -562,6 +555,31 @@ func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appSta
 		}
 	}
 	return err
+}
+
+// targetFor builds the SSH/inventory target for the runner push path. The
+// installed agent returns nil, keeping local execution.
+func (a *Agent) targetFor(app client.Application, repo *gitops.Repo) (*ansible.Target, error) {
+	if !a.cfg.InventoryMode {
+		return nil, nil
+	}
+	inv := strings.TrimSpace(app.InventoryPath)
+	if inv == "" {
+		return nil, fmt.Errorf("application %q has no inventory_path", app.Name)
+	}
+	if !filepath.IsAbs(inv) {
+		inv = filepath.Join(repo.Dir, inv)
+	}
+	if _, err := os.Stat(inv); err != nil {
+		return nil, fmt.Errorf("inventory_path: %w", err)
+	}
+	return &ansible.Target{
+		Inventory:  inv,
+		Limit:      a.cfg.InventoryHost,
+		User:       a.cfg.SSHUser,
+		KeyFile:    a.cfg.SSHKey,
+		CommonArgs: a.cfg.SSHCommonArgs,
+	}, nil
 }
 
 // autoHealSlot atomically claims the cooldown slot for an app. It reports true
@@ -598,6 +616,12 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 	}
 
 	var res ansible.Result
+	target, terr := a.targetFor(app, repo)
+	if terr != nil {
+		a.report(ctx, app, cmd.Action, ansible.Result{Status: ansible.StatusFailed, Err: terr.Error()},
+			after, msg, "command", started, terr)
+		return terr
+	}
 	if cmd.Action == "apply" {
 		// Safety: refuse to deploy if the control plane went away after the
 		// command was claimed.
@@ -606,9 +630,9 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 				after, msg, "command", started, err)
 			return fmt.Errorf("control plane unreachable, refusing to apply: %w", err)
 		}
-		res, err = a.runner.Apply(ctx, repo, playbook, app.Vars)
+		res, err = a.runner.Apply(ctx, repo, playbook, app.Vars, target)
 	} else {
-		res, err = a.runner.Check(ctx, repo, playbook, app.Vars)
+		res, err = a.runner.Check(ctx, repo, playbook, app.Vars, target)
 	}
 	ansible.FilterIgnored(&res, app.IgnorePaths)
 	a.report(ctx, app, cmd.Action, res, after, msg, "command", started, err)

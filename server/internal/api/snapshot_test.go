@@ -48,7 +48,7 @@ func testRepo(t *testing.T) (string, string) {
 func TestAgentSnapshotEndpoint(t *testing.T) {
 	s, st := newTestServer(t)
 	ctx := context.Background()
-	inst := createInstance(t, st, "i1", model.ModeAgent, 0)
+	inst := createInstance(t, st, "i1", model.ModeAgent, "")
 	repo, commit := testRepo(t)
 	app, err := st.CreateApplication(ctx, model.Application{
 		Name: "demo", RepoURL: repo, Branch: "main", Path: "site.yml", Vars: "{}",
@@ -94,7 +94,7 @@ func TestAgentSnapshotEndpoint(t *testing.T) {
 func TestAgentSnapshotRequiresAssignment(t *testing.T) {
 	s, st := newTestServer(t)
 	ctx := context.Background()
-	inst := createInstance(t, st, "i1", model.ModeAgent, 0)
+	inst := createInstance(t, st, "i1", model.ModeAgent, "")
 	repo, _ := testRepo(t)
 	if _, err := st.CreateApplication(ctx, model.Application{
 		Name: "demo", RepoURL: repo, Branch: "main", Path: "site.yml", Vars: "{}",

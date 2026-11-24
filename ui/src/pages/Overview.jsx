@@ -101,7 +101,7 @@ export default function Overview() {
       recent,
       attention,
       versions: (stats.versions || []).map(({ version, count }) => [version, count]),
-      tunnel: stats.tunnel || 0,
+      ssh: stats.ssh || 0,
     }
   }, [overview])
 
@@ -177,9 +177,9 @@ export default function Overview() {
                 <span className="sub">{apps.length ? `${apps.length} defined in the catalog` : 'no application catalog access'}</span>
               </div>
               <div>
-                <span className="ov-kicker">Tunnel instances</span>
-                <strong>{model.tunnel}</strong>
-                <span className="sub">agentless hosts via bastion</span>
+                <span className="ov-kicker">SSH instances</span>
+                <strong>{model.ssh}</strong>
+                <span className="sub">managed by a runner over SSH</span>
               </div>
               <div>
                 <span className="ov-kicker">Projects</span>

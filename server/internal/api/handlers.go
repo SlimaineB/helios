@@ -50,12 +50,9 @@ type Server struct {
 	notifier      *notify.Notifier
 	downloadsDir  string
 	reconciler    *reconciler.Reconciler
-	// Agentless tunnel mode: runners authenticate with a shared bearer token
-	// and discover loopback ports allocated to tunnel instances.
+	// Runners authenticate with a shared bearer token and discover the
+	// ssh-managed instances they execute against.
 	runnerTokenHash string
-	tunnelGateway   string
-	tunnelPortMin   int
-	tunnelPortMax   int
 	repoCache       *repocache.Cache
 	settings        ServerSettings
 	retention       *retention.Manager
@@ -93,18 +90,6 @@ func (s *Server) SetRunnerToken(token string) {
 	s.runnerTokenHash = auth.Hash(token)
 }
 
-// SetTunnelConfig configures the reverse-SSH tunnel bootstrap advertised to
-// operators and the loopback port range allocated to tunnel instances.
-func (s *Server) SetTunnelConfig(gateway string, minPort, maxPort int) {
-	s.tunnelGateway = strings.TrimSpace(gateway)
-	if minPort > 0 {
-		s.tunnelPortMin = minPort
-	}
-	if maxPort >= s.tunnelPortMin {
-		s.tunnelPortMax = maxPort
-	}
-}
-
 // Close cancels background GitOps work and waits for it to release leases
 // before the caller closes the database.
 func (s *Server) Close() {
@@ -137,8 +122,6 @@ func New(st store.Store, log *slog.Logger, opAuth *OpAuth, secureCookies bool) *
 		opAuth:        opAuth,
 		secureCookies: secureCookies,
 		maxHealStreak: 3,
-		tunnelPortMin: 22000,
-		tunnelPortMax: 22999,
 		bgCtx:         bgCtx,
 		bgCancel:      bgCancel,
 		events:        newEventHub(),
@@ -791,6 +774,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		Region        string   `json:"region"`
 		Tags          []string `json:"tags"`
 		ExecutionMode string   `json:"execution_mode"`
+		InventoryHost string   `json:"inventory_host"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -807,8 +791,13 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.ExecutionMode == "" {
 		body.ExecutionMode = model.ModeAgent
 	}
-	if body.ExecutionMode != model.ModeAgent && body.ExecutionMode != model.ModeTunnel {
-		writeErr(w, http.StatusBadRequest, "execution_mode must be agent|tunnel")
+	if body.ExecutionMode != model.ModeAgent && body.ExecutionMode != model.ModeSSH {
+		writeErr(w, http.StatusBadRequest, "execution_mode must be agent|ssh")
+		return
+	}
+	body.InventoryHost = strings.TrimSpace(body.InventoryHost)
+	if body.ExecutionMode == model.ModeSSH && body.InventoryHost == "" {
+		writeErr(w, http.StatusBadRequest, "inventory_host is required for ssh mode")
 		return
 	}
 	if !s.requireObject(w, r, "instances.create", body.Project) {
@@ -820,15 +809,6 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	} else if msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
-	}
-	tunnelPort := 0
-	if body.ExecutionMode == model.ModeTunnel {
-		var err error
-		tunnelPort, err = s.allocateTunnelPort(r.Context())
-		if err != nil {
-			writeErr(w, http.StatusConflict, err.Error())
-			return
-		}
 	}
 	token, err := auth.NewToken()
 	if err != nil {
@@ -842,7 +822,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		Region:        body.Region,
 		Tags:          body.Tags,
 		ExecutionMode: body.ExecutionMode,
-		TunnelPort:    tunnelPort,
+		InventoryHost: body.InventoryHost,
 		TokenHash:     auth.Hash(token),
 	})
 	if err != nil {
@@ -850,35 +830,6 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"instance": s.decorateInstance(inst), "token": token})
-}
-
-// allocateTunnelPort returns the first free loopback port in the configured
-// range. Tunnel instances are few and created by operators, so a simple scan
-// is enough (and avoids racing with an unused port allocator table).
-func (s *Server) allocateTunnelPort(ctx context.Context) (int, error) {
-	insts, err := s.store.ListTunnelInstances(ctx)
-	if err != nil {
-		return 0, err
-	}
-	used := make(map[int]bool, len(insts))
-	for _, inst := range insts {
-		if inst.TunnelPort > 0 {
-			used[inst.TunnelPort] = true
-		}
-	}
-	min, max := s.tunnelPortMin, s.tunnelPortMax
-	if min <= 0 {
-		min = 22000
-	}
-	if max < min {
-		max = min + 999
-	}
-	for p := min; p <= max; p++ {
-		if !used[p] {
-			return p, nil
-		}
-	}
-	return 0, fmt.Errorf("no free tunnel port in range %d-%d", min, max)
 }
 
 func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
@@ -2164,7 +2115,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		poll = body.PollInterval
 	}
 	if err := s.store.TouchInstance(r.Context(), inst.ID, body.Version, body.Hostname, body.Platform,
-		poll, time.Now().UTC(), inst.ExecutionMode == model.ModeTunnel); err != nil {
+		poll, time.Now().UTC()); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -2194,7 +2145,7 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	inst.Hostname = body.Hostname
 	inst.Platform = body.Platform
 	if err := s.store.TouchInstance(r.Context(), inst.ID, body.Version, body.Hostname, body.Platform,
-		poll, time.Now().UTC(), inst.ExecutionMode == model.ModeTunnel); err != nil {
+		poll, time.Now().UTC()); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

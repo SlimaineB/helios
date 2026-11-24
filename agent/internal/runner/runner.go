@@ -1,7 +1,7 @@
-// Package runner implements the bastion-side execution loop for agentless
-// instances. It discovers reverse-SSH tunnel instances from the hub, starts one
-// agent loop per reachable instance, and reuses the exact same Ansible/git/drift
-// logic as the installed agent.
+// Package runner implements the controller-side execution loop for agentless
+// instances. It discovers SSH-managed instances from the hub, starts one agent
+// loop per instance, and reuses the exact same Ansible/git/drift logic as the
+// installed agent.
 package runner
 
 import (
@@ -88,16 +88,16 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) reconcile(ctx context.Context) {
-	insts, err := r.control.ListTunnelInstances(ctx)
+	insts, err := r.control.ListRunnerInstances(ctx)
 	if err != nil {
-		r.log.Error("tunnel instance discovery failed", "error", err)
+		r.log.Error("instance discovery failed", "error", err)
 		return
 	}
 	seen := make(map[string]bool, len(insts))
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, inst := range insts {
-		if inst.TunnelPort <= 0 {
+		if inst.InventoryHost == "" {
 			continue
 		}
 		seen[inst.ID] = true
@@ -126,7 +126,7 @@ func (r *Runner) stopAll() {
 }
 
 func (r *Runner) runInstance(ctx context.Context, inst client.RunnerInstance) {
-	log := r.log.With("instance", inst.Name, "instance_id", inst.ID, "port", inst.TunnelPort)
+	log := r.log.With("instance", inst.Name, "instance_id", inst.ID, "inventory_host", inst.InventoryHost)
 	cfg := config.Config{
 		Server:            r.cfg.Server,
 		Token:             r.cfg.Token,
@@ -135,15 +135,15 @@ func (r *Runner) runInstance(ctx context.Context, inst client.RunnerInstance) {
 		PollInterval:      r.cfg.PollInterval,
 		MaxConcurrentApps: r.cfg.MaxConcurrentApps,
 		AnsibleBin:        r.cfg.AnsibleBin,
-		TargetHost:        "127.0.0.1",
-		TargetPort:        inst.TunnelPort,
+		InventoryMode:     true,
+		InventoryHost:     inst.InventoryHost,
 		SSHUser:           r.cfg.SSHUser,
 		SSHKey:            r.cfg.SSHKey,
 		SSHCommonArgs:     r.cfg.SSHCommonArgs,
 		Hostname:          inst.Name,
-		Platform:          "reverse-ssh-tunnel",
+		Platform:          "ssh",
 	}
-	cl := client.NewRunner(r.cfg.Server, r.cfg.Token, inst.ID, inst.TunnelPort, r.cfg.Insecure)
+	cl := client.NewRunner(r.cfg.Server, r.cfg.Token, inst.ID, r.cfg.Insecure)
 	agent := loop.New(cfg, cl, log)
 	if err := agent.ResolveInstanceID(ctx); err != nil {
 		log.Error("instance id resolution failed", "error", err)

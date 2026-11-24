@@ -6,7 +6,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which:
 2. builds multi-arch (`linux/amd64`, `linux/arm64`) container images and
    pushes them to GHCR;
 3. packages both Helm charts and pushes them as OCI artifacts to GHCR;
-4. builds the bare-metal server, agent and bastion-runner binaries for both architectures;
+4. builds the bare-metal server, agent and runner binaries for both architectures;
 5. creates a GitHub Release with the bare-metal install packages, chart
    archives and `checksums.txt`.
 

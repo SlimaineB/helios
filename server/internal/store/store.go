@@ -52,7 +52,7 @@ type Store interface {
 	CountDriftAssignments(ctx context.Context, f model.AssignmentFilter) (int, error)
 	DriftAssignmentStats(ctx context.Context, f model.AssignmentFilter) (model.AssignmentStats, error)
 	DriftAssignmentFacets(ctx context.Context, all bool, projects []string) (model.AssignmentFacets, error)
-	ListTunnelInstances(ctx context.Context) ([]model.Instance, error)
+	ListRunnerInstances(ctx context.Context) ([]model.Instance, error)
 	CountInstances(ctx context.Context) (int, error)
 	// Scoped variants restrict by project names (RBAC visibility).
 	ListInstancesScoped(ctx context.Context, projects []string, limit, offset int) ([]model.Instance, error)
@@ -64,7 +64,7 @@ type Store interface {
 	UpdateInstance(ctx context.Context, in model.Instance) error
 	// TouchInstance updates only heartbeat metadata, so concurrent checkins and
 	// state refreshes cannot clobber each other's columns.
-	TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time, tunnel bool) error
+	TouchInstance(ctx context.Context, id, version, hostname, platform string, pollInterval int64, now time.Time) error
 	// SetInstanceHostInfo stores the best-effort host inventory reported by an
 	// agent. It is separate from TouchInstance so liveness and inventory can be
 	// written independently.

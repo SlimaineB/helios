@@ -54,15 +54,15 @@ export default function Runners() {
   const summary = data?.summary || {}
   const instances = data?.instances || []
   const enabled = !!data?.enabled
-  const configured = !!data?.configured
 
   return (
     <section>
       <h1><Terminal size={22} /> Runners</h1>
       <p className="page-intro">
-        Execution backend for <strong>tunnel mode</strong> instances. The persistent{' '}
-        <code>helios-runner</code> runs on the bastion, discovers reverse-SSH instances and executes
-        Ansible through their loopback ports. Agent-mode hosts run Ansible locally and do not use a runner.
+        Execution backend for <strong>SSH instances</strong>. A persistent{' '}
+        <code>helios-runner</code> runs Ansible over SSH against registered hosts, using the
+        inventory from each application repository. Agent-mode hosts run Ansible locally and do not
+        use a runner.
       </p>
 
       {!enabled && (
@@ -74,15 +74,6 @@ export default function Runners() {
           </span>
         </div>
       )}
-      {enabled && !configured && (
-        <div className="settings-note warn">
-          <AlertTriangle size={15} />
-          <span>
-            Runner API enabled, but <code>HELIOS_TUNNEL_GATEWAY</code> is empty. Tunnel instances
-            cannot show a usable bootstrap command.
-          </span>
-        </div>
-      )}
       {error && <div className="settings-note warn"><AlertTriangle size={15} /><span>{error}</span></div>}
 
       <div className="stats">
@@ -91,45 +82,44 @@ export default function Runners() {
           <span className="stat-num">{enabled ? 'On' : 'Off'}</span>
           <span className="stat-label">Runner API</span>
         </div>
-        <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{summary.instances || 0}</span><span className="stat-label">Tunnel instances</span></div>
+        <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{summary.instances || 0}</span><span className="stat-label">SSH instances</span></div>
         <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{summary.online || 0}</span><span className="stat-label">Online</span></div>
-        <div className="stat-card"><span className="stat-dot apps" /><span className="stat-num">{summary.with_port || 0}</span><span className="stat-label">Ports allocated</span></div>
       </div>
 
       <div className="runner-grid">
         <article className="card runner-card">
           <div className="card-head">
             <div>
-              <h3><Terminal size={16} /> Persistent runner</h3>
-              <span className="sub">Long-running process on the bastion</span>
+              <h3><Terminal size={16} /> SSH runner</h3>
+              <span className="sub">Long-running process next to the managed hosts</span>
             </div>
-            <span className={`state-badge ${configured ? 'enabled' : 'disabled'}`}>
-              {configured ? 'configured' : enabled ? 'incomplete' : 'disabled'}
+            <span className={`state-badge ${enabled ? 'enabled' : 'disabled'}`}>
+              {enabled ? 'enabled' : 'disabled'}
             </span>
           </div>
           <div className="card-body">
             <div className="runner-facts">
               <div className="detail">
-                <label>Gateway</label>
-                <div className="value mono">{data?.gateway || '—'}</div>
-              </div>
-              <div className="detail">
-                <label>Loopback ports</label>
-                <div className="value mono">{data?.port_min || 0}–{data?.port_max || 0}</div>
-              </div>
-              <div className="detail">
                 <label>Authentication</label>
                 <div className="value"><KeyRound size={13} /> shared bearer token</div>
               </div>
               <div className="detail">
-                <label>Last tunnel contact</label>
-                <div className="value">{fmt(summary.last_tunnel_at)}</div>
+                <label>Connection</label>
+                <div className="value">Ansible over SSH</div>
+              </div>
+              <div className="detail">
+                <label>Inventory</label>
+                <div className="value">from the application repository</div>
+              </div>
+              <div className="detail">
+                <label>SSH keys</label>
+                <div className="value"><ShieldCheck size={13} /> managed and encrypted by the hub</div>
               </div>
             </div>
             <p className="sub runner-copy">
-              The runner polls <code>/api/v1/runner/instances</code>, probes each allocated loopback
-              port and starts one Ansible loop per reachable tunnel. It stays registered across
-              checks and reconnects automatically.
+              The runner polls <code>/api/v1/runner/instances</code>, leases each SSH instance and
+              starts one Ansible loop per host. It stays registered across checks and reconnects
+              automatically.
             </p>
           </div>
         </article>
@@ -151,26 +141,26 @@ export default function Runners() {
               <span className="runner-mode-tag">no runner</span>
             </div>
             <div className="runner-mode">
-              <span className="runner-mode-icon tunnel"><Terminal size={17} /></span>
+              <span className="runner-mode-icon ssh"><Terminal size={17} /></span>
               <div>
-                <strong>Tunnel · agentless</strong>
-                <p>The host only opens a reverse SSH tunnel. The persistent bastion runner executes Ansible against <code>127.0.0.1:&lt;port&gt;</code>. The host needs <code>python3</code>, not <code>ansible-core</code>.</p>
+                <strong>SSH · runner</strong>
+                <p>A runner runs Ansible over SSH against the host, using the repository inventory and the instance address as <code>--limit</code>. Nothing is installed on the host.</p>
               </div>
-              <span className="runner-mode-tag accent">persistent runner</span>
+              <span className="runner-mode-tag accent">runner</span>
             </div>
           </div>
         </article>
       </div>
 
       <h2 className="detail-section-heading">
-        <Activity size={16} /> Tunnel instances
+        <Activity size={16} /> SSH instances
         <span className="muted detail-count">{instances.length}</span>
       </h2>
 
       {instances.length === 0 ? (
         <div className="empty">
           <p className="muted">
-            No tunnel instances. Runners are idle; every current host uses agent mode and runs Ansible locally.
+            No SSH instances. Runners are idle; every current host uses agent mode and runs Ansible locally.
           </p>
           <Link className="btn ghost small" to="/instances">Open instances</Link>
         </div>
@@ -183,8 +173,8 @@ export default function Runners() {
                   <th>Instance</th>
                   <th style={{ width: '160px' }}>Project</th>
                   <th style={{ width: '130px' }}>State</th>
-                  <th style={{ width: '190px' }}>Loopback</th>
-                  <th style={{ width: '200px' }}>Last tunnel</th>
+                  <th style={{ width: '220px' }}>Inventory host</th>
+                  <th style={{ width: '200px' }}>Last seen</th>
                   <th style={{ width: '100px' }}>Actions</th>
                 </tr>
               </thead>
@@ -201,8 +191,8 @@ export default function Runners() {
                     </td>
                     <td><span className="project-badge">{projectLabel(inst.project)}</span></td>
                     <td><Badge state={inst.state} label={inst.state} small /></td>
-                    <td className="mono">127.0.0.1:{inst.tunnel_port || '—'}</td>
-                    <td className="muted">{fmt(inst.last_tunnel_at)}</td>
+                    <td className="mono">{inst.inventory_host || '—'}</td>
+                    <td className="muted">{fmt(inst.last_seen)}</td>
                     <td><Link className="btn ghost small" to={`/instances/${inst.id}`}>Open</Link></td>
                   </tr>
                 ))}
@@ -210,7 +200,7 @@ export default function Runners() {
             </table>
           </div>
           <p className="table-note muted">
-            {plural(summary.online || 0, 'instance')} online · {plural(summary.with_port || 0, 'port')} allocated
+            {plural(summary.online || 0, 'instance')} online · {plural(summary.instances || 0, 'host')} managed over SSH
           </p>
         </>
       )}
@@ -219,16 +209,13 @@ export default function Runners() {
         <summary><Settings2 size={15} /> Runner configuration</summary>
         <div className="detail-panel-body">
           <p className="sub">
-            Hub and bastion must share the same runner token. The bastion also needs an SSH identity for
+            Hub and runner must share the same runner token. The runner also needs an SSH identity for
             the managed hosts.
           </p>
           <pre className="output">{`# Hub
 HELIOS_RUNNER_TOKEN=...
-HELIOS_TUNNEL_GATEWAY=helios-tunnel@bastion.example.com
-HELIOS_TUNNEL_PORT_MIN=22000
-HELIOS_TUNNEL_PORT_MAX=22999
 
-# Bastion
+# Runner
 HELIOS_SERVER=https://hub.example.com
 HELIOS_RUNNER_TOKEN=...
 HELIOS_RUNNER_SSH_USER=ansible

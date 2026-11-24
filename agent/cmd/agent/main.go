@@ -9,11 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/slim/helios/agent/internal/agentversion"
 	"github.com/slim/helios/agent/internal/client"
 	"github.com/slim/helios/agent/internal/config"
 	"github.com/slim/helios/agent/internal/loop"
-	"github.com/slim/helios/agent/internal/tunnel"
 )
 
 const defaultConfigPath = "/etc/helios/agent.yaml"
@@ -49,14 +47,6 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	if cfg.IsTunnel() {
-		if err := tunnel.New(cfg, cl, log, agentversion.Version).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("tunnel agent stopped", "error", err)
-			os.Exit(1)
-		}
-		return
-	}
 
 	ag := loop.New(cfg, cl, log)
 	if err := ag.ResolveInstanceID(ctx); err != nil {

@@ -40,11 +40,8 @@ services:
       HELIOS_OIDC_CLIENT_SECRET: dex-client-secret
       HELIOS_OIDC_GROUP_CLAIM: email
       HELIOS_OIDC_SCOPES: openid, profile, email, groups
-      # Enabled only by `./hack/demo.sh --runner` (or when you export these).
+      # Enabled only when you export these (SSH runner).
       HELIOS_RUNNER_TOKEN: ${HELIOS_RUNNER_TOKEN:-}
-      HELIOS_TUNNEL_GATEWAY: ${HELIOS_TUNNEL_GATEWAY:-}
-      HELIOS_TUNNEL_PORT_MIN: ${HELIOS_TUNNEL_PORT_MIN:-22000}
-      HELIOS_TUNNEL_PORT_MAX: ${HELIOS_TUNNEL_PORT_MAX:-22999}
     volumes:
       - ./hack/dex/rbac.yaml:/etc/helios/rbac.yaml:ro
     depends_on:
@@ -113,57 +110,6 @@ services:
       - bootstrap
     restart: unless-stopped
 
-  # Optional tunnel-mode lab. Start with `./hack/demo.sh --runner` (or
-  # `docker compose --profile runner up -d --build`). A managed host opens a
-  # reverse SSH tunnel to a bastion; only the bastion runner executes Ansible.
-  runner-bootstrap:
-    profiles: ["runner"]
-    build:
-      context: .
-      dockerfile: hack/runner-demo/Dockerfile.bootstrap
-    network_mode: host
-    environment:
-      HELIOS_SERVER: http://localhost:8080
-      HELIOS_OPERATOR_USER: ${HELIOS_OPERATOR_USER:-admin}
-      HELIOS_OPERATOR_PASSWORD: ${HELIOS_OPERATOR_PASSWORD:-changeme}
-      HELIOS_RUNNER_TOKEN: ${HELIOS_RUNNER_TOKEN:-}
-      DEMO_REPO_URL: ${DEMO_REPO_URL:-http://localhost:8000/demo.git}
-    volumes:
-      - runnerconf:/conf
-    depends_on:
-      - server
-      - repo
-    restart: "no"
-
-  runner:
-    profiles: ["runner"]
-    build:
-      context: .
-      dockerfile: hack/runner-demo/Dockerfile.runner
-    network_mode: host
-    volumes:
-      - runnerconf:/conf
-      - runnerstate:/var/lib/helios/runner
-    depends_on:
-      - runner-bootstrap
-    restart: unless-stopped
-
-  tunnel-host:
-    profiles: ["runner"]
-    build:
-      context: .
-      dockerfile: hack/runner-demo/Dockerfile.tunnel-host
-    network_mode: host
-    volumes:
-      - runnerconf:/conf
-      - tunnelstate:/var/lib/helios/agent
-    depends_on:
-      - runner-bootstrap
-    restart: unless-stopped
-
 volumes:
   dbdata:
   agentconf:
-  runnerconf:
-  runnerstate:
-  tunnelstate:

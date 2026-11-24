@@ -76,7 +76,7 @@ spec:
             {{- range .Values.extraArgs }}
             - {{ . }}
             {{- end }}
-          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.secretKey.value .Values.secretKey.existingSecret .Values.runner.token .Values.runner.existingSecret .Values.runner.tunnelGateway .Values.repoCache.enabled .Values.oidc.enabled .Values.rbac.enabled }}
+          {{- if or .Values.database.dsn .Values.operatorAuth.user .Values.healing.maxDriftStreak $baseURL .Values.secretKey.value .Values.secretKey.existingSecret .Values.runner.token .Values.runner.existingSecret .Values.repoCache.enabled .Values.oidc.enabled .Values.rbac.enabled }}
           env:
             {{- if $baseURL }}
             - name: HELIOS_BASE_URL
@@ -112,18 +112,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "helios-server.runnerSecret" . }}
                   key: runner-token
-            {{- end }}
-            {{- if .Values.runner.tunnelGateway }}
-            - name: HELIOS_TUNNEL_GATEWAY
-              value: {{ .Values.runner.tunnelGateway | quote }}
-            {{- end }}
-            {{- if .Values.runner.tunnelPortMin }}
-            - name: HELIOS_TUNNEL_PORT_MIN
-              value: {{ .Values.runner.tunnelPortMin | quote }}
-            {{- end }}
-            {{- if .Values.runner.tunnelPortMax }}
-            - name: HELIOS_TUNNEL_PORT_MAX
-              value: {{ .Values.runner.tunnelPortMax | quote }}
             {{- end }}
             {{- if .Values.repoCache.enabled }}
             - name: HELIOS_REPO_CACHE_DIR

@@ -35,7 +35,7 @@ func TestOverviewAggregatesWithoutListingWholeFleet(t *testing.T) {
 		if _, err := st.CreateInstance(ctx, model.Instance{ID: spec.id, Name: spec.id, TokenHash: "tok-" + spec.id}); err != nil {
 			t.Fatalf("create %s: %v", spec.id, err)
 		}
-		if err := st.TouchInstance(ctx, spec.id, spec.version, spec.id, "linux", 30, spec.seen, false); err != nil {
+		if err := st.TouchInstance(ctx, spec.id, spec.version, spec.id, "linux", 30, spec.seen); err != nil {
 			t.Fatalf("touch %s: %v", spec.id, err)
 		}
 		if err := st.UpdateInstanceState(ctx, spec.id, spec.state, ""); err != nil {

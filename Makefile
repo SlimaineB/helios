@@ -39,10 +39,6 @@ docs-serve:
 demo:
 	./hack/demo.sh
 
-## Optional tunnel mode: managed host + bastion runner in the lab
-demo-runner:
-	./hack/demo.sh --runner
-
 ## Running compose stack (start it first: make compose-up)
 smoke:
 	./hack/smoke.sh

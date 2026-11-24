@@ -13,7 +13,7 @@ import (
 	"github.com/slim/helios/server/internal/store"
 )
 
-// runnerAuth authenticates the bastion runner with its shared bearer token.
+// runnerAuth authenticates the runner with its shared bearer token.
 // An empty server-side token disables the runner API entirely.
 func (s *Server) runnerAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func (s *Server) runnerAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// runnerInstanceAuth authenticates the runner and resolves the target tunnel
+// runnerInstanceAuth authenticates the runner and resolves the target ssh
 // instance into the request context, so the agent handlers can be reused.
 func (s *Server) runnerInstanceAuth(next http.HandlerFunc) http.HandlerFunc {
 	return s.runnerAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -48,8 +48,8 @@ func (s *Server) runnerInstanceAuth(next http.HandlerFunc) http.HandlerFunc {
 			s.internalError(w, r, err)
 			return
 		}
-		if inst.ExecutionMode != model.ModeTunnel {
-			writeErr(w, http.StatusForbidden, "instance is not in tunnel mode")
+		if inst.ExecutionMode != model.ModeSSH {
+			writeErr(w, http.StatusForbidden, "instance is not in ssh mode")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxInstance, inst)
@@ -57,10 +57,10 @@ func (s *Server) runnerInstanceAuth(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-// handleRunnerInstances lists agentless instances and their allocated loopback
-// ports. The runner then probes each port and calls the per-instance endpoints.
+// handleRunnerInstances lists ssh-managed instances. The runner starts one
+// execution loop per discovered instance.
 func (s *Server) handleRunnerInstances(w http.ResponseWriter, r *http.Request) {
-	insts, err := s.store.ListTunnelInstances(r.Context())
+	insts, err := s.store.ListRunnerInstances(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -72,36 +72,26 @@ func (s *Server) handleRunnerInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 type runnerSummary struct {
-	Instances    int        `json:"instances"`
-	Online       int        `json:"online"`
-	WithPort     int        `json:"with_port"`
-	LastTunnelAt *time.Time `json:"last_tunnel_at,omitempty"`
+	Instances int `json:"instances"`
+	Online    int `json:"online"`
 }
 
 type runnerInventory struct {
-	Enabled    bool             `json:"enabled"`
-	Configured bool             `json:"configured"`
-	Gateway    string           `json:"gateway,omitempty"`
-	PortMin    int              `json:"port_min"`
-	PortMax    int              `json:"port_max"`
-	Summary    runnerSummary    `json:"summary"`
-	Instances  []model.Instance `json:"instances"`
+	Enabled   bool             `json:"enabled"`
+	Summary   runnerSummary    `json:"summary"`
+	Instances []model.Instance `json:"instances"`
 }
 
-// handleRunnerInventory is the operator-facing view of the agentless runner
-// setup. It never exposes the shared runner token: only whether the API is
-// enabled and which tunnel instances the persistent bastion runner can reach.
+// handleRunnerInventory is the operator-facing view of the runner setup. It
+// never exposes the shared runner token.
 func (s *Server) handleRunnerInventory(w http.ResponseWriter, r *http.Request) {
-	insts, err := s.store.ListTunnelInstances(r.Context())
+	insts, err := s.store.ListRunnerInstances(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	out := runnerInventory{
 		Enabled:   s.runnerTokenHash != "",
-		Gateway:   s.tunnelGateway,
-		PortMin:   s.tunnelPortMin,
-		PortMax:   s.tunnelPortMax,
 		Instances: make([]model.Instance, 0, len(insts)),
 	}
 	for i := range insts {
@@ -111,16 +101,7 @@ func (s *Server) handleRunnerInventory(w http.ResponseWriter, r *http.Request) {
 		if inst.Online {
 			out.Summary.Online++
 		}
-		if inst.TunnelPort > 0 {
-			out.Summary.WithPort++
-		}
-		if !inst.LastTunnelAt.IsZero() &&
-			(out.Summary.LastTunnelAt == nil || inst.LastTunnelAt.After(*out.Summary.LastTunnelAt)) {
-			last := inst.LastTunnelAt
-			out.Summary.LastTunnelAt = &last
-		}
 	}
-	out.Configured = out.Enabled && out.Gateway != ""
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -150,9 +131,6 @@ func offlineGrace(inst model.Instance) time.Duration {
 }
 
 func (s *Server) decorateInstance(inst model.Instance) model.Instance {
-	if inst.ExecutionMode == model.ModeTunnel {
-		inst.TunnelGateway = s.tunnelGateway
-	}
 	// Never-seen instances stay "unknown"; only hosts that did check in and
 	// then went silent are marked offline, so the last result is not shown as
 	// current forever.

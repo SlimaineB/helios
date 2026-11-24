@@ -56,37 +56,28 @@ create system users, install packages, or write outside the agent state
 dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
-### Outbound-only servers: tunnel mode and the bastion runner
+### Remote servers without installing Ansible: SSH runner
 
-Register the instance as *Tunnel · reverse SSH tunnel* instead. The managed host
-opens a reverse SSH tunnel to a bastion, and **`helios-runner` on that bastion is
-the only process that runs Ansible**:
+Register the instance as *SSH · managed by a runner* instead. Nothing is
+installed on the managed host; a **`helios-runner` process runs Ansible over
+SSH**:
 
 ```text
-hub  ──HTTPS poll/results──▶  helios-runner (bastion)  ──ssh 127.0.0.1:<port>──▶  reverse tunnel  ──▶  host sshd:22
+hub  ──HTTPS poll/results──▶  helios-runner  ──ssh──▶  host sshd:22
 ```
 
-- The **managed host** needs `sshd`, `python3` and outbound SSH. It does not
-  need `ansible-core`. A lightweight tunnel agent
-  (`helios-agent --mode tunnel`) can keep the tunnel open and report health, or
-  you can run `ssh -R` manually.
-- The **bastion runner** needs `git`, `ansible-core`, `ansible.posix` and an SSH
-  key for the managed-host account. It discovers tunnel instances from the hub
-  and launches `ansible-playbook --connection ssh` against
-  `127.0.0.1:<port>`.
-- The hub needs `HELIOS_RUNNER_TOKEN` and `HELIOS_TUNNEL_GATEWAY`. The UI shows
-  the mode, filters by mode, and the topology inserts a dedicated
-  **helios-runner** node between the hub and each tunnel host.
+- The **managed host** needs `sshd`, `python3` and an SSH account the runner can
+  log into. It does not need `ansible-core`.
+- The **runner** needs `git`, `ansible-core`, `ansible.posix` and an SSH key for
+  the managed-host account. It discovers SSH instances from the hub, reads the
+  inventory from each application repository and runs
+  `ansible-playbook -i <inventory> --connection ssh --limit <inventory_host>`.
+- The **hub** needs `HELIOS_RUNNER_TOKEN`. Each application repository declares
+  an `inventory_path`, and each instance is registered with its
+  `inventory_host`.
 
-See the complete walkthrough:
-[Tunnel mode example](deploy/examples/runner-tunnel/README.md), or the
-reference section in
-[Tunnel mode](docs/INSTALL.md#tunnel-mode--reverse-ssh).
-
-Want to try it locally? `./hack/demo.sh --runner` (or `make demo-runner`) adds a
-managed tunnel host, a bastion with `helios-runner`, a reverse SSH tunnel and a
-`runner-demo` application to the Docker lab. It verifies that the check/apply
-actually ran through the runner.
+See [Runners](docs/RUNNERS.md) and [Inventory](docs/INVENTORY.md) for the
+scheduling model, capacity and SSH-key handling.
 
 **Large fleet?** Enable the hub's [repo snapshot cache](docs/INSTALL.md#repo-snapshot-cache)
 so agents download one immutable tarball per commit instead of cloning the same
@@ -411,8 +402,6 @@ GET    /metrics                        # Prometheus text (public, IDs only)
 POST   /api/v1/agent/checkin                          (Bearer) heartbeat → apps + commands
 POST   /api/v1/agent/status                           (Bearer) run result
 POST   /api/v1/agent/commands/{cmdId}/result          (Bearer) command completion
-GET    /api/v1/agent/tunnel                           (Bearer) tunnel gateway + allocated port
-POST   /api/v1/agent/tunnel/health                    (Bearer) tunnel liveness
 
 # Application variables (defaults ≈ group_vars) & per-host overrides (≈ host_vars)
 GET    /api/v1/applications/{appId}/variables         # list — secrets redacted to "********"

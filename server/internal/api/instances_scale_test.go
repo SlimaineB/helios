@@ -27,7 +27,7 @@ func TestListInstancesFiltersPaginatesAndHydrates(t *testing.T) {
 		state, run  string
 	}{
 		{"web-1", "prod", []string{"prod", "team-a"}, model.ModeAgent, now, model.StateDrift, model.RunDrift},
-		{"web-2", "", []string{"prod"}, model.ModeTunnel, now.Add(-time.Hour), model.StateOK, model.RunOK},
+		{"web-2", "", []string{"prod"}, model.ModeSSH, now.Add(-time.Hour), model.StateOK, model.RunOK},
 		{"web-3", "staging", []string{"staging"}, model.ModeAgent, now, model.StateUnknown, ""},
 	} {
 		inst, err := st.CreateInstance(ctx, model.Instance{ID: spec.id, Name: spec.id, TokenHash: "tok-" + spec.id, Project: spec.project, Tags: spec.tags, ExecutionMode: spec.mode})
@@ -35,7 +35,7 @@ func TestListInstancesFiltersPaginatesAndHydrates(t *testing.T) {
 			t.Fatalf("create %s: %v", spec.id, err)
 		}
 		_ = inst
-		if err := st.TouchInstance(ctx, spec.id, "v1", spec.id, "linux", 30, spec.seen, spec.mode == model.ModeTunnel); err != nil {
+		if err := st.TouchInstance(ctx, spec.id, "v1", spec.id, "linux", 30, spec.seen); err != nil {
 			t.Fatalf("touch %s: %v", spec.id, err)
 		}
 		if err := st.UpdateInstanceState(ctx, spec.id, spec.state, ""); err != nil {
@@ -77,7 +77,7 @@ func TestListInstancesFiltersPaginatesAndHydrates(t *testing.T) {
 	if len(got.Items[0].Apps) != 1 || got.Items[0].Apps[0].Application.ID != app.ID || !got.Items[0].Apps[0].HasCheck || got.Items[0].Apps[0].LatestCheck.Status != model.RunDrift {
 		t.Fatalf("hydrated apps = %+v", got.Items[0].Apps)
 	}
-	if got.Stats.Total != 2 || got.Stats.Drift != 1 || got.Stats.Synced != 1 || got.Stats.Tunnel != 1 {
+	if got.Stats.Total != 2 || got.Stats.Drift != 1 || got.Stats.Synced != 1 || got.Stats.SSH != 1 {
 		t.Fatalf("stats = %+v", got.Stats)
 	}
 	if len(got.Facets.Tags) != 3 || len(got.Facets.Apps) != 1 {

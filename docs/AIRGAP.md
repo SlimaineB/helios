@@ -116,17 +116,9 @@ for OS packages and the systemd unit. For a no-root setup, make Ansible availabl
 to that user and follow the
 [Rootless install](INSTALL.md#rootless-install-no-root).
 
-For an outbound-only host, add `--mode tunnel`. The installer then skips the
-Ansible venv and installs only the OpenSSH client; the agent just maintains the
-reverse SSH tunnel and reports health. The bastion still runs Ansible through
-the runner.
-
-```sh
-sudo ./install-airgap.sh agent \
-  --server https://hub.example.com \
-  --token '<instance-token>' \
-  --mode tunnel
-```
+Hosts managed as **SSH** instances do not run the agent at all: register them as
+SSH in the hub and run `helios-runner` on a machine that can reach them over
+SSH. See [Runners](RUNNERS.md).
 
 If the host is already provisioned with the required packages and Ansible:
 

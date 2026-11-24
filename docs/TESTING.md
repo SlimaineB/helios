@@ -63,27 +63,6 @@ Expected:
 SMOKE PASS: 2 agents, demo=...
 ```
 
-### Runner / tunnel smoke
-
-To exercise the agentless path, start the optional profile and its verifier:
-
-```sh
-./hack/demo.sh --runner
-# or, against an already-running runner profile:
-./hack/runner-demo/verify.sh
-```
-
-Expected final lines:
-
-```text
-Runner demo verified.
-  Tunnel instance: ins-... (runner-demo)
-```
-
-The verifier waits for the tunnel instance to be online and for a check result
-from the `runner-demo` app. `docker compose --profile runner logs -f runner
-tunnel-host` shows tunnel discovery, SSH and Ansible output.
-
 Useful overrides:
 
 ```sh
@@ -121,7 +100,6 @@ After `make smoke`, open <http://localhost:8080> and exercise:
 | Scenario | Action | Expected |
 |----------|--------|----------|
 | Drift | `docker compose exec agent-2 sh -c 'echo x > /tmp/helios-demo/state.txt'` | `agent-2` turns **Drift** within one poll |
-| Tunnel drift | `docker compose --profile runner exec tunnel-host sh -c 'echo x > /tmp/helios-demo/state.txt'` | `runner-tunnel` drifts and the bastion runner autoheals it |
 | Autoheal | wait one poll | back to **Synced**; an apply run appears |
 | Diff | click **Diff** on the drift run | current vs desired file |
 | Check | click **Check** | inline spinner, new `last_check_at`, no page freeze |

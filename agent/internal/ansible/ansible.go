@@ -42,11 +42,14 @@ const (
 	StatusFailed = "failed"
 )
 
-// Target describes a remote host reached over SSH (agentless tunnel mode).
-// Nil/zero Port keeps the local connection used by the installed agent.
+// Target describes a remote host reached over SSH using an Ansible inventory
+// (runner push mode). A nil Target keeps the local connection used by the
+// installed agent.
 type Target struct {
-	Host       string
-	Port       int
+	// Inventory is the path to an inventory file or directory.
+	Inventory string
+	// Limit is the inventory host name to target (--limit).
+	Limit      string
 	User       string
 	KeyFile    string
 	CommonArgs string
@@ -56,23 +59,21 @@ type Target struct {
 type Runner struct {
 	Bin     string
 	Timeout time.Duration
-	// Target switches from local execution to SSH against a tunneled host.
-	Target *Target
 	// ExtraEnv allows injecting vars for CI-ish runs (unused in check/apply inline).
 	ExtraEnv map[string]string
 }
 
 // Check runs the playbook in --check mode (dry-run): changed tasks == drift.
-func (r *Runner) Check(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string) (Result, error) {
-	return r.run(ctx, repo, playbook, varsJSON, true)
+func (r *Runner) Check(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string, target *Target) (Result, error) {
+	return r.run(ctx, repo, playbook, varsJSON, true, target)
 }
 
 // Apply runs the playbook for real.
-func (r *Runner) Apply(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string) (Result, error) {
-	return r.run(ctx, repo, playbook, varsJSON, false)
+func (r *Runner) Apply(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string, target *Target) (Result, error) {
+	return r.run(ctx, repo, playbook, varsJSON, false, target)
 }
 
-func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string, check bool) (Result, error) {
+func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON string, check bool, target *Target) (Result, error) {
 	// Keep run read-only on Runner: checks are executed concurrently and the
 	// previous lazy defaults were a data race on Bin/Timeout.
 	bin, timeout := r.Bin, r.Timeout
@@ -86,21 +87,19 @@ func (r *Runner) run(ctx context.Context, repo *gitops.Repo, playbook, varsJSON 
 	defer cancel()
 
 	args := []string{"-i", "localhost,", "--connection", "local"}
-	if r.Target != nil && r.Target.Port > 0 {
-		host := strings.TrimSpace(r.Target.Host)
-		if host == "" {
-			host = "127.0.0.1"
+	if target != nil && target.Inventory != "" {
+		args = []string{"-i", target.Inventory, "--connection", "ssh"}
+		if target.Limit != "" {
+			args = append(args, "--limit", target.Limit)
 		}
-		args = []string{"-i", host + ",", "--connection", "ssh"}
-		if r.Target.User != "" {
-			args = append(args, "-u", r.Target.User)
+		if target.User != "" {
+			args = append(args, "-u", target.User)
 		}
-		if r.Target.KeyFile != "" {
-			args = append(args, "--private-key", r.Target.KeyFile)
+		if target.KeyFile != "" {
+			args = append(args, "--private-key", target.KeyFile)
 		}
-		args = append(args, "-e", fmt.Sprintf("ansible_port=%d", r.Target.Port))
-		if r.Target.CommonArgs != "" {
-			args = append(args, "--ssh-common-args", r.Target.CommonArgs)
+		if target.CommonArgs != "" {
+			args = append(args, "--ssh-common-args", target.CommonArgs)
 		}
 	}
 	if check {

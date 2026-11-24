@@ -60,8 +60,8 @@ export default function InstancesCard({ instance, onCheckAll, onApplyAll, onHost
           </div>
           <span className="instance-meta">
             <Badge
-              state={instance.execution_mode === 'tunnel' ? 'tunnel' : 'agent'}
-              label={instance.execution_mode === 'tunnel' ? 'bastion' : 'agent'}
+              state={instance.execution_mode === 'ssh' ? 'ssh' : 'agent'}
+              label={instance.execution_mode === 'ssh' ? 'ssh' : 'agent'}
               small
             />
             <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />

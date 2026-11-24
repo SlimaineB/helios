@@ -14,14 +14,14 @@ import (
 	"github.com/slim/helios/server/internal/store"
 )
 
-func createInstance(t *testing.T, st store.Store, id, mode string, port int) model.Instance {
+func createInstance(t *testing.T, st store.Store, id, mode, inventoryHost string) model.Instance {
 	t.Helper()
 	inst, err := st.CreateInstance(context.Background(), model.Instance{
 		ID:            id,
 		Name:          id,
 		TokenHash:     "hash",
 		ExecutionMode: mode,
-		TunnelPort:    port,
+		InventoryHost: inventoryHost,
 	})
 	if err != nil {
 		t.Fatalf("create instance: %v", err)
@@ -29,12 +29,11 @@ func createInstance(t *testing.T, st store.Store, id, mode string, port int) mod
 	return inst
 }
 
-func TestCreateTunnelInstanceAllocatesPort(t *testing.T) {
-	s, st := newTestServer(t)
-	s.SetTunnelConfig("helios-tunnel@bastion.example.com", 22000, 22010)
+func TestCreateSSHInstanceStoresInventoryHost(t *testing.T) {
+	s, _ := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances",
-		strings.NewReader(`{"name":"edge-01","project":"","execution_mode":"tunnel","tags":["prod"," team-a ","PROD",""]}`))
+		strings.NewReader(`{"name":"edge-01","project":"","execution_mode":"ssh","inventory_host":"edge-01.internal","tags":["prod"," team-a ","PROD",""]}`))
 	rec := httptest.NewRecorder()
 	s.handleCreateInstance(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -50,46 +49,29 @@ func TestCreateTunnelInstanceAllocatesPort(t *testing.T) {
 	if resp.Token == "" {
 		t.Fatal("expected a bootstrap token")
 	}
-	if resp.Instance.ExecutionMode != model.ModeTunnel {
-		t.Fatalf("mode = %q, want tunnel", resp.Instance.ExecutionMode)
+	if resp.Instance.ExecutionMode != model.ModeSSH {
+		t.Fatalf("mode = %q, want ssh", resp.Instance.ExecutionMode)
 	}
-	if resp.Instance.TunnelPort != 22000 {
-		t.Fatalf("port = %d, want 22000", resp.Instance.TunnelPort)
-	}
-	if resp.Instance.TunnelGateway != "helios-tunnel@bastion.example.com" {
-		t.Fatalf("gateway = %q", resp.Instance.TunnelGateway)
+	if resp.Instance.InventoryHost != "edge-01.internal" {
+		t.Fatalf("inventory_host = %q", resp.Instance.InventoryHost)
 	}
 	if want := []string{"prod", "team-a"}; !slices.Equal(resp.Instance.Tags, want) {
 		t.Fatalf("tags = %v, want %v", resp.Instance.Tags, want)
 	}
 
-	// A second tunnel instance gets the next free port.
+	// ssh instances require an inventory host.
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/instances",
-		strings.NewReader(`{"name":"edge-02","project":"","execution_mode":"tunnel"}`))
+		strings.NewReader(`{"name":"edge-02","project":"","execution_mode":"ssh"}`))
 	rec = httptest.NewRecorder()
 	s.handleCreateInstance(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("second create: status %d body %s", rec.Code, rec.Body.String())
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Instance.TunnelPort != 22001 {
-		t.Fatalf("second port = %d, want 22001", resp.Instance.TunnelPort)
-	}
-
-	tunnels, err := st.ListTunnelInstances(context.Background())
-	if err != nil {
-		t.Fatalf("list tunnels: %v", err)
-	}
-	if len(tunnels) != 2 {
-		t.Fatalf("tunnel instances = %d, want 2", len(tunnels))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing host: status %d, want 400", rec.Code)
 	}
 }
 
 func TestRunnerAPIRequiresToken(t *testing.T) {
 	s, st := newTestServer(t)
-	createInstance(t, st, "t1", model.ModeTunnel, 22000)
+	createInstance(t, st, "t1", model.ModeSSH, "t1.internal")
 
 	// Disabled until a token is configured.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/runner/instances", nil)
@@ -119,15 +101,15 @@ func TestRunnerAPIRequiresToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("authorized: status %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"tunnel_port":22000`) {
-		t.Fatalf("response misses tunnel port: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"inventory_host":"t1.internal"`) {
+		t.Fatalf("response misses inventory host: %s", rec.Body.String())
 	}
 }
 
 func TestRunnerInstanceAuthRejectsAgentMode(t *testing.T) {
 	s, st := newTestServer(t)
 	s.SetRunnerToken("runner-secret")
-	createInstance(t, st, "agent-1", model.ModeAgent, 0)
+	createInstance(t, st, "agent-1", model.ModeAgent, "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runner/instances/agent-1/checkin",
 		strings.NewReader(`{}`))
@@ -140,14 +122,14 @@ func TestRunnerInstanceAuthRejectsAgentMode(t *testing.T) {
 	}
 }
 
-func TestTunnelCheckinSetsLastTunnelAt(t *testing.T) {
+func TestSSHCheckinUpdatesLiveness(t *testing.T) {
 	s, st := newTestServer(t)
 	s.SetRunnerToken("runner-secret")
-	createInstance(t, st, "tunnel-1", model.ModeTunnel, 22000)
+	createInstance(t, st, "ssh-1", model.ModeSSH, "ssh-1.internal")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/runner/instances/tunnel-1/checkin",
-		strings.NewReader(`{"version":"0.1.1","hostname":"edge-01","platform":"reverse-ssh-tunnel"}`))
-	req.SetPathValue("id", "tunnel-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runner/instances/ssh-1/checkin",
+		strings.NewReader(`{"version":"0.1.1","hostname":"edge-01","platform":"ssh"}`))
+	req.SetPathValue("id", "ssh-1")
 	req.Header.Set("Authorization", "Bearer runner-secret")
 	rec := httptest.NewRecorder()
 	s.runnerInstanceAuth(s.handleCheckin)(rec, req)
@@ -155,20 +137,17 @@ func TestTunnelCheckinSetsLastTunnelAt(t *testing.T) {
 		t.Fatalf("checkin: status %d body %s", rec.Code, rec.Body.String())
 	}
 
-	got, err := st.GetInstance(context.Background(), "tunnel-1")
+	got, err := st.GetInstance(context.Background(), "ssh-1")
 	if err != nil {
 		t.Fatalf("get instance: %v", err)
-	}
-	if got.LastTunnelAt.IsZero() {
-		t.Fatal("last_tunnel_at was not set")
 	}
 	if got.LastSeen.IsZero() {
 		t.Fatal("last_seen was not set")
 	}
-	if time.Since(got.LastTunnelAt) > time.Minute {
-		t.Fatalf("last_tunnel_at too old: %v", got.LastTunnelAt)
+	if time.Since(got.LastSeen) > time.Minute {
+		t.Fatalf("last_seen too old: %v", got.LastSeen)
 	}
-	if got.Hostname != "edge-01" || got.Platform != "reverse-ssh-tunnel" {
+	if got.Hostname != "edge-01" || got.Platform != "ssh" {
 		t.Fatalf("hostname/platform = %q/%q", got.Hostname, got.Platform)
 	}
 }
@@ -217,7 +196,7 @@ func TestDecorateInstanceMarksSilentAgentOffline(t *testing.T) {
 
 func TestHeartbeatUpdatesLivenessWithoutState(t *testing.T) {
 	s, st := newTestServer(t)
-	inst := createInstance(t, st, "hb-1", model.ModeAgent, 0)
+	inst := createInstance(t, st, "hb-1", model.ModeAgent, "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/heartbeat",
 		strings.NewReader(`{"instance_id":"hb-1","version":"9.9","hostname":"hb","platform":"linux","poll_interval":7}`))
@@ -249,8 +228,8 @@ func TestHeartbeatUpdatesLivenessWithoutState(t *testing.T) {
 func TestUpdateInstanceRenamesWithoutTouchingLiveness(t *testing.T) {
 	s, st := newTestServer(t)
 	ctx := context.Background()
-	createInstance(t, st, "ren-1", model.ModeAgent, 0)
-	if err := st.TouchInstance(ctx, "ren-1", "1.2.3", "h1", "linux", 5, time.Now().UTC(), false); err != nil {
+	createInstance(t, st, "ren-1", model.ModeAgent, "")
+	if err := st.TouchInstance(ctx, "ren-1", "1.2.3", "h1", "linux", 5, time.Now().UTC()); err != nil {
 		t.Fatalf("touch instance: %v", err)
 	}
 	before, err := st.GetInstance(ctx, "ren-1")
@@ -285,10 +264,10 @@ func TestUpdateInstanceRenamesWithoutTouchingLiveness(t *testing.T) {
 	}
 }
 
-func TestTunnelCheckinReturnsScanPolicy(t *testing.T) {
+func TestSSHCheckinReturnsScanPolicy(t *testing.T) {
 	s, st := newTestServer(t)
 	s.SetRunnerToken("runner-secret")
-	createInstance(t, st, "tunnel-scan", model.ModeTunnel, 22000)
+	createInstance(t, st, "ssh-scan", model.ModeSSH, "ssh-scan.internal")
 	if err := st.SetRuntimeSetting(context.Background(), scanIntervalSetting, "15"); err != nil {
 		t.Fatalf("set interval: %v", err)
 	}
@@ -296,9 +275,9 @@ func TestTunnelCheckinReturnsScanPolicy(t *testing.T) {
 		t.Fatalf("set jitter: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/runner/instances/tunnel-scan/checkin",
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/runner/instances/ssh-scan/checkin",
 		strings.NewReader(`{}`))
-	req.SetPathValue("id", "tunnel-scan")
+	req.SetPathValue("id", "ssh-scan")
 	req.Header.Set("Authorization", "Bearer runner-secret")
 	rec := httptest.NewRecorder()
 	s.runnerInstanceAuth(s.handleCheckin)(rec, req)
@@ -312,15 +291,14 @@ func TestTunnelCheckinReturnsScanPolicy(t *testing.T) {
 	if got.ScanInterval != 15 || got.JitterPercent != 35 {
 		t.Fatalf("scan policy = %d/%d, want 15/35", got.ScanInterval, got.JitterPercent)
 	}
-	if got.InstanceID != "tunnel-scan" {
-		t.Fatalf("instance id = %q, want tunnel-scan", got.InstanceID)
+	if got.InstanceID != "ssh-scan" {
+		t.Fatalf("instance id = %q, want ssh-scan", got.InstanceID)
 	}
 }
 
-func TestRunnerInventoryListsTunnelInstancesWithoutToken(t *testing.T) {
+func TestRunnerInventoryListsSSHInstancesWithoutToken(t *testing.T) {
 	s, st := newTestServer(t)
-	s.SetTunnelConfig("helios-tunnel@bastion.example.com", 22000, 22010)
-	createInstance(t, st, "tunnel-1", model.ModeTunnel, 22000)
+	createInstance(t, st, "ssh-1", model.ModeSSH, "ssh-1.internal")
 	s.SetRunnerToken("runner-secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/runners", nil)
@@ -336,22 +314,16 @@ func TestRunnerInventoryListsTunnelInstancesWithoutToken(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !resp.Enabled || !resp.Configured {
-		t.Fatalf("enabled/configured = %v/%v, want true/true", resp.Enabled, resp.Configured)
+	if !resp.Enabled {
+		t.Fatalf("enabled = %v, want true", resp.Enabled)
 	}
-	if resp.Gateway != "helios-tunnel@bastion.example.com" {
-		t.Fatalf("gateway = %q", resp.Gateway)
+	if resp.Summary.Instances != 1 || resp.Summary.Online != 0 {
+		t.Fatalf("summary = %+v, want one offline instance", resp.Summary)
 	}
-	if resp.PortMin != 22000 || resp.PortMax != 22010 {
-		t.Fatalf("ports = %d-%d", resp.PortMin, resp.PortMax)
+	if len(resp.Instances) != 1 || resp.Instances[0].ID != "ssh-1" {
+		t.Fatalf("instances = %+v, want ssh-1 only", resp.Instances)
 	}
-	if resp.Summary.Instances != 1 || resp.Summary.WithPort != 1 {
-		t.Fatalf("summary = %+v, want one tunnel with port", resp.Summary)
-	}
-	if len(resp.Instances) != 1 || resp.Instances[0].ID != "tunnel-1" {
-		t.Fatalf("instances = %+v, want tunnel-1 only", resp.Instances)
-	}
-	if resp.Instances[0].TunnelGateway != "helios-tunnel@bastion.example.com" {
-		t.Fatalf("instance gateway = %q", resp.Instances[0].TunnelGateway)
+	if resp.Instances[0].InventoryHost != "ssh-1.internal" {
+		t.Fatalf("instance inventory host = %q", resp.Instances[0].InventoryHost)
 	}
 }

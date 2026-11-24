@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -32,31 +31,28 @@ import (
 
 func main() {
 	var (
-		addr          = flag.String("addr", ":8080", "listen address")
-		dbPath        = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
-		uiDir         = flag.String("ui", "", "path to built UI static files (optional)")
-		baseURL       = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
-		tlsCert       = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
-		tlsKey        = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
-		rbacFile      = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
-		downloads     = flag.String("downloads", envutil.Get("HELIOS_DOWNLOADS_DIR"), "directory of agent tarballs served under /downloads (optional)")
-		runnerToken   = flag.String("runner-token", envutil.Get("HELIOS_RUNNER_TOKEN"), "shared bearer token for bastion runners (empty disables agentless mode)")
-		tunnelGateway = flag.String("tunnel-gateway", envutil.Get("HELIOS_TUNNEL_GATEWAY"), "SSH destination shown for tunnel instances, e.g. helios-tunnel@bastion.example.com")
-		repoCacheDir  = flag.String("repo-cache-dir", envutil.Get("HELIOS_REPO_CACHE_DIR"), "repo snapshot cache directory (empty disables agent snapshot downloads)")
-		repoCacheTTL  = flag.Duration("repo-cache-ttl", envDuration("HELIOS_REPO_CACHE_TTL", 7*24*time.Hour), "delete repo snapshots older than this (0 disables)")
-		repoCacheMax  = flag.Int64("repo-cache-max-mb", envInt64("HELIOS_REPO_CACHE_MAX_MB", 2048), "repo snapshot cache size cap in MiB (0 disables)")
-		repoResolve   = flag.Duration("repo-cache-resolve-ttl", envDuration("HELIOS_REPO_CACHE_RESOLVE_TTL", 30*time.Second), "reuse a branch resolution for this long (0 = fetch every request)")
-		sessTTL       = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
-		secretKey     = flag.String("secret-key", envutil.Get("HELIOS_SECRET_KEY"), "key for encrypting stored secrets at rest (32-byte hex/base64 or passphrase; empty = plaintext)")
-		version       = flag.String("version", envutil.Or("HELIOS_VERSION", "dev"), "build/version label shown in the UI")
-		retRuns       = flag.Duration("retention-runs", envDuration("HELIOS_RETENTION_RUNS", 90*24*time.Hour), "delete run history older than this (0 disables)")
-		retCommands   = flag.Duration("retention-commands", envDuration("HELIOS_RETENTION_COMMANDS", 30*24*time.Hour), "delete completed commands older than this (0 disables)")
-		retAudit      = flag.Duration("retention-audit", envDuration("HELIOS_RETENTION_AUDIT", 365*24*time.Hour), "delete audit entries older than this (0 disables)")
-		retInterval   = flag.Duration("retention-interval", envDuration("HELIOS_RETENTION_INTERVAL", 6*time.Hour), "how often the retention job runs")
+		addr         = flag.String("addr", ":8080", "listen address")
+		dbPath       = flag.String("db", "./helios.db", "database: sqlite file path or postgres:// URL")
+		uiDir        = flag.String("ui", "", "path to built UI static files (optional)")
+		baseURL      = flag.String("base-url", envutil.Or("HELIOS_BASE_URL", "http://localhost:8080"), "external base URL (OIDC redirect, cookies)")
+		tlsCert      = flag.String("tls-cert", envutil.Get("HELIOS_TLS_CERT"), "TLS certificate file (enables HTTPS)")
+		tlsKey       = flag.String("tls-key", envutil.Get("HELIOS_TLS_KEY"), "TLS private key file")
+		rbacFile     = flag.String("rbac", envutil.Get("HELIOS_RBAC_FILE"), "RBAC policy file (ArgoCD-style p/g rules)")
+		downloads    = flag.String("downloads", envutil.Get("HELIOS_DOWNLOADS_DIR"), "directory of agent tarballs served under /downloads (optional)")
+		runnerToken  = flag.String("runner-token", envutil.Get("HELIOS_RUNNER_TOKEN"), "shared bearer token for runners (empty disables agentless mode)")
+		repoCacheDir = flag.String("repo-cache-dir", envutil.Get("HELIOS_REPO_CACHE_DIR"), "repo snapshot cache directory (empty disables agent snapshot downloads)")
+		repoCacheTTL = flag.Duration("repo-cache-ttl", envDuration("HELIOS_REPO_CACHE_TTL", 7*24*time.Hour), "delete repo snapshots older than this (0 disables)")
+		repoCacheMax = flag.Int64("repo-cache-max-mb", envInt64("HELIOS_REPO_CACHE_MAX_MB", 2048), "repo snapshot cache size cap in MiB (0 disables)")
+		repoResolve  = flag.Duration("repo-cache-resolve-ttl", envDuration("HELIOS_REPO_CACHE_RESOLVE_TTL", 30*time.Second), "reuse a branch resolution for this long (0 = fetch every request)")
+		sessTTL      = flag.Duration("session-ttl", 12*time.Hour, "operator login session lifetime")
+		secretKey    = flag.String("secret-key", envutil.Get("HELIOS_SECRET_KEY"), "key for encrypting stored secrets at rest (32-byte hex/base64 or passphrase; empty = plaintext)")
+		version      = flag.String("version", envutil.Or("HELIOS_VERSION", "dev"), "build/version label shown in the UI")
+		retRuns      = flag.Duration("retention-runs", envDuration("HELIOS_RETENTION_RUNS", 90*24*time.Hour), "delete run history older than this (0 disables)")
+		retCommands  = flag.Duration("retention-commands", envDuration("HELIOS_RETENTION_COMMANDS", 30*24*time.Hour), "delete completed commands older than this (0 disables)")
+		retAudit     = flag.Duration("retention-audit", envDuration("HELIOS_RETENTION_AUDIT", 365*24*time.Hour), "delete audit entries older than this (0 disables)")
+		retInterval  = flag.Duration("retention-interval", envDuration("HELIOS_RETENTION_INTERVAL", 6*time.Hour), "how often the retention job runs")
 	)
 	flag.Parse()
-	tunnelPortMin := envInt("HELIOS_TUNNEL_PORT_MIN", 22000)
-	tunnelPortMax := envInt("HELIOS_TUNNEL_PORT_MAX", 22999)
 
 	if dsn := envutil.Get("HELIOS_DB"); dsn != "" {
 		*dbPath = dsn
@@ -201,15 +197,13 @@ func main() {
 		TLS:           *tlsCert != "" && *tlsKey != "",
 		SecretKey:     *secretKey != "",
 		RepoCache:     repoCache != nil,
-		TunnelGateway: *tunnelGateway,
 		RunnerEnabled: *runnerToken != "",
 		GitOps:        true,
 	})
 	srv.SetDownloadsDir(*downloads)
 	srv.SetRunnerToken(*runnerToken)
-	srv.SetTunnelConfig(*tunnelGateway, tunnelPortMin, tunnelPortMax)
 	if *runnerToken != "" {
-		log.Info("runner API enabled for agentless tunnel instances", "gateway", *tunnelGateway, "port_range", fmt.Sprintf("%d-%d", tunnelPortMin, tunnelPortMax))
+		log.Info("runner API enabled for ssh-managed instances")
 	}
 	gitopsState := envutil.Or("HELIOS_GITOPS_STATE_DIR", "/tmp/helios-gitops")
 	recon := reconciler.New(st, log, gitopsState)

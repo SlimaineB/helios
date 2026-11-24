@@ -35,7 +35,7 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create instance %s: %v", id, err)
 		}
-		if err := st.TouchInstance(ctx, id, "v1", id, "linux", 5, seen, mode == model.ModeTunnel); err != nil {
+		if err := st.TouchInstance(ctx, id, "v1", id, "linux", 5, seen); err != nil {
 			t.Fatalf("touch instance %s: %v", id, err)
 		}
 		if err := st.UpdateInstanceState(ctx, id, state, ""); err != nil {
@@ -44,7 +44,7 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 		return inst
 	}
 	web1 := mk("web-1", "prod", "eu-west-1", []string{"prod", "team-a"}, model.ModeAgent, now, model.StateDrift)
-	web2 := mk("web-2", "", "us-east-1", []string{"prod"}, model.ModeTunnel, now.Add(-20*time.Minute), model.StateOK)
+	web2 := mk("web-2", "", "us-east-1", []string{"prod"}, model.ModeSSH, now.Add(-20*time.Minute), model.StateOK)
 	web3 := mk("web-3", "staging", "eu-west-1", []string{"staging"}, model.ModeAgent, now, model.StateUnknown)
 
 	for _, id := range []string{web1.ID, web2.ID, web3.ID} {
@@ -75,7 +75,7 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 		{"tag", model.InstanceListFilter{AllProjects: true, Tag: "PROD"}, []string{"web-1", "web-2"}},
 		{"project", model.InstanceListFilter{AllProjects: true, HasProject: true, Project: "prod"}, []string{"web-1"}},
 		{"global project", model.InstanceListFilter{AllProjects: true, HasProject: true}, []string{"web-2"}},
-		{"mode", model.InstanceListFilter{AllProjects: true, Mode: model.ModeTunnel}, []string{"web-2"}},
+		{"mode", model.InstanceListFilter{AllProjects: true, Mode: model.ModeSSH}, []string{"web-2"}},
 		{"app", model.InstanceListFilter{AllProjects: true, AppID: app.ID}, []string{"web-1", "web-2", "web-3"}},
 		{"state drift", model.InstanceListFilter{AllProjects: true, State: model.StateDrift}, []string{"web-1"}},
 		{"state ok", model.InstanceListFilter{AllProjects: true, State: model.StateOK}, []string{"web-2"}},
@@ -151,7 +151,7 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("overview stats: %v", err)
 	}
-	if overview.Total != 3 || overview.Online != 2 || overview.Offline != 1 || overview.Tunnel != 1 || overview.Apps != 3 {
+	if overview.Total != 3 || overview.Online != 2 || overview.Offline != 1 || overview.SSH != 1 || overview.Apps != 3 {
 		t.Fatalf("overview base stats: %+v", overview)
 	}
 	if overview.HostDrift != 1 || overview.HostOffline != 1 || overview.HostUnknown != 1 {

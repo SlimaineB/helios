@@ -39,7 +39,7 @@ func TestPostgresScaleQueries(t *testing.T) {
 		if _, err := st.CreateInstance(ctx, model.Instance{ID: id, Name: id, TokenHash: "tok-" + id, Project: project, Region: "eu-west-1", Tags: tags}); err != nil {
 			t.Fatalf("create instance %s: %v", id, err)
 		}
-		if err := st.TouchInstance(ctx, id, "v1", id, "linux", 5, now, false); err != nil {
+		if err := st.TouchInstance(ctx, id, "v1", id, "linux", 5, now); err != nil {
 			t.Fatalf("touch instance %s: %v", id, err)
 		}
 	}

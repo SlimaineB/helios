@@ -405,7 +405,7 @@ export default function Projects() {
         <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} aria-label="Execution mode">
           <option value="">All modes</option>
           <option value="agent">Agent</option>
-          <option value="tunnel">Tunnel · bastion</option>
+          <option value="ssh">SSH · runner</option>
         </select>
         <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
           <option value="">All tags</option>
@@ -428,7 +428,7 @@ export default function Projects() {
           <span>Showing</span>
           {projectFilter && <span className="filter-chip">Project: {projectLabel(projectFilter === '__global__' ? '' : projectFilter)}</span>}
           {stateFilter && <span className="filter-chip">State: {stateLabel(stateFilter)}</span>}
-          {modeFilter && <span className="filter-chip">Mode: {modeFilter === 'tunnel' ? 'tunnel · bastion' : 'agent'}</span>}
+          {modeFilter && <span className="filter-chip">Mode: {modeFilter === 'ssh' ? 'ssh · runner' : 'agent'}</span>}
           {tagFilter && <span className="filter-chip">Tag: {tagFilter}</span>}
           {appFilter && <span className="filter-chip">Application: {appOptions.find((app) => String(app.id) === appFilter)?.name || `#${appFilter}`}</span>}
           <span className="spacer" />

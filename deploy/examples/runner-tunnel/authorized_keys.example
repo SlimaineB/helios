@@ -1,5 +1,0 @@
-# On the bastion, as the helios-tunnel user.
-# One line per managed host/port. The key is the public key printed by
-# `install-agent.sh --mode tunnel` (or the manual tunnel key), NOT runner_id.
-restrict,port-forwarding,permitlisten="127.0.0.1:22000" ssh-ed25519 AAAA... tunnel@web-prod-01
-restrict,port-forwarding,permitlisten="127.0.0.1:22001" ssh-ed25519 AAAA... tunnel@web-prod-02

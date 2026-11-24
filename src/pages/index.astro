@@ -27,7 +27,7 @@ const features = [
   {
     icon: 'server',
     title: 'Agents that fit anywhere',
-    text: 'One static Go binary on systemd or Kubernetes. Agents run non-root by default, poll the hub over outbound HTTPS, and can use tunnel mode on locked-down hosts.',
+    text: 'One static Go binary on systemd or Kubernetes. Agents run non-root by default, poll the hub over outbound HTTPS, and leave agentless hosts to an SSH runner.',
   },
   {
     icon: 'globe',
@@ -55,7 +55,7 @@ const security = [
   {
     icon: 'terminal',
     title: 'Pull model, no inbound SSH',
-    text: 'Agents call the hub; the hub never connects back. Hosts behind NAT or a firewall can use reverse SSH tunnel mode with a runner.',
+    text: 'Agents call the hub; the hub never connects back. Agentless hosts are driven by a runner over SSH with a hub-managed key.',
   },
   {
     icon: 'clock',
@@ -270,7 +270,7 @@ const security = [
               <span class="chip"><Icon name="terminal" size={15} /> systemd hosts</span>
               <span class="chip"><Icon name="kubernetes" size={15} /> k3s / Kubernetes</span>
               <span class="chip"><Icon name="globe" size={15} /> EC2 / VMs</span>
-              <span class="chip"><Icon name="shield" size={15} /> Tunnel mode</span>
+              <span class="chip"><Icon name="shield" size={15} /> SSH runner</span>
             </div>
           </div>
 
@@ -408,8 +408,8 @@ curl -fsSL https://github.com/SlimaineB/helios/releases/latest/download/install.
                 <Icon name="chevron" size={17} />
               </summary>
               <p>
-                No. Agents poll the hub over outbound HTTPS. Hosts that cannot reach the hub
-                directly can use reverse SSH tunnel mode with a runner on a bastion.
+                No. Agents poll the hub over outbound HTTPS. Agentless hosts are driven by a
+                runner that connects over SSH using an inventory from the application repo.
               </p>
             </details>
             <details class="faq-item">

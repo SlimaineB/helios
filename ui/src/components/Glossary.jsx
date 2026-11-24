@@ -58,8 +58,8 @@ const TERMS = [
     definition: 'A Git repository that declares projects, applications and assignments. Reconciling it updates Helios; owned objects get a GitOps badge and are read-only in the UI.',
   },
   {
-    term: 'Tunnel / bastion',
-    definition: 'A host reached through a reverse SSH tunnel and a runner on the bastion. A lightweight tunnel agent can keep the tunnel open; Ansible runs on the bastion.',
+    term: 'SSH instance',
+    definition: 'A host managed by a runner: the runner runs Ansible over SSH using the inventory from the application repository. Nothing is installed on the host.',
   },
   {
     term: 'Rollback',

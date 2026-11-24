@@ -1,6 +1,0 @@
-# One-shot bootstrap for the optional `--runner` lab profile.
-FROM alpine:3.20
-RUN apk add --no-cache curl jq openssh-client
-COPY hack/runner-demo/bootstrap.sh /usr/local/bin/runner-bootstrap.sh
-RUN chmod +x /usr/local/bin/runner-bootstrap.sh
-CMD ["/usr/local/bin/runner-bootstrap.sh"]

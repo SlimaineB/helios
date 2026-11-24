@@ -266,9 +266,8 @@ export default function Settings() {
             <SettingRow label="Base URL" value={<span className="mono">{data.base_url || '—'}</span>} />
             <SettingRow label="Store" value={<span className="mono">{data.store || '—'}</span>} />
             <SettingRow label="Repository snapshot cache" value={yesNo(features.repo_cache)} />
-            <SettingRow label="Agentless runner" hint="HELIOS_RUNNER_TOKEN" value={yesNo(features.runner)} />
+            <SettingRow label="Runner API" hint="HELIOS_RUNNER_TOKEN" value={yesNo(features.runner)} />
             <SettingRow label="GitOps controller" value={yesNo(features.gitops)} />
-            <SettingRow label="Tunnel gateway" hint="HELIOS_TUNNEL_GATEWAY" value={<span className="mono">{features.tunnel_gateway || '—'}</span>} />
           </div>
         </div>
       </div>

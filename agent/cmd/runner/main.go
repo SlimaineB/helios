@@ -19,7 +19,7 @@ func main() {
 		token         = flag.String("token", env("HELIOS_RUNNER_TOKEN", ""), "runner bearer token")
 		stateDir      = flag.String("state-dir", env("HELIOS_RUNNER_STATE_DIR", "/var/lib/helios/runner"), "where repo mirrors and run files live")
 		poll          = flag.Duration("poll-interval", envDuration("HELIOS_RUNNER_POLL_INTERVAL", 30*time.Second), "per-instance drift check interval")
-		discover      = flag.Duration("discover-interval", envDuration("HELIOS_RUNNER_DISCOVER_INTERVAL", 15*time.Second), "tunnel instance discovery interval")
+		discover      = flag.Duration("discover-interval", envDuration("HELIOS_RUNNER_DISCOVER_INTERVAL", 15*time.Second), "instance discovery interval")
 		maxConcurrent = flag.Int("max-concurrent", envInt("HELIOS_RUNNER_MAX_CONCURRENT", 4), "parallel app checks per instance")
 		sshUser       = flag.String("ssh-user", env("HELIOS_RUNNER_SSH_USER", ""), "SSH user on the managed host (default: current user)")
 		sshKey        = flag.String("ssh-key", env("HELIOS_RUNNER_SSH_KEY", ""), "SSH private key for managed hosts (default: ssh-agent/default keys)")

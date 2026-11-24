@@ -10,11 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	ModeAgent  = "agent"
-	ModeTunnel = "tunnel"
-)
-
 type Config struct {
 	// Server is the base URL of the central API, e.g. https://hub.example.com.
 	Server string `yaml:"server"`
@@ -31,9 +26,9 @@ type Config struct {
 	// fleet rolled out together does not hit the hub at the same instant.
 	// 0 disables jitter; the default is 20.
 	JitterPercent int `yaml:"jitter_percent"`
-	// MaxConcurrentApps bounds how many applications the agent reconciles in
-	// parallel during one pass. Keep this small on CPU-constrained hosts:
-	// every Ansible invocation is its own process.
+	// MaxConcurrentApps bounds how many applications are reconciled in
+	// parallel. Keep this small on CPU-constrained hosts: every Ansible
+	// invocation is its own process.
 	MaxConcurrentApps int `yaml:"max_concurrent_apps"`
 	// AutoHeal applies a playbook automatically when drift is detected (like
 	// ArgoCD selfHeal). Sync commands still always apply.
@@ -44,51 +39,29 @@ type Config struct {
 	AwsRegion string `yaml:"-"`
 	// AnsibleBin overrides the ansible-playbook binary path.
 	AnsibleBin string `yaml:"ansible_bin"`
-	// TargetHost/TargetPort switch Ansible from local execution to SSH (used by
-	// the agentless runner). TargetPort 0 keeps the normal local mode.
-	TargetHost    string `yaml:"target_host"`
-	TargetPort    int    `yaml:"target_port"`
+	// InventoryMode switches Ansible from local execution to SSH against hosts
+	// described by an inventory in the application repository. Used by the
+	// runner (push) path; the installed agent leaves it false.
+	InventoryMode bool `yaml:"inventory_mode"`
+	// InventoryHost is the instance's host name in the inventory (--limit).
+	InventoryHost string `yaml:"inventory_host"`
 	SSHUser       string `yaml:"ssh_user"`
 	SSHKey        string `yaml:"ssh_key"`
 	SSHCommonArgs string `yaml:"ssh_common_args"`
-	// Hostname/Platform let the runner report the tunnel instance rather than
-	// the bastion's own hostname.
+	// Hostname/Platform let the runner report the managed instance rather than
+	// the runner's own hostname.
 	Hostname string `yaml:"hostname"`
 	Platform string `yaml:"platform"`
-
-	// Mode selects the agent role: "agent" reconciles Ansible applications,
-	// "tunnel" only maintains the reverse SSH tunnel and reports health.
-	Mode string `yaml:"mode"`
-	// TunnelSSHKey is the private key used for the bastion reverse tunnel.
-	TunnelSSHKey string `yaml:"tunnel_ssh_key"`
-	// TunnelSSHCommonArgs is inserted before the built-in tunnel ssh options.
-	TunnelSSHCommonArgs string `yaml:"tunnel_ssh_common_args"`
-	// TunnelLocalTarget is the local sshd address forwarded by the bastion.
-	TunnelLocalTarget string `yaml:"tunnel_local_target"`
-	// TunnelGateway/TunnelPort override hub-provided tunnel settings.
-	TunnelGateway string `yaml:"tunnel_gateway"`
-	TunnelPort    int    `yaml:"tunnel_port"`
-	// TunnelHealthInterval is how often the tunnel agent reports liveness.
-	TunnelHealthInterval time.Duration `yaml:"tunnel_health_interval"`
-}
-
-// IsTunnel reports whether the agent runs in tunnel-only mode.
-func (c Config) IsTunnel() bool {
-	return strings.EqualFold(strings.TrimSpace(c.Mode), ModeTunnel)
 }
 
 func Default() Config {
 	return Config{
-		Server:               "",
-		StateDir:             "/var/lib/helios/agent",
-		PollInterval:         30 * time.Second,
-		JitterPercent:        20,
-		MaxConcurrentApps:    4,
-		AnsibleBin:           "ansible-playbook",
-		AwsRegion:            os.Getenv("AWS_REGION"),
-		Mode:                 ModeAgent,
-		TunnelLocalTarget:    "127.0.0.1:22",
-		TunnelHealthInterval: 30 * time.Second,
+		StateDir:          "/var/lib/helios/agent",
+		PollInterval:      30 * time.Second,
+		JitterPercent:     20,
+		MaxConcurrentApps: 4,
+		AnsibleBin:        "ansible-playbook",
+		AwsRegion:         os.Getenv("AWS_REGION"),
 	}
 }
 
@@ -158,32 +131,10 @@ func Load(path string) (Config, error) {
 			cfg.AnsibleBin = v
 		case "AWS_REGION":
 			cfg.AwsRegion = v
-		case "MODE":
-			cfg.Mode = v
-		case "TUNNEL_SSH_KEY":
-			cfg.TunnelSSHKey = v
-		case "TUNNEL_SSH_COMMON_ARGS":
-			cfg.TunnelSSHCommonArgs = v
-		case "TUNNEL_LOCAL_TARGET":
-			cfg.TunnelLocalTarget = v
-		case "TUNNEL_GATEWAY":
-			cfg.TunnelGateway = v
-		case "TUNNEL_PORT":
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 || n > 65535 {
-				return fmt.Errorf("invalid HELIOS_TUNNEL_PORT %q: must be 1-65535", v)
-			}
-			cfg.TunnelPort = n
-		case "TUNNEL_HEALTH_INTERVAL":
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return fmt.Errorf("invalid HELIOS_TUNNEL_HEALTH_INTERVAL %q: %w", v, err)
-			}
-			cfg.TunnelHealthInterval = d
 		}
 		return nil
 	}
-	for _, name := range []string{"SERVER", "TOKEN", "INSTANCE_ID", "STATE_DIR", "POLL_INTERVAL", "JITTER_PERCENT", "MAX_CONCURRENT_APPS", "AUTOHEAL", "INSECURE", "ANSIBLE_BIN", "AWS_REGION", "MODE", "TUNNEL_SSH_KEY", "TUNNEL_SSH_COMMON_ARGS", "TUNNEL_LOCAL_TARGET", "TUNNEL_GATEWAY", "TUNNEL_PORT", "TUNNEL_HEALTH_INTERVAL"} {
+	for _, name := range []string{"SERVER", "TOKEN", "INSTANCE_ID", "STATE_DIR", "POLL_INTERVAL", "JITTER_PERCENT", "MAX_CONCURRENT_APPS", "AUTOHEAL", "INSECURE", "ANSIBLE_BIN", "AWS_REGION"} {
 		if err := applyEnv(name); err != nil {
 			return cfg, err
 		}
@@ -212,11 +163,8 @@ func (c Config) Validate() error {
 	if c.PollInterval <= 0 {
 		missing = append(missing, "poll_interval")
 	}
-	if c.Mode != "" && !strings.EqualFold(c.Mode, ModeAgent) && !strings.EqualFold(c.Mode, ModeTunnel) {
-		return fmt.Errorf("mode must be %q or %q", ModeAgent, ModeTunnel)
-	}
-	if c.IsTunnel() && strings.TrimSpace(c.TunnelSSHKey) == "" {
-		missing = append(missing, "tunnel_ssh_key")
+	if c.InventoryMode && strings.TrimSpace(c.InventoryHost) == "" {
+		missing = append(missing, "inventory_host")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))

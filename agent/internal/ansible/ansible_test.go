@@ -19,7 +19,7 @@ func TestRunPassesVarsAsExtraVars(t *testing.T) {
 	}
 
 	r := Runner{Bin: bin, ExtraEnv: map[string]string{"ARGS_FILE": argsFile}}
-	if _, err := r.Check(context.Background(), &gitops.Repo{Dir: dir}, "site.yml", `{"env":"prod","replicas":2}`); err != nil {
+	if _, err := r.Check(context.Background(), &gitops.Repo{Dir: dir}, "site.yml", `{"env":"prod","replicas":2}`, nil); err != nil {
 		t.Fatalf("check: %v", err)
 	}
 	raw, err := os.ReadFile(argsFile)
@@ -47,7 +47,7 @@ func TestRunOmitsEmptyExtraVars(t *testing.T) {
 	}
 
 	r := Runner{Bin: bin, ExtraEnv: map[string]string{"ARGS_FILE": argsFile}}
-	if _, err := r.Apply(context.Background(), &gitops.Repo{Dir: dir}, "site.yml", "{}"); err != nil {
+	if _, err := r.Apply(context.Background(), &gitops.Repo{Dir: dir}, "site.yml", "{}", nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	raw, err := os.ReadFile(argsFile)
@@ -70,15 +70,15 @@ func TestRunUsesSSHTargetWhenConfigured(t *testing.T) {
 	r := Runner{
 		Bin:      bin,
 		ExtraEnv: map[string]string{"ARGS_FILE": argsFile},
-		Target: &Target{
-			Host:       "127.0.0.1",
-			Port:       22000,
-			User:       "tunnel",
-			KeyFile:    "/etc/helios/runner_id",
-			CommonArgs: "-o StrictHostKeyChecking=accept-new",
-		},
 	}
-	if _, err := r.Check(context.Background(), &gitops.Repo{Dir: dir}, "site.yml", ""); err != nil {
+	target := &Target{
+		Inventory:  "/srv/repo/inventory/hosts.ini",
+		Limit:      "web-1",
+		User:       "deploy",
+		KeyFile:    "/etc/helios/runner_id",
+		CommonArgs: "-o StrictHostKeyChecking=accept-new",
+	}
+	if _, err := r.Check(context.Background(), &gitops.Repo{Dir: dir}, "site.yml", "", target); err != nil {
 		t.Fatalf("check: %v", err)
 	}
 	raw, err := os.ReadFile(argsFile)
@@ -89,10 +89,10 @@ func TestRunUsesSSHTargetWhenConfigured(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"--connection ssh",
-		"-i 127.0.0.1,",
-		"-u tunnel",
+		"-i /srv/repo/inventory/hosts.ini",
+		"--limit web-1",
+		"-u deploy",
 		"--private-key /etc/helios/runner_id",
-		"-e ansible_port=22000",
 		"--ssh-common-args -o StrictHostKeyChecking=accept-new",
 	} {
 		if !strings.Contains(joined, want) {

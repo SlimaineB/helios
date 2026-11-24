@@ -80,6 +80,8 @@ export default defineConfig({
           label: 'Operate',
           items: [
             { label: 'Optional GitOps', slug: 'gitops' },
+            { label: 'Runners and SSH', slug: 'runners' },
+            { label: 'Inventory and SSH keys', slug: 'inventory' },
             { label: 'High availability', slug: 'ha' },
             { label: 'Authentication and RBAC', slug: 'auth' },
             { label: 'Database schema', slug: 'database' },

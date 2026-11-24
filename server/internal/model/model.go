@@ -35,9 +35,9 @@ const (
 const (
 	// ModeAgent runs the Helios agent on the managed host (default).
 	ModeAgent = "agent"
-	// ModeTunnel keeps the managed host agentless: it only opens an outbound
-	// reverse SSH tunnel, and a runner on the bastion executes Ansible.
-	ModeTunnel = "tunnel"
+	// ModeSSH keeps the managed host agentless: a runner executes Ansible over
+	// SSH against a host described by an inventory in the application repo.
+	ModeSSH = "ssh"
 )
 
 type Instance struct {
@@ -66,17 +66,12 @@ type Instance struct {
 	// AutoHeal is the host-level auto-apply switch. When false, no application
 	// on this host is applied automatically; drift checks keep running.
 	AutoHeal bool `json:"autoheal"`
-	// ExecutionMode is "agent" (default) or "tunnel" (reverse SSH; the tunnel may
-	// be maintained by a lightweight Helios agent or manually).
+	// ExecutionMode is "agent" (default) or "ssh" (a runner executes Ansible
+	// over SSH using an inventory in the application repo).
 	ExecutionMode string `json:"execution_mode"`
-	// TunnelPort is the loopback port the target should forward to its sshd
-	// (tunnel mode only). The runner connects to 127.0.0.1:<port>.
-	TunnelPort int `json:"tunnel_port,omitempty"`
-	// LastTunnelAt is the last time the runner or tunnel agent confirmed the tunnel.
-	LastTunnelAt time.Time `json:"last_tunnel_at,omitempty"`
-	// TunnelGateway is the SSH destination shown in the bootstrap command. It
-	// is derived from server configuration and never persisted.
-	TunnelGateway string `json:"tunnel_gateway,omitempty"`
+	// InventoryHost is the instance's host name in the application inventory,
+	// used as `--limit` by the runner (ssh mode only).
+	InventoryHost string `json:"inventory_host,omitempty"`
 	// HostInfo is the last basic host inventory reported by the agent. It is
 	// best-effort (missing values are omitted) and stored as JSON.
 	HostInfo  HostInfo  `json:"host_info,omitempty"`
@@ -275,7 +270,7 @@ type InstanceListStats struct {
 	Total   int `json:"total"`
 	Online  int `json:"online"`
 	Offline int `json:"offline"`
-	Tunnel  int `json:"tunnel"`
+	SSH     int `json:"ssh"`
 	Apps    int `json:"apps"`
 	Synced  int `json:"synced"`
 	Drift   int `json:"drift"`

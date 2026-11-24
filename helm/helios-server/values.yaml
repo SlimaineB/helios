@@ -79,17 +79,11 @@ database:
 healing:
   maxDriftStreak: 3
 
-# Tunnel (reverse SSH) mode. The runner API is disabled when no token
-# is configured. The gateway is the SSH destination shown to operators, for
-# example "helios-tunnel@bastion.example.com"; ports are allocated on the hub
-# loopback from this range for each tunnel instance.
+# SSH runner. The runner API is disabled when no token is configured.
 runner:
   token: ""
   # existingSecret: name of a Secret holding key `runner-token`.
   existingSecret: ""
-  tunnelGateway: ""
-  tunnelPortMin: 22000
-  tunnelPortMax: 22999
 
 # Per-replica repo snapshot cache. Agents download an immutable tarball for the
 # resolved commit instead of cloning every repository from the git server.

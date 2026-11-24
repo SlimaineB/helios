@@ -18,7 +18,6 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import Modal from '../components/Modal.jsx'
 import CopyButton, { copyText } from '../components/CopyButton.jsx'
 import TagList, { formatTags, parseTags } from '../components/TagList.jsx'
-import TunnelDiagram from '../components/TunnelDiagram.jsx'
 import { SkeletonCard, SkeletonTable } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
@@ -91,17 +90,7 @@ export default function InstanceDetail() {
   }, [appFilter])
 
   const online = instanceOnline(inst)
-  const isTunnel = inst?.execution_mode === 'tunnel'
-  const tunnelCommand = isTunnel && inst?.tunnel_gateway && inst?.tunnel_port
-    ? [
-        'ssh -N -T \\',
-        '  -o ExitOnForwardFailure=yes \\',
-        '  -o ServerAliveInterval=30 \\',
-        '  -o ServerAliveCountMax=3 \\',
-        `  -R 127.0.0.1:${inst.tunnel_port}:127.0.0.1:22 \\`,
-        `  ${inst.tunnel_gateway}`,
-      ].join('\n')
-    : ''
+  const isSSH = inst?.execution_mode === 'ssh'
 
   const toggleAutoHeal = async (app) => {
     try {
@@ -263,7 +252,7 @@ export default function InstanceDetail() {
           <h1>{inst.name}</h1>
           <div className="detail-chips">
             <Badge state={inst.state} label={stateLabel(inst.state)} />
-            {isTunnel && <Badge state="tunnel" label="tunnel" small />}
+            {isSSH && <Badge state="ssh" label="ssh" small />}
             <span className={`detail-chip ${online ? 'online' : 'offline'}`}>
               <span className={`dot ${online ? 'online' : 'offline'}`} />
               {online ? 'Online' : 'Offline'}
@@ -332,7 +321,7 @@ export default function InstanceDetail() {
             <div className="detail"><label>Hostname</label><div className="value">{inst.hostname || '—'}</div></div>
             <div className="detail"><label>Platform</label><div className="value">{inst.platform || '—'}</div></div>
             <div className="detail"><label>Version</label><div className="value">{inst.version || '—'}</div></div>
-            <div className="detail"><label>Mode</label><div className="value">{isTunnel ? 'tunnel · reverse SSH' : 'agent'}</div></div>
+            <div className="detail"><label>Mode</label><div className="value">{isSSH ? 'ssh · runner' : 'agent'}</div></div>
             {inst.host_info?.os && <div className="detail"><label>OS</label><div className="value">{inst.host_info.os}</div></div>}
             {inst.host_info?.arch && <div className="detail"><label>Arch</label><div className="value">{inst.host_info.arch}</div></div>}
             {inst.host_info?.cpu_count > 0 && <div className="detail"><label>CPU</label><div className="value">{inst.host_info.cpu_count} vCPU</div></div>}
@@ -341,30 +330,18 @@ export default function InstanceDetail() {
             {inst.host_info?.ansible && <div className="detail"><label>Ansible</label><div className="value">{inst.host_info.ansible}</div></div>}
           </div>
 
-          {isTunnel && (
+          {isSSH && (
             <div className="detail-subsection">
               <div className="detail-section-head">
-                <strong>Reverse SSH tunnel</strong>
-                <Badge state="tunnel" label="tunnel" small />
+                <strong>SSH execution</strong>
+                <Badge state="ssh" label="ssh" small />
               </div>
               <div className="host-detail-grid">
-                <div className="detail"><label>Bastion</label><div className="value mono">{inst.tunnel_gateway || '—'}</div></div>
-                <div className="detail"><label>Tunnel port</label><div className="value mono">{inst.tunnel_port || '—'}</div></div>
-                <div className="detail"><label>Last tunnel</label><div className="value">{inst.last_tunnel_at ? new Date(inst.last_tunnel_at).toLocaleString() : 'never'}</div></div>
+                <div className="detail"><label>Inventory host</label><div className="value mono">{inst.inventory_host || '—'}</div></div>
               </div>
               <p className="sub">
-                A lightweight Helios tunnel agent can keep this reverse tunnel open and report health without Ansible. You can also run the SSH command manually; the runner on the bastion executes Ansible through the tunnel.
+                A runner executes Ansible over SSH against this host, using the inventory in each application repository and this address as the <code>--limit</code>. Nothing needs to be installed on the host.
               </p>
-              <TunnelDiagram port={inst.tunnel_port} gateway={inst.tunnel_gateway} />
-              {tunnelCommand ? (
-                <>
-                  <p><strong>Keep this tunnel running on the host</strong> <CopyButton value={tunnelCommand} title="Copy tunnel command" /></p>
-                  <pre className="token-pre">{tunnelCommand}</pre>
-                  <p className="sub">Use a dedicated SSH key restricted to port forwarding. The bastion runner connects to 127.0.0.1:{inst.tunnel_port}.</p>
-                </>
-              ) : (
-                <p className="error">Tunnel gateway is not configured on the hub (HELIOS_TUNNEL_GATEWAY).</p>
-              )}
             </div>
           )}
         </div>

@@ -20,7 +20,6 @@ type ServerSettings struct {
 	TLS           bool
 	SecretKey     bool
 	RepoCache     bool
-	TunnelGateway string
 	RunnerEnabled bool
 	GitOps        bool
 }
@@ -56,11 +55,10 @@ type retentionSettings struct {
 }
 
 type featureSettings struct {
-	RepoCache     bool   `json:"repo_cache"`
-	Runner        bool   `json:"runner"`
-	GitOps        bool   `json:"gitops"`
-	TunnelGateway string `json:"tunnel_gateway,omitempty"`
-	Events        bool   `json:"events"`
+	RepoCache bool `json:"repo_cache"`
+	Runner    bool `json:"runner"`
+	GitOps    bool `json:"gitops"`
+	Events    bool `json:"events"`
 }
 
 const (
@@ -136,11 +134,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			EncryptedSecrets: s.settings.SecretKey,
 		},
 		Features: featureSettings{
-			RepoCache:     s.settings.RepoCache,
-			Runner:        s.settings.RunnerEnabled,
-			GitOps:        s.settings.GitOps,
-			TunnelGateway: s.settings.TunnelGateway,
-			Events:        true,
+			RepoCache: s.settings.RepoCache,
+			Runner:    s.settings.RunnerEnabled,
+			GitOps:    s.settings.GitOps,
+			Events:    true,
 		},
 		Scanning: scanning,
 	}

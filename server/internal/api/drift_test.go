@@ -32,7 +32,7 @@ func TestDriftApplicationStatsAndCompactInstances(t *testing.T) {
 		if _, err := st.CreateInstance(ctx, model.Instance{ID: spec.id, Name: spec.id, TokenHash: "tok-" + spec.id}); err != nil {
 			t.Fatalf("create %s: %v", spec.id, err)
 		}
-		if err := st.TouchInstance(ctx, spec.id, "v1", spec.id, "linux", 30, now, false); err != nil {
+		if err := st.TouchInstance(ctx, spec.id, "v1", spec.id, "linux", 30, now); err != nil {
 			t.Fatalf("touch %s: %v", spec.id, err)
 		}
 		if err := st.UpdateInstanceState(ctx, spec.id, model.StateDrift, ""); err != nil {

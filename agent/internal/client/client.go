@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,7 +23,6 @@ type Client struct {
 	base           string
 	token          string
 	prefix         string
-	tunnelAddr     string
 	http           *http.Client
 	requestTimeout time.Duration
 }
@@ -41,27 +39,27 @@ func New(base, token string, insecure bool) *Client {
 	}
 }
 
-// NewRunner returns a client that speaks the runner API for one tunnel
-// instance. Before each checkin it verifies the reverse tunnel is reachable on
-// the bastion loopback, so a down tunnel is treated as an offline instance.
-func NewRunner(base, token, instanceID string, tunnelPort int, insecure bool) *Client {
+// NewRunner returns a client that speaks the runner API for one managed
+// instance.
+func NewRunner(base, token, instanceID string, insecure bool) *Client {
 	c := New(base, token, insecure)
 	c.prefix = "/api/v1/runner/instances/" + instanceID
-	if tunnelPort > 0 {
-		c.tunnelAddr = fmt.Sprintf("127.0.0.1:%d", tunnelPort)
-	}
 	return c
 }
 
 // Application mirrors the server model (only fields the agent needs).
 type Application struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	RepoURL  string `json:"repo_url"`
-	Branch   string `json:"branch"` // target revision: branch, tag, SHA or semver range
-	Path     string `json:"path"`
-	Vars     string `json:"vars"`
-	AutoHeal bool   `json:"autoheal"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	RepoURL string `json:"repo_url"`
+	Branch  string `json:"branch"` // target revision: branch, tag, SHA or semver range
+	// Path is the playbook path inside the repo.
+	Path string `json:"path"`
+	// InventoryPath is the inventory file or directory inside the repo
+	// (runner push mode). Ignored by the local agent.
+	InventoryPath string `json:"inventory_path"`
+	Vars          string `json:"vars"`
+	AutoHeal      bool   `json:"autoheal"`
 	// SyncInterval is the per-app check frequency in seconds; 0 means inherit
 	// the agent's global poll interval.
 	SyncInterval int64 `json:"sync_interval"`
@@ -97,14 +95,6 @@ type CheckinOK struct {
 	JitterPercent int           `json:"jitter_percent,omitempty"`
 }
 
-// TunnelConfig is the hub-assigned reverse tunnel endpoint.
-type TunnelConfig struct {
-	InstanceID string `json:"instance_id"`
-	Name       string `json:"name"`
-	Gateway    string `json:"gateway"`
-	Port       int    `json:"port"`
-}
-
 // HostInfo is the best-effort inventory reported by an agent.
 type HostInfo struct {
 	CPUCount int    `json:"cpu_count,omitempty"`
@@ -113,29 +103,6 @@ type HostInfo struct {
 	OS       string `json:"os,omitempty"`
 	Python   string `json:"python,omitempty"`
 	Ansible  string `json:"ansible,omitempty"`
-}
-
-// TunnelHealth is the tunnel agent liveness report.
-type TunnelHealth struct {
-	Connected bool     `json:"connected"`
-	Hostname  string   `json:"hostname,omitempty"`
-	Platform  string   `json:"platform,omitempty"`
-	Version   string   `json:"version,omitempty"`
-	HostInfo  HostInfo `json:"host_info,omitempty"`
-	Error     string   `json:"error,omitempty"`
-}
-
-// TunnelConfig fetches the gateway and allocated loopback port for this
-// instance. The server derives both from the instance token.
-func (c *Client) TunnelConfig(ctx context.Context) (TunnelConfig, error) {
-	var out TunnelConfig
-	err := c.do(ctx, http.MethodGet, c.prefix+"/tunnel", nil, &out)
-	return out, err
-}
-
-// ReportTunnelHealth records whether the reverse tunnel is currently up.
-func (c *Client) ReportTunnelHealth(ctx context.Context, health TunnelHealth) error {
-	return c.do(ctx, http.MethodPost, c.prefix+"/tunnel/health", health, nil)
 }
 
 // ErrSnapshotUnsupported means the server cannot cache this revision (for
@@ -222,24 +189,7 @@ func (c *Client) Health(ctx context.Context) error {
 	return nil
 }
 
-// ensureTunnel makes sure the bastion can reach the target sshd before a
-// runner client reports liveness: a dead tunnel must look offline.
-func (c *Client) ensureTunnel() error {
-	if c.tunnelAddr == "" {
-		return nil
-	}
-	conn, err := net.DialTimeout("tcp", c.tunnelAddr, 3*time.Second)
-	if err != nil {
-		return fmt.Errorf("reverse tunnel unreachable at %s: %w", c.tunnelAddr, err)
-	}
-	_ = conn.Close()
-	return nil
-}
-
 func (c *Client) Checkin(ctx context.Context, in CheckinIn) (CheckinOK, error) {
-	if err := c.ensureTunnel(); err != nil {
-		return CheckinOK{}, err
-	}
 	var out CheckinOK
 	err := c.do(ctx, http.MethodPost, c.prefix+"/checkin", in, &out)
 	return out, err
@@ -249,9 +199,6 @@ func (c *Client) Checkin(ctx context.Context, in CheckinIn) (CheckinOK, error) {
 // commands. It runs on its own goroutine so a long Ansible run cannot starve
 // the heartbeat.
 func (c *Client) Heartbeat(ctx context.Context, in CheckinIn) error {
-	if err := c.ensureTunnel(); err != nil {
-		return err
-	}
 	return c.do(ctx, http.MethodPost, c.prefix+"/heartbeat", in, nil)
 }
 
@@ -259,9 +206,6 @@ func (c *Client) Heartbeat(ctx context.Context, in CheckinIn) error {
 // true when the hub has queued operator actions, so the main loop can perform
 // an immediate checkin instead of waiting for the scan interval.
 func (c *Client) PendingCommands(ctx context.Context) (bool, error) {
-	if err := c.ensureTunnel(); err != nil {
-		return false, err
-	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var out struct {
@@ -273,21 +217,21 @@ func (c *Client) PendingCommands(ctx context.Context) (bool, error) {
 	return out.Pending, nil
 }
 
-// RunnerInstance is one tunnel instance discovered by a runner.
+// RunnerInstance is one managed instance discovered by a runner.
 type RunnerInstance struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Project       string `json:"project"`
 	ExecutionMode string `json:"execution_mode"`
-	TunnelPort    int    `json:"tunnel_port"`
+	InventoryHost string `json:"inventory_host"`
 }
 
 type runnerInstancesOK struct {
 	Instances []RunnerInstance `json:"instances"`
 }
 
-// ListTunnelInstances returns every agentless instance and its allocated port.
-func (c *Client) ListTunnelInstances(ctx context.Context) ([]RunnerInstance, error) {
+// ListRunnerInstances returns every runner-managed (ssh) instance.
+func (c *Client) ListRunnerInstances(ctx context.Context) ([]RunnerInstance, error) {
 	var out runnerInstancesOK
 	if err := c.do(ctx, http.MethodGet, "/api/v1/runner/instances", nil, &out); err != nil {
 		return nil, err
