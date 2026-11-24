@@ -481,15 +481,16 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 			return err
 		}
 		_, err := r.store.CreateApplication(ctx, model.Application{
-			Name:         name,
-			RepoURL:      repoURL,
-			Branch:       spec.Branch,
-			Path:         spec.Path,
-			Vars:         spec.Vars,
-			AutoHeal:     spec.AutoHeal,
-			SyncInterval: spec.SyncInterval,
-			IgnorePaths:  spec.IgnorePaths,
-			Project:      spec.Project,
+			Name:          name,
+			RepoURL:       repoURL,
+			Branch:        spec.Branch,
+			Path:          spec.Path,
+			InventoryPath: spec.InventoryPath,
+			Vars:          spec.Vars,
+			AutoHeal:      spec.AutoHeal,
+			SyncInterval:  spec.SyncInterval,
+			IgnorePaths:   spec.IgnorePaths,
+			Project:       spec.Project,
 		})
 		if err != nil {
 			return err
@@ -502,6 +503,7 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 	next.RepoURL = repoURL
 	next.Branch = spec.Branch
 	next.Path = spec.Path
+	next.InventoryPath = spec.InventoryPath
 	next.Vars = spec.Vars
 	next.AutoHeal = spec.AutoHeal
 	next.SyncInterval = spec.SyncInterval

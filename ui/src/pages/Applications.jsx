@@ -35,7 +35,7 @@ async function fetchAppInstanceIDs(appId) {
   return ids
 }
 
-const emptyApp = { name: '', branch: 'main', path: 'site.yml', autoheal: false, sync_interval: 0, ignore_paths: '', project: DEFAULT_PROJECT }
+const emptyApp = { name: '', branch: 'main', path: 'site.yml', inventory_path: '', autoheal: false, sync_interval: 0, ignore_paths: '', project: DEFAULT_PROJECT }
 const emptyRepo = { name: '', url: '', username: '', password: '', ssh_key: '', insecure_skip_verify: false }
 const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
 
@@ -165,7 +165,7 @@ export default function Applications() {
       return
     }
     setEditing(app)
-    setForm({ name: app.name, branch: app.branch, path: app.path, autoheal: app.autoheal, sync_interval: app.sync_interval || 0, ignore_paths: app.ignore_paths || '', project: projectForUi(app.project) })
+    setForm({ name: app.name, branch: app.branch, path: app.path, inventory_path: app.inventory_path || '', autoheal: app.autoheal, sync_interval: app.sync_interval || 0, ignore_paths: app.ignore_paths || '', project: projectForUi(app.project) })
     const m = matchRepo(app.repo_url, app.project)
     if (m) {
       setRepoId(String(m.id))
@@ -553,6 +553,11 @@ export default function Applications() {
                 <input {...f('path')} />
               </label>
             </div>
+            <label>
+              Inventory path (optional, file or directory)
+              <input {...f('inventory_path')} placeholder="inventory/hosts.yml" />
+              <span className="sub">Required for SSH instances. Leave empty for agent-only applications.</span>
+            </label>
             <label className="row" title="Automatically apply when a check detects drift">
               <input type="checkbox" checked={form.autoheal} onChange={(e) => setForm((p) => ({ ...p, autoheal: e.target.checked }))} />{' '}
               Auto-apply on drift (apply on detection)

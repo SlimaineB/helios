@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   ArrowLeft,
   ExternalLink,
   GitBranch,
   GitCommit,
   History,
+  Network,
   Pencil,
   Server,
   Settings2,
@@ -61,9 +63,28 @@ export default function ApplicationDetail({
   const [assigning, setAssigning] = useState(false)
   const [toggling, setToggling] = useState(false)
   const [autoheal, setAutoheal] = useState(app.autoheal)
+  const [inventory, setInventory] = useState(null)
+  const [inventoryError, setInventoryError] = useState('')
+  const [inventoryLoading, setInventoryLoading] = useState(false)
   const readOnly = managedByGitOps(app)
 
   useEffect(() => { setAutoheal(app.autoheal) }, [app.id, app.autoheal])
+
+  useEffect(() => {
+    let cancelled = false
+    setInventory(null)
+    setInventoryError('')
+    if (!app.inventory_path) {
+      setInventoryLoading(false)
+      return () => { cancelled = true }
+    }
+    setInventoryLoading(true)
+    api.applicationInventory(app.id)
+      .then((data) => { if (!cancelled) setInventory(data) })
+      .catch((e) => { if (!cancelled) setInventoryError(e.message || 'Failed to load inventory') })
+      .finally(() => { if (!cancelled) setInventoryLoading(false) })
+    return () => { cancelled = true }
+  }, [app.id])
 
   const toggleAppAutoHeal = async () => {
     if (readOnly || !can('applications', 'update') || toggling) return
@@ -108,6 +129,16 @@ export default function ApplicationDetail({
     .filter(({ assignment }) => !!assignment)
 
   const available = availableInstances || []
+  const inventoryInstances = new Map(
+    (inventory?.instances || []).map((inst) => [inst.inventory_host, inst]),
+  )
+  const inventoryHostCount = (inventory?.groups || [])
+    .reduce((total, group) => total + (group.hosts?.length || 0), 0)
+  const registerLink = (host) => (
+    `/instances?register=1&mode=ssh&name=${encodeURIComponent(host)}`
+    + `&inventory_host=${encodeURIComponent(host)}`
+    + `&project=${encodeURIComponent(app.project || '')}`
+  )
 
   const assign = async () => {
     const inst = available.find((i) => i.id === assignTo)
@@ -207,6 +238,10 @@ export default function ApplicationDetail({
               <div className="value mono">{app.path || '—'}</div>
             </div>
             <div className="detail">
+              <label>Inventory path</label>
+              <div className="value mono">{app.inventory_path || '—'}</div>
+            </div>
+            <div className="detail">
               <label>Branch</label>
               <div className="value mono">{app.branch || '—'}</div>
             </div>
@@ -241,6 +276,92 @@ export default function ApplicationDetail({
           )}
         </div>
       </details>
+
+      {app.inventory_path && (
+      <details className="detail-panel">
+        <summary>
+          <Network size={15} /> Inventory
+          {inventoryHostCount > 0 && <span className="muted detail-count">{inventoryHostCount} hosts</span>}
+        </summary>
+        <div className="detail-panel-body">
+          {inventoryLoading && <p className="muted">Loading inventory…</p>}
+          {inventoryError && <div className="error">{inventoryError}</div>}
+          {inventory && (
+            <>
+              <div className="inventory-meta">
+                <span className="mono">{inventory.source || 'no inventory_path set'}</span>
+                {inventory.commit && <span className="muted mono">{inventory.commit.slice(0, 7)}</span>}
+              </div>
+              {(inventory.warnings || []).map((warning) => (
+                <div className="inventory-warning" key={warning}>
+                  <AlertTriangle size={14} /> <span>{warning}</span>
+                </div>
+              ))}
+              {(inventory.groups || []).length === 0 ? (
+                !inventoryLoading && !(inventory.warnings || []).length && (
+                  <p className="muted">No hosts parsed from this inventory.</p>
+                )
+              ) : (
+                inventory.groups.map((group) => (
+                  <div className="inventory-group" key={group.name}>
+                    <h4>
+                      {group.name}
+                      <span className="muted">{group.hosts?.length || 0} hosts</span>
+                    </h4>
+                    {(group.hosts || []).length > 0 && (
+                      <div className="table-wrap">
+                        <table className="grid">
+                          <thead>
+                            <tr>
+                              <th>Host</th>
+                              <th>Connection</th>
+                              <th style={{ width: '210px' }}>Instance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.hosts.map((host) => {
+                              const linked = inventoryInstances.get(host.name)
+                              const vars = host.vars || {}
+                              const connection = [
+                                vars.ansible_host,
+                                vars.ansible_user,
+                                vars.ansible_port ? `:${vars.ansible_port}` : '',
+                              ].filter(Boolean).join(' · ')
+                              return (
+                                <tr key={host.name}>
+                                  <td><span className="mono">{host.name}</span></td>
+                                  <td className="muted mono">{connection || '—'}</td>
+                                  <td>
+                                    {linked ? (
+                                      <Link className="entity-link" to={`/instances/${linked.id}`}>
+                                        <strong>{linked.name}</strong>
+                                      </Link>
+                                    ) : can('instances', 'create') ? (
+                                      <Link className="btn ghost small" to={registerLink(host.name)}>
+                                        Register instance
+                                      </Link>
+                                    ) : (
+                                      <span className="muted">Not linked</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {(group.children || []).length > 0 && (
+                      <p className="sub muted">Children: {group.children.join(', ')}</p>
+                    )}
+                  </div>
+                ))
+              )}
+            </>
+          )}
+        </div>
+      </details>
+      )}
 
       <h2 className="detail-section-heading">
         <Server size={16} /> Assigned instances

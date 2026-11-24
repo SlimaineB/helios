@@ -89,7 +89,9 @@ git automatically if the cache is unavailable.
 In the UI, open **Applications → New application**. Enter the Git repository
 that contains your Ansible playbook, the branch or tag, and the playbook path
 (for example `site.yml`). Assign it to the instance, then click **Check** or
-wait for the first sync.
+wait for the first sync. For SSH/runner applications, set the inventory path
+too: the application page previews its groups and hosts and offers to register
+an instance for any host that has none.
 
 ### Something went wrong?
 

@@ -329,6 +329,16 @@ export default function Instances() {
     api.downloads().then((d) => setDownloads(d.files || [])).catch(() => setDownloads([]))
   }, [showReg])
 
+  useEffect(() => {
+    if (searchParams.get('register') !== '1') return
+    setRegMode(searchParams.get('mode') === 'ssh' ? 'ssh' : 'agent')
+    setRegInventoryHost(searchParams.get('inventory_host') || '')
+    setRegName(searchParams.get('name') || '')
+    setRegProject(searchParams.get('project') || DEFAULT_PROJECT)
+    setShowReg(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const hubURL = location.origin || `${location.protocol}//${location.host}`
   const hasHubDownload = downloads.some((f) => /^helios-agent-linux-(amd64|arm64)\.tar\.gz$/.test(f.name))
   const installCommand = regResult && hasHubDownload

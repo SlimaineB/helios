@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS applications (
   repo_url   TEXT NOT NULL,
   branch     TEXT NOT NULL DEFAULT 'main',
   path       TEXT NOT NULL DEFAULT 'site.yml',
+  inventory_path TEXT NOT NULL DEFAULT '',
   vars          TEXT NOT NULL DEFAULT '{}',
   autoheal      INTEGER NOT NULL DEFAULT 0,
   sync_interval INTEGER NOT NULL DEFAULT 0,
@@ -277,6 +278,7 @@ CREATE TABLE IF NOT EXISTS applications (
   repo_url   TEXT NOT NULL,
   branch     TEXT NOT NULL DEFAULT 'main',
   path       TEXT NOT NULL DEFAULT 'site.yml',
+  inventory_path TEXT NOT NULL DEFAULT '',
   vars          TEXT NOT NULL DEFAULT '{}',
   autoheal      INTEGER NOT NULL DEFAULT 0,
   sync_interval INTEGER NOT NULL DEFAULT 0,
@@ -609,6 +611,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS sync_interval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS ignore_paths TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS inventory_path TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
@@ -757,6 +760,7 @@ func migrate(db *sql.DB) error {
 		{"applications", "sync_interval", "ALTER TABLE applications ADD COLUMN sync_interval INTEGER NOT NULL DEFAULT 0"},
 		{"applications", "ignore_paths", "ALTER TABLE applications ADD COLUMN ignore_paths TEXT NOT NULL DEFAULT ''"},
 		{"applications", "project", "ALTER TABLE applications ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
+		{"applications", "inventory_path", "ALTER TABLE applications ADD COLUMN inventory_path TEXT NOT NULL DEFAULT ''"},
 		{"instances", "project", "ALTER TABLE instances ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 		{"instances", "region", "ALTER TABLE instances ADD COLUMN region TEXT NOT NULL DEFAULT ''"},
 		{"instances", "tags", "ALTER TABLE instances ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"},
@@ -1560,7 +1564,7 @@ func (s *sqlstore) DeleteInstance(ctx context.Context, id string) error {
 
 // ---- Applications ----
 
-const appCols = `id, name, repo_url, branch, path, vars, autoheal, sync_interval, ignore_paths, project, created_at`
+const appCols = `id, name, repo_url, branch, path, inventory_path, vars, autoheal, sync_interval, ignore_paths, project, created_at`
 
 func scanApp(row interface{ Scan(...any) error }) (model.Application, error) {
 	var (
@@ -1568,7 +1572,7 @@ func scanApp(row interface{ Scan(...any) error }) (model.Application, error) {
 		created string
 	)
 	var autoheal int
-	err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.Vars, &autoheal, &app.SyncInterval, &app.IgnorePaths, &app.Project, &created)
+	err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.InventoryPath, &app.Vars, &autoheal, &app.SyncInterval, &app.IgnorePaths, &app.Project, &created)
 	if err != nil {
 		return app, err
 	}
@@ -1644,8 +1648,8 @@ func (s *sqlstore) CreateApplication(ctx context.Context, in model.Application) 
 		autoheal = 1
 	}
 	id, err := s.insertID(ctx,
-		`INSERT INTO applications (name, repo_url, branch, path, vars, autoheal, sync_interval, ignore_paths, project, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, tm(in.CreatedAt))
+		`INSERT INTO applications (name, repo_url, branch, path, inventory_path, vars, autoheal, sync_interval, ignore_paths, project, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		in.Name, in.RepoURL, in.Branch, in.Path, in.InventoryPath, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, tm(in.CreatedAt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return in, ErrConflict
@@ -1662,8 +1666,8 @@ func (s *sqlstore) UpdateApplication(ctx context.Context, in model.Application) 
 		autoheal = 1
 	}
 	_, err := s.exec(ctx,
-		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, vars=?, autoheal=?, sync_interval=?, ignore_paths=?, project=? WHERE id=?`,
-		in.Name, in.RepoURL, in.Branch, in.Path, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ID)
+		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, inventory_path=?, vars=?, autoheal=?, sync_interval=?, ignore_paths=?, project=? WHERE id=?`,
+		in.Name, in.RepoURL, in.Branch, in.Path, in.InventoryPath, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrConflict

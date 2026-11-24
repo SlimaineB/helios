@@ -1564,6 +1564,7 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 	if in.Path == "" {
 		in.Path = "site.yml"
 	}
+	in.InventoryPath = strings.TrimSpace(in.InventoryPath)
 	if in.Vars == "" {
 		in.Vars = "{}"
 	}
@@ -1663,6 +1664,10 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 	if in.Path == "" {
 		in.Path = old.Path
 	}
+	if _, ok := present["inventory_path"]; !ok {
+		in.InventoryPath = old.InventoryPath
+	}
+	in.InventoryPath = strings.TrimSpace(in.InventoryPath)
 	// Omitted fields keep their stored value: a partial PUT must not silently
 	// clear vars or flip autoheal to false.
 	if _, ok := present["vars"]; !ok || in.Vars == "" {

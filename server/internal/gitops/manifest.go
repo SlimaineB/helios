@@ -219,16 +219,17 @@ func (d Document) Repository() (RepositorySpec, error) {
 
 // ApplicationSpec is the typed spec of an Application manifest.
 type ApplicationSpec struct {
-	Name         string
-	Project      string
-	RepoURL      string
-	RepoRef      string
-	Branch       string
-	Path         string
-	Vars         string
-	AutoHeal     bool
-	SyncInterval int
-	IgnorePaths  string
+	Name          string
+	Project       string
+	RepoURL       string
+	RepoRef       string
+	Branch        string
+	Path          string
+	InventoryPath string
+	Vars          string
+	AutoHeal      bool
+	SyncInterval  int
+	IgnorePaths   string
 }
 
 func (d Document) Application() (ApplicationSpec, error) {
@@ -252,17 +253,22 @@ func (d Document) Application() (ApplicationSpec, error) {
 	if ignore == "" {
 		ignore = str(d.Spec, "ignore_paths")
 	}
+	inventory := str(d.Spec, "inventoryPath")
+	if inventory == "" {
+		inventory = str(d.Spec, "inventory_path")
+	}
 	return ApplicationSpec{
-		Name:         d.Metadata.Name,
-		Project:      d.project(),
-		RepoURL:      repoURL,
-		RepoRef:      repoRef,
-		Branch:       strDefault(d.Spec, "branch", "main"),
-		Path:         strDefault(d.Spec, "path", "site.yml"),
-		Vars:         vars,
-		AutoHeal:     boolean(d.Spec["autoHeal"], boolean(d.Spec["autoheal"], false)),
-		SyncInterval: integer(d.Spec["syncInterval"], integer(d.Spec["sync_interval"], 0)),
-		IgnorePaths:  ignore,
+		Name:          d.Metadata.Name,
+		Project:       d.project(),
+		RepoURL:       repoURL,
+		RepoRef:       repoRef,
+		Branch:        strDefault(d.Spec, "branch", "main"),
+		Path:          strDefault(d.Spec, "path", "site.yml"),
+		InventoryPath: inventory,
+		Vars:          vars,
+		AutoHeal:      boolean(d.Spec["autoHeal"], boolean(d.Spec["autoheal"], false)),
+		SyncInterval:  integer(d.Spec["syncInterval"], integer(d.Spec["sync_interval"], 0)),
+		IgnorePaths:   ignore,
 	}, nil
 }
 

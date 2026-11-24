@@ -95,13 +95,17 @@ func (h HostInfo) Empty() bool {
 }
 
 type Application struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	RepoURL  string `json:"repo_url"`
-	Branch   string `json:"branch"` // target revision: branch, tag, SHA or semver range
-	Path     string `json:"path"`
-	Vars     string `json:"vars"`
-	AutoHeal bool   `json:"autoheal"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	RepoURL string `json:"repo_url"`
+	Branch  string `json:"branch"` // target revision: branch, tag, SHA or semver range
+	Path    string `json:"path"`
+	// InventoryPath is the inventory file or directory inside the repo, used by
+	// runner/SSH execution. Empty means the application cannot drive SSH
+	// instances.
+	InventoryPath string `json:"inventory_path"`
+	Vars          string `json:"vars"`
+	AutoHeal      bool   `json:"autoheal"`
 	// SyncInterval is the per-application check/sync frequency in seconds.
 	// Zero means "inherit the agent's poll interval".
 	SyncInterval int `json:"sync_interval"`

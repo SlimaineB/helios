@@ -23,6 +23,19 @@ An application gets one new optional field:
 `inventory_path` may point at a single file (`inventory/hosts.ini`,
 `inventory/hosts.yml`) or a directory of inventory sources, as Ansible supports.
 
+## Previewing the inventory in the UI
+
+The application page has an **Inventory** panel. The hub reads the static
+inventory from its repo snapshot cache and lists groups, children and hosts with
+their connection variables (`ansible_host`, `ansible_user`, `ansible_port`).
+Values for password/secret/token variables are redacted.
+
+The panel links each host to the instance that uses it as `inventory_host`, and
+offers **Register instance** for hosts that have none. That action opens the SSH
+instance form prefilled with the host name, so operators pick from the real
+inventory instead of typing it. Warnings explain an empty `inventory_path`, a
+disabled snapshot cache, unreadable files or parse errors.
+
 ## Instances map to inventory hosts
 
 An instance in runner/SSH mode does not carry connection details. It carries the
