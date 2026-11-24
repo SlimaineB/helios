@@ -59,10 +59,11 @@ export default function Runners() {
     <section>
       <h1><Terminal size={22} /> Runners</h1>
       <p className="page-intro">
-        Execution backend for <strong>SSH instances</strong>. A persistent{' '}
-        <code>helios-runner</code> runs Ansible over SSH against registered hosts, using the
-        inventory from each application repository. Agent-mode hosts run Ansible locally and do not
-        use a runner.
+        Execution backend for <strong>SSH instances</strong>. Persistent{' '}
+        <code>helios-runner</code> processes run Ansible over SSH against registered hosts, using the
+        inventory from each application repository. Start as many runners as you need: the hub
+        leases each SSH instance to exactly one runner. Agent-mode hosts run Ansible locally and do
+        not use a runner.
       </p>
 
       {!enabled && (
@@ -117,9 +118,9 @@ export default function Runners() {
               </div>
             </div>
             <p className="sub runner-copy">
-              The runner polls <code>/api/v1/runner/instances</code>, leases each SSH instance and
-              starts one Ansible loop per host. It stays registered across checks and reconnects
-              automatically.
+              Each runner polls <code>/api/v1/runner/instances</code>, leases the SSH instances it
+              will own and starts one Ansible loop per host. Leases expire after 90s, so a crashed
+              runner is replaced automatically by the next one.
             </p>
           </div>
         </article>
@@ -220,11 +221,16 @@ HELIOS_SERVER=https://hub.example.com
 HELIOS_RUNNER_TOKEN=...
 HELIOS_RUNNER_SSH_USER=ansible
 HELIOS_RUNNER_SSH_KEY=/etc/helios/runner_id
+# optional: cap instances per runner for even sharding
+HELIOS_RUNNER_MAX_INSTANCES=50
+# optional: stable identity (otherwise generated in the state dir)
+HELIOS_RUNNER_ID=runner-eu-1
 
 helios-runner`}</pre>
           <p className="sub runner-config-note">
-            <Clock size={13} /> Discovery and polling intervals default to 15s and 30s. On Kubernetes,
-            refreshing the runner pod is optional: it is not required for agent-mode hosts.
+            <Clock size={13} /> Discovery and polling intervals default to 15s and 30s. Scale by
+            adding runner processes or pods; <code>HELIOS_RUNNER_MAX_INSTANCES</code> keeps one
+            runner from claiming the whole fleet.
           </p>
         </div>
       </details>

@@ -20,74 +20,59 @@ binary runs on a VM or a Kubernetes pod.
 > reachable through a jump host configured in the inventory (`ProxyJump`)
 > instead.
 
-## Why runners are first-class
+## How multiple runners share the fleet
 
-Different applications need different execution environments: an Ansible
-version, a set of collections, a specific OS or image. A runner therefore
-**declares what it can run**, and the hub only schedules compatible work onto it.
+Runners are horizontally scalable: start as many `helios-runner` processes as
+you need, on VMs, hosts or Kubernetes pods. They all use the same
+`HELIOS_RUNNER_TOKEN`; the hub arbitrates which runner owns which instance.
 
-A runner is a registered object, not a config file on a single host:
+Each runner has a stable identity (`--runner-id`, or one generated and persisted
+in `--state-dir`). It discovers SSH instances from
+`GET /api/v1/runner/instances` and, before starting an instance loop, leases it:
 
-- unique `id` and `name`;
-- a token (see [Security](#security));
-- **tags** (`env=prod`, `site=eu`, `runtime=kubernetes`) for free-form routing;
-- **capabilities**: `ansible` version and the installed `collections`;
-- `capacity` (how many assignments it is willing to hold);
-- `last_seen`, `version`, current load.
+- lease name `runner:instance:<instanceID>`, owner `<runnerID>`;
+- TTL 90 s, renewed on every discovery pass (15 s by default);
+- `AcquireLease` is atomic, so two runners can never run the same instance.
 
-Capabilities are usually baked into the runner image, so a runner's capabilities
-are immutable per image tag.
+If a runner dies, its leases expire and another runner claims them on its next
+pass. On `SIGTERM` a runner releases its leases, so failover is immediate.
 
 ## Scheduling
 
-Work flows **app → instances → compatible runner**:
+Scheduling is **first-come, first-served** in v1:
 
-1. When an application is registered, the operator **selects the instances** it
-   targets (assignments). The application may also declare a
-   `runner_selector`.
-2. For each assignment the hub computes the set of **online, capable runners**
-   with free capacity.
-3. The assignment is **leased** to one eligible runner.
-4. If no compatible runner is online, the assignment stays `pending` with an
-   explicit reason (`no compatible runner`), never a silent no-op.
+1. Every runner lists the SSH instances it could run.
+2. It tries to claim each instance it does not already own.
+3. The hub grants the lease to exactly one runner; the others skip the instance.
+4. A runner that already holds an instance renews its lease instead of claiming
+   it again.
 
-`runner_selector` (on the application) looks like:
-
-```yaml
-runnerSelector:
-  tags: ["env=prod", "site=eu"]
-  ansible: ">=2.16"
-  collections: ["community.general", "ansible.posix"]
-```
-
-A runner matches when **all** required tags are present, its Ansible version
-satisfies the constraint, and every required collection is installed. An empty
-selector matches any runner.
+There are no runner tags, capability constraints or `runner_selector` yet: all
+runners with the token are equivalent. Use `--max-instances` to cap how much of
+the fleet one runner takes.
 
 ## Work units and leases
 
-The unit of work is an **assignment** (`instance × application`). This is the
-only granularity that lets two applications on the same host run on runners with
-different capabilities. A runner executes one assignment at a time in its own
-worker:
+The unit of work is an **instance**: one runner loop owns all applications
+assigned to that SSH host. This keeps the repo mirror, drift state and command
+handling for a host in one place.
 
-- state is keyed by `(instance, application)` — repo mirror, drift state, commit
-  marker;
+- state is keyed by `instance` — repo mirror, drift state, commit marker;
 - reports reuse the existing run/command endpoints, scoped to the instance;
 - commands and autoheal keep their current semantics.
 
 Leases reuse the existing database primitive (`AcquireLease` / `RenewLease` /
 `ReleaseLease` / `ErrLeaseLost`):
 
-- `name = "runner:work:<instanceID>:<appID>"`, `owner = <runnerID>`;
-- short TTL (default 30 s), renewed every ~10 s;
-- `AcquireLease` is atomic, so two runners can never hold the same assignment;
-- losing the lease (`ErrLeaseLost`) stops the local worker immediately.
+- `name = "runner:instance:<instanceID>"`, `owner = <runnerID>`;
+- TTL 90 s, renewed on each discovery tick;
+- `AcquireLease` is atomic, so two runners can never hold the same instance;
+- losing the lease (`ErrLeaseLost`) stops the local instance loop immediately.
 
 ### High availability
 
 - **Failover**: if a runner dies, its leases expire after the TTL and another
-  compatible runner claims them on its next discovery pass.
+  runner claims them on its next discovery pass.
 - **Drain**: on `SIGTERM`, a runner releases all its leases, so failover is
   immediate instead of waiting for the TTL.
 - **No single point of failure**: N runners split the fleet. The hub arbitrates
@@ -99,18 +84,18 @@ Leases reuse the existing database primitive (`AcquireLease` / `RenewLease` /
 
 ### Parallelism and capacity
 
-Two independent budgets:
+Three independent budgets:
 
 | Scope | Knob | Effect |
 |-------|------|--------|
 | Across runners | leases | More runners = more throughput, automatic split |
-| Within a runner | `max_concurrent` | Global cap on simultaneous Ansible processes |
+| Within a runner | `--max-concurrent` | Cap on simultaneous Ansible processes |
+| Per runner | `--max-instances` | Cap on how many SSH instances one runner leases |
 
-`max_concurrent` is a **runner-wide** semaphore shared by every worker. It must
-not be a per-assignment pool, otherwise a runner holding 50 assignments could
-spawn 50 × N processes. Size it around `CPU cores / 2`. A separate
-`max_assignments` bounds how many assignments a runner will lease, so a single
-runner cannot grab the whole fleet at startup.
+`--max-concurrent` is a **runner-wide** semaphore shared by every instance loop.
+`--max-instances` prevents a single runner from grabbing the whole fleet at
+startup; set it to roughly `total SSH instances / number of runners` (plus a
+small margin).
 
 There is **no active rebalancing** in v1: runners take free or expired leases
 and are not stolen back. Rebalancing causes repo-mirror churn and is deferred.
@@ -119,14 +104,12 @@ and are not stolen back. Rebalancing causes repo-mirror churn and is deferred.
 
 A runner is designed to run as a stateless pod:
 
-- identity is taken from the environment (`POD_NAME` plus a random suffix) so
-  each replica is a distinct `runnerID`;
+- set `--runner-id` from the pod name (or let the runner generate one in its
+  ephemeral state directory) so each replica is a distinct `runnerID`;
 - git mirrors and run files live on ephemeral storage and are rebuilt on
   demand — no PVC required;
 - a `Deployment` with N replicas is N runners; HA and parallelism come from the
   leases, with no leader election;
-- the image **is** the capability set (Ansible version + collections), so the
-  capability tags follow the image tag;
 - use a `preStop` hook to release leases and
   `terminationGracePeriodSeconds` long enough for an in-flight run (or rely on
   Ansible idempotency and let another runner re-run it).

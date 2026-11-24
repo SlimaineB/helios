@@ -239,6 +239,55 @@ func (c *Client) ListRunnerInstances(ctx context.Context) ([]RunnerInstance, err
 	return out.Instances, nil
 }
 
+// ClaimRunnerInstance leases an SSH instance to this runner. It returns false
+// when another runner already holds a live lease.
+func (c *Client) ClaimRunnerInstance(ctx context.Context, instanceID, runnerID string) (bool, error) {
+	return c.runnerLease(ctx, http.MethodPost, instanceID, runnerID)
+}
+
+// RenewRunnerInstance extends the lease. False means the lease was lost and
+// the runner must stop the instance loop.
+func (c *Client) RenewRunnerInstance(ctx context.Context, instanceID, runnerID string) (bool, error) {
+	return c.runnerLease(ctx, http.MethodPut, instanceID, runnerID)
+}
+
+// ReleaseRunnerInstance returns the lease so another runner can take over.
+func (c *Client) ReleaseRunnerInstance(ctx context.Context, instanceID, runnerID string) error {
+	_, err := c.runnerLease(ctx, http.MethodDelete, instanceID, runnerID)
+	return err
+}
+
+func (c *Client) runnerLease(ctx context.Context, method, instanceID, runnerID string) (bool, error) {
+	if c.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, method,
+		c.base+"/api/v1/runner/instances/"+url.PathEscape(instanceID)+"/lease", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-Helios-Runner-ID", runnerID)
+	req.Header.Set("User-Agent", "helios-runner")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return true, nil
+	case http.StatusConflict:
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s lease %s: server responded %d: %s",
+			method, instanceID, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+}
+
 // StatusReport is the outcome of a check/apply run.
 type StatusReport struct {
 	AppID        int64          `json:"app_id"`

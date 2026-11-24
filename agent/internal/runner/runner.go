@@ -6,9 +6,12 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +32,12 @@ type Config struct {
 	SSHCommonArgs     string
 	AnsibleBin        string
 	Insecure          bool
+	// RunnerID identifies this runner for instance leases. It is generated and
+	// persisted in StateDir when empty.
+	RunnerID string
+	// MaxInstances caps how many SSH instances one runner claims. Zero means
+	// unlimited.
+	MaxInstances int
 }
 
 type Runner struct {
@@ -68,10 +77,17 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.cfg.StateDir, 0o755); err != nil {
 		return err
 	}
+	id, err := r.resolveRunnerID()
+	if err != nil {
+		return err
+	}
+	r.cfg.RunnerID = id
 	r.log.Info("runner starting",
 		"server", r.cfg.Server,
+		"runner_id", r.cfg.RunnerID,
 		"state_dir", r.cfg.StateDir,
 		"poll", r.cfg.PollInterval.String(),
+		"max_instances", r.cfg.MaxInstances,
 		"ssh_user", r.cfg.SSHUser)
 
 	ticker := time.NewTicker(r.cfg.DiscoverInterval)
@@ -94,14 +110,35 @@ func (r *Runner) reconcile(ctx context.Context) {
 		return
 	}
 	seen := make(map[string]bool, len(insts))
+	var stale []string
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	for _, inst := range insts {
 		if inst.InventoryHost == "" {
 			continue
 		}
 		seen[inst.ID] = true
-		if _, ok := r.agents[inst.ID]; ok {
+		if cancel, ok := r.agents[inst.ID]; ok {
+			ok, err := r.control.RenewRunnerInstance(ctx, inst.ID, r.cfg.RunnerID)
+			if err != nil {
+				r.log.Warn("lease renewal failed", "instance", inst.Name, "error", err)
+				continue
+			}
+			if !ok {
+				r.log.Warn("lease lost; stopping instance", "instance", inst.Name)
+				cancel()
+				delete(r.agents, inst.ID)
+			}
+			continue
+		}
+		if r.cfg.MaxInstances > 0 && len(r.agents) >= r.cfg.MaxInstances {
+			continue
+		}
+		ok, err := r.control.ClaimRunnerInstance(ctx, inst.ID, r.cfg.RunnerID)
+		if err != nil {
+			r.log.Warn("lease claim failed", "instance", inst.Name, "error", err)
+			continue
+		}
+		if !ok {
 			continue
 		}
 		ictx, cancel := context.WithCancel(ctx)
@@ -112,17 +149,56 @@ func (r *Runner) reconcile(ctx context.Context) {
 		if !seen[id] {
 			cancel()
 			delete(r.agents, id)
+			stale = append(stale, id)
+		}
+	}
+	r.mu.Unlock()
+	for _, id := range stale {
+		if err := r.control.ReleaseRunnerInstance(ctx, id, r.cfg.RunnerID); err != nil {
+			r.log.Warn("lease release failed", "instance_id", id, "error", err)
 		}
 	}
 }
 
 func (r *Runner) stopAll() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	ids := make([]string, 0, len(r.agents))
 	for id, cancel := range r.agents {
 		cancel()
-		delete(r.agents, id)
+		ids = append(ids, id)
 	}
+	r.agents = map[string]context.CancelFunc{}
+	r.mu.Unlock()
+	for _, id := range ids {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := r.control.ReleaseRunnerInstance(ctx, id, r.cfg.RunnerID); err != nil {
+			r.log.Warn("lease release failed", "instance_id", id, "error", err)
+		}
+		cancel()
+	}
+}
+
+// resolveRunnerID returns the configured runner id, or a stable generated one
+// persisted in the state directory so restarts keep their leases.
+func (r *Runner) resolveRunnerID() (string, error) {
+	if id := strings.TrimSpace(r.cfg.RunnerID); id != "" {
+		return id, nil
+	}
+	path := filepath.Join(r.cfg.StateDir, "runner-id")
+	if b, err := os.ReadFile(path); err == nil {
+		if id := strings.TrimSpace(string(b)); id != "" {
+			return id, nil
+		}
+	}
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	id := "runner-" + hex.EncodeToString(buf)
+	if err := os.WriteFile(path, []byte(id+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (r *Runner) runInstance(ctx context.Context, inst client.RunnerInstance) {

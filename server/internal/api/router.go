@@ -128,6 +128,9 @@ func (s *Server) routes() {
 	// Runner (controller-side, shared bearer token). Reuses the agent handlers
 	// so ssh-managed instances get the same drift/autoheal/command semantics.
 	m.HandleFunc("GET /api/v1/runner/instances", s.runnerAuth(s.handleRunnerInstances))
+	m.HandleFunc("POST /api/v1/runner/instances/{id}/lease", s.runnerAuth(s.handleRunnerClaim))
+	m.HandleFunc("PUT /api/v1/runner/instances/{id}/lease", s.runnerAuth(s.handleRunnerRenew))
+	m.HandleFunc("DELETE /api/v1/runner/instances/{id}/lease", s.runnerAuth(s.handleRunnerRelease))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/checkin", s.runnerInstanceAuth(s.handleCheckin))
 	m.HandleFunc("POST /api/v1/runner/instances/{id}/heartbeat", s.runnerInstanceAuth(s.handleHeartbeat))
 	m.HandleFunc("GET /api/v1/runner/instances/{id}/commands/pending", s.runnerInstanceAuth(s.handlePendingCommands))

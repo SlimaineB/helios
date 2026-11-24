@@ -21,6 +21,8 @@ func main() {
 		poll          = flag.Duration("poll-interval", envDuration("HELIOS_RUNNER_POLL_INTERVAL", 30*time.Second), "per-instance drift check interval")
 		discover      = flag.Duration("discover-interval", envDuration("HELIOS_RUNNER_DISCOVER_INTERVAL", 15*time.Second), "instance discovery interval")
 		maxConcurrent = flag.Int("max-concurrent", envInt("HELIOS_RUNNER_MAX_CONCURRENT", 4), "parallel app checks per instance")
+		maxInstances  = flag.Int("max-instances", envInt("HELIOS_RUNNER_MAX_INSTANCES", 0), "maximum SSH instances this runner leases (0 = unlimited)")
+		runnerID      = flag.String("runner-id", env("HELIOS_RUNNER_ID", ""), "stable runner identity for leases (default: generated in state-dir)")
 		sshUser       = flag.String("ssh-user", env("HELIOS_RUNNER_SSH_USER", ""), "SSH user on the managed host (default: current user)")
 		sshKey        = flag.String("ssh-key", env("HELIOS_RUNNER_SSH_KEY", ""), "SSH private key for managed hosts (default: ssh-agent/default keys)")
 		sshArgs       = flag.String("ssh-common-args", env("HELIOS_RUNNER_SSH_COMMON_ARGS", ""), "extra ssh(1) arguments for Ansible")
@@ -53,6 +55,8 @@ func main() {
 		PollInterval:      *poll,
 		DiscoverInterval:  *discover,
 		MaxConcurrentApps: *maxConcurrent,
+		MaxInstances:      *maxInstances,
+		RunnerID:          *runnerID,
 		SSHUser:           *sshUser,
 		SSHKey:            *sshKey,
 		SSHCommonArgs:     *sshArgs,
