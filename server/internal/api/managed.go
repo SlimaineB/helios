@@ -47,6 +47,9 @@ func (s *Server) annotateApplications(ctx context.Context, apps []model.Applicat
 	}
 	for i := range apps {
 		applyManaged(&apps[i].ManagedBy, &apps[i].ManagedByRepoID, owners, gitops.KindApplication, apps[i].Name)
+		// Inventory data can contain SSH credentials. It is served through the
+		// dedicated inventory endpoint, which redacts secrets.
+		apps[i].InventoryData = ""
 	}
 	return nil
 }

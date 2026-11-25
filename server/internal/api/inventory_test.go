@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/slim/helios/server/internal/inventory"
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/repocache"
 )
@@ -102,5 +104,68 @@ func TestApplicationInventoryWithoutPath(t *testing.T) {
 	}
 	if len(out.Warnings) == 0 || out.Enabled {
 		t.Fatalf("inventory = %+v", out)
+	}
+}
+
+func TestHubInventoryEndpoint(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	data := `{"groups":[{"name":"web","vars":{"ansible_password":"hunter2"},"hosts":[{"name":"web-1","vars":{"ansible_host":"10.0.0.11"}}]}]}`
+	app, err := st.CreateApplication(ctx, model.Application{
+		Name: "hub-demo", RepoURL: "https://example.com/repo.git", Branch: "main", Path: "site.yml",
+		InventorySource: model.InventorySourceHub, InventoryData: data, Vars: "{}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications/1/inventory", nil)
+	req.SetPathValue("appId", strconv.FormatInt(app.ID, 10))
+	rec := httptest.NewRecorder()
+	s.handleApplicationInventory(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("inventory: status %d body %s", rec.Code, rec.Body.String())
+	}
+	var out applicationInventory
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.InventorySource != model.InventorySourceHub || !out.Enabled || !out.Editable {
+		t.Fatalf("inventory = %+v", out)
+	}
+	if got := out.Groups[0].Vars["ansible_password"]; got != redactedValue {
+		t.Fatalf("password not redacted: %v", got)
+	}
+
+	body := `{"groups":[{"name":"web","vars":{"ansible_password":"` + redactedValue + `"},"hosts":[{"name":"web-2","vars":{"ansible_host":"10.0.0.12"}}]}]}`
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/applications/1/inventory", strings.NewReader(body))
+	req.SetPathValue("appId", strconv.FormatInt(app.ID, 10))
+	rec = httptest.NewRecorder()
+	s.handleUpdateApplicationInventory(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update inventory: status %d body %s", rec.Code, rec.Body.String())
+	}
+	updated, err := st.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := inventory.ParseJSON(updated.InventoryData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Groups[0].Vars["ansible_password"]; got != "hunter2" {
+		t.Fatalf("secret not preserved: %v", got)
+	}
+	if len(parsed.Groups[0].Hosts) != 1 || parsed.Groups[0].Hosts[0].Name != "web-2" {
+		t.Fatalf("hosts = %+v", parsed.Groups[0].Hosts)
+	}
+
+	bad := `{"groups":[{"name":"web","children":["missing"],"hosts":[]}]}`
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/applications/1/inventory", strings.NewReader(bad))
+	req.SetPathValue("appId", strconv.FormatInt(app.ID, 10))
+	rec = httptest.NewRecorder()
+	s.handleUpdateApplicationInventory(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid inventory: status %d body %s", rec.Code, rec.Body.String())
 	}
 }

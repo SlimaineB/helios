@@ -1285,6 +1285,20 @@ details summary { cursor: pointer; color: var(--muted); }
   font-size: 13px;
 }
 .inventory-group h4 .muted { font-size: 12px; font-weight: 500; }
+.inventory-group-edit {
+  padding: .85rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--panel-soft, transparent);
+}
+.inventory-group-head { display: flex; align-items: center; gap: .6rem; margin-bottom: .6rem; }
+.inventory-group-head input { flex: 1 1 auto; font-weight: 600; }
+.inventory-group-edit .two { margin-bottom: .6rem; }
+.inventory-group-edit .grid input { width: 100%; }
+.inventory-group-edit .grid td { padding: .35rem .5rem; }
+.inventory-add-group { display: flex; align-items: center; gap: .6rem; margin-top: .9rem; }
+.inventory-add-group input { flex: 1 1 auto; }
+.inventory-editor-actions { display: flex; justify-content: flex-end; margin-top: .9rem; }
 .detail-section-head { display: flex; align-items: center; gap: 8px; }
 
 .host-setting-bar {

@@ -19,6 +19,7 @@ import (
 	"github.com/slim/helios/server/internal/auth"
 	"github.com/slim/helios/server/internal/envutil"
 	"github.com/slim/helios/server/internal/gitops"
+	"github.com/slim/helios/server/internal/inventory"
 	"github.com/slim/helios/server/internal/metrics"
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/notify"
@@ -1565,6 +1566,24 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 		in.Path = "site.yml"
 	}
 	in.InventoryPath = strings.TrimSpace(in.InventoryPath)
+	in.InventorySource = strings.TrimSpace(in.InventorySource)
+	if in.InventorySource == "" {
+		in.InventorySource = model.InventorySourceRepo
+	}
+	if in.InventorySource != model.InventorySourceRepo && in.InventorySource != model.InventorySourceHub {
+		writeErr(w, http.StatusBadRequest, "inventory_source must be repo or hub")
+		return
+	}
+	if strings.TrimSpace(in.InventoryData) != "" {
+		parsed, perr := inventory.ParseJSON(in.InventoryData)
+		if perr != nil {
+			writeErr(w, http.StatusBadRequest, "invalid inventory_data: "+perr.Error())
+			return
+		}
+		in.InventoryData, _ = inventory.MarshalJSON(parsed)
+	} else if in.InventorySource == model.InventorySourceHub {
+		in.InventoryData, _ = inventory.MarshalJSON(inventory.Result{Groups: []inventory.Group{}})
+	}
 	if in.Vars == "" {
 		in.Vars = "{}"
 	}
@@ -1668,6 +1687,30 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		in.InventoryPath = old.InventoryPath
 	}
 	in.InventoryPath = strings.TrimSpace(in.InventoryPath)
+	if _, ok := present["inventory_source"]; !ok {
+		in.InventorySource = old.InventorySource
+	}
+	in.InventorySource = strings.TrimSpace(in.InventorySource)
+	if in.InventorySource == "" {
+		in.InventorySource = model.InventorySourceRepo
+	}
+	if in.InventorySource != model.InventorySourceRepo && in.InventorySource != model.InventorySourceHub {
+		writeErr(w, http.StatusBadRequest, "inventory_source must be repo or hub")
+		return
+	}
+	if _, ok := present["inventory_data"]; !ok {
+		in.InventoryData = old.InventoryData
+	}
+	if strings.TrimSpace(in.InventoryData) != "" {
+		parsed, perr := inventory.ParseJSON(in.InventoryData)
+		if perr != nil {
+			writeErr(w, http.StatusBadRequest, "invalid inventory_data: "+perr.Error())
+			return
+		}
+		in.InventoryData, _ = inventory.MarshalJSON(parsed)
+	} else if in.InventorySource == model.InventorySourceHub {
+		in.InventoryData, _ = inventory.MarshalJSON(inventory.Result{Groups: []inventory.Group{}})
+	}
 	// Omitted fields keep their stored value: a partial PUT must not silently
 	// clear vars or flip autoheal to false.
 	if _, ok := present["vars"]; !ok || in.Vars == "" {
@@ -2223,6 +2266,10 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		// Merge: legacy vars < app defaults < this host's overrides.
 		if merged, err := mergeVarsJSON(app.Vars, appVars[a.AppID], hostVars[a.AppID]); err == nil {
 			app.Vars = merged
+		}
+		// The hub inventory can carry SSH credentials; only runners need it.
+		if inst.ExecutionMode != "ssh" {
+			app.InventoryData = ""
 		}
 		resp.Applications = append(resp.Applications, app)
 	}

@@ -101,9 +101,15 @@ type Application struct {
 	Branch  string `json:"branch"` // target revision: branch, tag, SHA or semver range
 	Path    string `json:"path"`
 	// InventoryPath is the inventory file or directory inside the repo, used by
-	// runner/SSH execution. Empty means the application cannot drive SSH
-	// instances.
+	// runner/SSH execution when InventorySource is "repo".
 	InventoryPath string `json:"inventory_path"`
+	// InventorySource selects where the runner reads the inventory: "repo"
+	// (default) reads InventoryPath from the app repository, "hub" uses the
+	// inventory edited in Helios (InventoryData).
+	InventorySource string `json:"inventory_source"`
+	// InventoryData is the hub-managed inventory as canonical JSON
+	// ({"groups":[...]}). Only used when InventorySource is "hub".
+	InventoryData string `json:"inventory_data,omitempty"`
 	Vars          string `json:"vars"`
 	AutoHeal      bool   `json:"autoheal"`
 	// SyncInterval is the per-application check/sync frequency in seconds.
@@ -125,6 +131,12 @@ type Application struct {
 	// checkin time (sent to the agent). It is never persisted on the app.
 	Connection *Repository `json:"connection,omitempty"`
 }
+
+// Inventory sources for runner/SSH execution.
+const (
+	InventorySourceRepo = "repo"
+	InventorySourceHub  = "hub"
+)
 
 // Variable is a key/value passed to ansible-playbook -e on every run.
 // Secret ones are write-only: stored, never returned by the API.

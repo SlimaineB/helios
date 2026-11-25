@@ -4,6 +4,7 @@
 package inventory
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -239,6 +240,109 @@ func unquote(s string) string {
 		}
 	}
 	return s
+}
+
+// ParseJSON decodes and validates a hub-managed inventory document.
+func ParseJSON(data string) (Result, error) {
+	var r Result
+	if strings.TrimSpace(data) == "" {
+		return Result{Groups: []Group{}}, nil
+	}
+	if err := json.Unmarshal([]byte(data), &r); err != nil {
+		return Result{}, err
+	}
+	r = Normalize(r)
+	if err := Validate(r); err != nil {
+		return Result{}, err
+	}
+	return r, nil
+}
+
+// MarshalJSON encodes a normalized hub inventory document.
+func MarshalJSON(r Result) (string, error) {
+	r = Normalize(r)
+	b, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// Normalize trims names, sorts groups/hosts/children and drops empty entries.
+func Normalize(r Result) Result {
+	out := Result{Groups: make([]Group, 0, len(r.Groups))}
+	for _, g := range r.Groups {
+		g.Name = strings.TrimSpace(g.Name)
+		if g.Name == "" {
+			continue
+		}
+		if len(g.Vars) == 0 {
+			g.Vars = nil
+		}
+		children := make([]string, 0, len(g.Children))
+		seenChild := map[string]bool{}
+		for _, c := range g.Children {
+			c = strings.TrimSpace(c)
+			if c == "" || seenChild[c] {
+				continue
+			}
+			seenChild[c] = true
+			children = append(children, c)
+		}
+		sort.Strings(children)
+		g.Children = children
+		hosts := make([]Host, 0, len(g.Hosts))
+		for _, h := range g.Hosts {
+			h.Name = strings.TrimSpace(h.Name)
+			if h.Name == "" {
+				continue
+			}
+			if len(h.Vars) == 0 {
+				h.Vars = nil
+			}
+			hosts = append(hosts, h)
+		}
+		sort.Slice(hosts, func(i, j int) bool { return hosts[i].Name < hosts[j].Name })
+		g.Hosts = hosts
+		out.Groups = append(out.Groups, g)
+	}
+	sort.Slice(out.Groups, func(i, j int) bool { return out.Groups[i].Name < out.Groups[j].Name })
+	return out
+}
+
+// Validate rejects inventories the runner cannot render unambiguously.
+func Validate(r Result) error {
+	groups := map[string]bool{}
+	for _, g := range r.Groups {
+		if g.Name == "" {
+			return fmt.Errorf("inventory group name is required")
+		}
+		if groups[g.Name] {
+			return fmt.Errorf("duplicate inventory group %q", g.Name)
+		}
+		groups[g.Name] = true
+		hosts := map[string]bool{}
+		for _, h := range g.Hosts {
+			if h.Name == "" {
+				return fmt.Errorf("group %q has a host without a name", g.Name)
+			}
+			if hosts[h.Name] {
+				return fmt.Errorf("duplicate host %q in group %q", h.Name, g.Name)
+			}
+			hosts[h.Name] = true
+		}
+	}
+	for _, g := range r.Groups {
+		for _, c := range g.Children {
+			if !groups[c] {
+				return fmt.Errorf("group %q references unknown child group %q", g.Name, c)
+			}
+			if c == g.Name {
+				return fmt.Errorf("group %q cannot be its own child", g.Name)
+			}
+		}
+	}
+	return nil
 }
 
 func parseYAML(data []byte) ([]Group, error) {

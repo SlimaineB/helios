@@ -53,6 +53,9 @@ type Target struct {
 	User       string
 	KeyFile    string
 	CommonArgs string
+	// Cleanup removes generated inventory files after the run. Nil for
+	// repo-backed inventories.
+	Cleanup func()
 }
 
 // Runner executes ansible-playbook against a local mirror.

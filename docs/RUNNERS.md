@@ -143,7 +143,7 @@ Removing the tunnel mode deleted:
 
 ## Non-goals (v1)
 
-- dynamic inventory (static file or directory only);
+- external dynamic inventory plugins/scripts and cloud provider sync (hub-managed inventories are supported);
 - per-runner tokens and rotation;
 - active rebalancing / preemption;
 - assignment priorities and queues beyond leases.

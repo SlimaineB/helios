@@ -327,3 +327,55 @@ func TestRunnerInventoryListsSSHInstancesWithoutToken(t *testing.T) {
 		t.Fatalf("instance inventory host = %q", resp.Instances[0].InventoryHost)
 	}
 }
+
+func TestCheckinHubInventoryOnlyForSSH(t *testing.T) {
+	s, st := newTestServer(t)
+	ctx := context.Background()
+	sshInst := createInstance(t, st, "ssh-hub", model.ModeSSH, "web-1")
+	agentInst, err := st.CreateInstance(ctx, model.Instance{
+		ID: "agent-hub", Name: "agent-hub", TokenHash: "hash-agent", ExecutionMode: model.ModeAgent,
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	app, err := st.CreateApplication(ctx, model.Application{
+		Name: "hub-inv", RepoURL: "https://example.com/repo.git", Branch: "main", Path: "site.yml",
+		InventorySource: model.InventorySourceHub,
+		InventoryData:   `{"groups":[{"name":"web","hosts":[{"name":"web-1","vars":{"ansible_password":"hunter2"}}]}]}`,
+		Vars:            "{}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Assign(ctx, sshInst.ID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Assign(ctx, agentInst.ID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	checkin := func(inst model.Instance) checkinResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/checkin", strings.NewReader(`{}`))
+		req = req.WithContext(context.WithValue(req.Context(), ctxInstance, inst))
+		rec := httptest.NewRecorder()
+		s.handleCheckin(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("checkin %s: status %d body %s", inst.ID, rec.Code, rec.Body.String())
+		}
+		var out checkinResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	sshResp := checkin(sshInst)
+	if len(sshResp.Applications) != 1 || sshResp.Applications[0].InventoryData == "" {
+		t.Fatalf("ssh checkin missing hub inventory: %+v", sshResp.Applications)
+	}
+	agentResp := checkin(agentInst)
+	if len(agentResp.Applications) != 1 || agentResp.Applications[0].InventoryData != "" {
+		t.Fatalf("agent checkin leaked hub inventory: %+v", agentResp.Applications)
+	}
+}

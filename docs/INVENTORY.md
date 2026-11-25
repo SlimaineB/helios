@@ -1,34 +1,70 @@
 # Inventory and SSH keys
 
 > **Status: implemented.** This describes the runner (push) mode. The runner
-> reads a standard Ansible inventory from the application repository and
-> connects over SSH; the tunnel behavior has been removed.
+> reads a standard Ansible inventory either from the application repository or
+> from an inventory managed in Helios, then connects over SSH; the tunnel
+> behavior has been removed.
 
 This page covers the **runner (push)** path: how a runner runs a playbook
 against managed hosts using a standard Ansible inventory and SSH, without an
 agent on those hosts.
 
-## Inventory lives in the application repository
+## Inventory sources
+
+An application chooses where its inventory comes from:
+
+| `inventory_source` | Meaning |
+|--------------------|---------|
+| `repo` (default) | Read `inventory_path` from the application repository at run time. |
+| `hub` | Use the inventory edited in Helios (stored in the hub database). |
+
+The source is selected in the application form. The rest of this page applies to
+both sources; differences are called out explicitly.
+
+### Repository inventory
 
 Like the playbook, the inventory is versioned in the application's Git
 repository. This keeps the standard Ansible workflow: the repo contains the
 playbook, `group_vars`, `host_vars` and the inventory.
 
-An application gets one new optional field:
-
 | Field | Meaning |
 |-------|---------|
-| `inventory_path` | Path (file or directory) inside the repo, relative to the repo root. Required for runner/SSH execution. |
+| `inventory_path` | Path (file or directory) inside the repo, relative to the repo root. Required when `inventory_source=repo`. |
 
 `inventory_path` may point at a single file (`inventory/hosts.ini`,
 `inventory/hosts.yml`) or a directory of inventory sources, as Ansible supports.
 
+### Helios-managed inventory
+
+With `inventory_source=hub`, operators edit groups, hosts and variables directly
+in the application page. Helios stores the inventory as a JSON document on the
+application row (`inventory_data`), so it can change without a Git commit.
+This is the "dynamic" path: the hub is the source of truth and the runner renders
+the inventory at run time.
+
+The editor supports:
+
+- groups, nested groups (`children`), and group variables;
+- hosts with arbitrary Ansible connection variables (`ansible_host`,
+  `ansible_user`, `ansible_port`, `ansible_ssh_common_args`, ...);
+- adding/removing groups and hosts inline, with validation before saving.
+
+The runner receives the document at checkin, renders it to a private INI file
+(`0600`), passes `-i <file>` to Ansible, and removes the file after the run.
+Only SSH instances receive the document; pull agents never see hub inventory
+secrets.
+
+The API is `GET`/`PUT /api/v1/applications/{appId}/inventory`. `PUT` accepts
+`{"groups":[...]}` in the same canonical shape returned by `GET`. Values shown as
+`••••••` are restored from the stored inventory on save, so editing a preview
+does not overwrite a secret with the placeholder.
+
 ## Previewing the inventory in the UI
 
-The application page has an **Inventory** panel. The hub reads the static
-inventory from its repo snapshot cache and lists groups, children and hosts with
-their connection variables (`ansible_host`, `ansible_user`, `ansible_port`).
-Values for password/secret/token variables are redacted.
+The application page has an **Inventory** panel. For `repo`, the hub reads the
+static inventory from its repo snapshot cache and lists groups, children and
+hosts. For `hub`, the same panel is an editor. Values for
+password/secret/token variables are redacted in both modes.
 
 The panel links each host to the instance that uses it as `inventory_host`, and
 offers **Register instance** for hosts that have none. That action opens the SSH
@@ -70,7 +106,7 @@ For each assignment the runner executes:
 
 ```sh
 ansible-playbook \
-  -i <repo>/<inventory_path> \
+  -i <repo>/<inventory_path or rendered hub inventory> \
   --limit <inventory_host> \
   --connection ssh \
   --private-key <fetched-key> \
@@ -117,8 +153,11 @@ teams do not expect the reverse.
 
 ## Scope (v1)
 
-- **Static inventory only**: files or directories. Dynamic inventory plugins are
-  out of scope.
+- **Two sources**: repository files/directories or a hub-managed inventory
+  document edited in Helios.
+- External Ansible dynamic inventory plugins/scripts and cloud provider sync are
+  not wired yet; they can later feed the hub inventory without changing the
+  runner contract.
 - One inventory per application; the instance selects its host via
   `inventory_host`.
 - The connection is SSH; `local` and `docker` connections are not supported on
@@ -139,9 +178,6 @@ spec:
   branch: main
   path: ansible/site.yml
   inventoryPath: inventory/hosts.ini
-  runnerSelector:
-    ansible: ">=2.16"
-    collections: ["community.general"]
 ```
 
 Instance: `execution_mode: ssh`, `inventory_host: web-1`,

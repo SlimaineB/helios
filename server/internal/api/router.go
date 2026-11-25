@@ -73,6 +73,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/applications", s.op("applications.get", s.handleListApplications))
 	m.HandleFunc("GET /api/v1/applications/{appId}", s.op("applications.get", s.handleGetApplication))
 	m.HandleFunc("GET /api/v1/applications/{appId}/inventory", s.op("applications.get", s.handleApplicationInventory))
+	m.HandleFunc("PUT /api/v1/applications/{appId}/inventory", s.op("applications.update", s.handleUpdateApplicationInventory))
 	m.HandleFunc("GET /api/v1/application-stats", s.op("applications.get", s.handleApplicationStats))
 	m.HandleFunc("POST /api/v1/applications", s.op("applications.create", s.handleCreateApplication))
 	m.HandleFunc("PUT /api/v1/applications/{appId}", s.op("applications.update", s.handleUpdateApplication))

@@ -56,10 +56,14 @@ type Application struct {
 	// Path is the playbook path inside the repo.
 	Path string `json:"path"`
 	// InventoryPath is the inventory file or directory inside the repo
-	// (runner push mode). Ignored by the local agent.
+	// (runner push mode, source "repo"). Ignored by the local agent.
 	InventoryPath string `json:"inventory_path"`
-	Vars          string `json:"vars"`
-	AutoHeal      bool   `json:"autoheal"`
+	// InventorySource is "repo" or "hub". Hub inventories are sent inline in
+	// InventoryData and rendered by the runner.
+	InventorySource string `json:"inventory_source"`
+	InventoryData   string `json:"inventory_data,omitempty"`
+	Vars            string `json:"vars"`
+	AutoHeal        bool   `json:"autoheal"`
 	// SyncInterval is the per-app check frequency in seconds; 0 means inherit
 	// the agent's global poll interval.
 	SyncInterval int64 `json:"sync_interval"`

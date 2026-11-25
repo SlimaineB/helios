@@ -21,6 +21,7 @@ import (
 	"github.com/slim/helios/agent/internal/config"
 	"github.com/slim/helios/agent/internal/gitops"
 	"github.com/slim/helios/agent/internal/hostinfo"
+	"github.com/slim/helios/agent/internal/inventory"
 	"github.com/slim/helios/agent/internal/metadata"
 )
 
@@ -523,6 +524,9 @@ func (a *Agent) runCheck(ctx context.Context, app client.Application, st *appSta
 		a.report(ctx, app, "check", res, commit, commitMsg, trigger, started, terr)
 		return terr
 	}
+	if target != nil && target.Cleanup != nil {
+		defer target.Cleanup()
+	}
 	res, err := a.runner.Check(ctx, repo, playbook, app.Vars, target)
 	ansible.FilterIgnored(&res, app.IgnorePaths)
 
@@ -563,6 +567,9 @@ func (a *Agent) targetFor(app client.Application, repo *gitops.Repo) (*ansible.T
 	if !a.cfg.InventoryMode {
 		return nil, nil
 	}
+	if strings.TrimSpace(app.InventorySource) == "hub" {
+		return a.hubTarget(app)
+	}
 	inv := strings.TrimSpace(app.InventoryPath)
 	if inv == "" {
 		return nil, fmt.Errorf("application %q has no inventory_path", app.Name)
@@ -579,6 +586,52 @@ func (a *Agent) targetFor(app client.Application, repo *gitops.Repo) (*ansible.T
 		User:       a.cfg.SSHUser,
 		KeyFile:    a.cfg.SSHKey,
 		CommonArgs: a.cfg.SSHCommonArgs,
+	}, nil
+}
+
+// hubTarget writes the hub-managed inventory to a private temporary file and
+// returns a target that removes it once the run finishes.
+func (a *Agent) hubTarget(app client.Application) (*ansible.Target, error) {
+	inv, err := inventory.Parse(app.InventoryData)
+	if err != nil {
+		return nil, fmt.Errorf("application %q has an invalid hub inventory: %w", app.Name, err)
+	}
+	if len(inv.Groups) == 0 {
+		return nil, fmt.Errorf("application %q has an empty hub inventory", app.Name)
+	}
+	dir := a.cfg.StateDir
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create inventory dir: %w", err)
+	}
+	file, err := os.CreateTemp(dir, "inventory-*.ini")
+	if err != nil {
+		return nil, fmt.Errorf("create inventory file: %w", err)
+	}
+	name := file.Name()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(name)
+		return nil, fmt.Errorf("chmod inventory file: %w", err)
+	}
+	if _, err := file.WriteString(inventory.RenderINI(inv)); err != nil {
+		_ = file.Close()
+		_ = os.Remove(name)
+		return nil, fmt.Errorf("write inventory file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(name)
+		return nil, fmt.Errorf("close inventory file: %w", err)
+	}
+	return &ansible.Target{
+		Inventory:  name,
+		Limit:      a.cfg.InventoryHost,
+		User:       a.cfg.SSHUser,
+		KeyFile:    a.cfg.SSHKey,
+		CommonArgs: a.cfg.SSHCommonArgs,
+		Cleanup:    func() { _ = os.Remove(name) },
 	}, nil
 }
 
@@ -621,6 +674,9 @@ func (a *Agent) processCommand(ctx context.Context, cmd client.Command) error {
 		a.report(ctx, app, cmd.Action, ansible.Result{Status: ansible.StatusFailed, Err: terr.Error()},
 			after, msg, "command", started, terr)
 		return terr
+	}
+	if target != nil && target.Cleanup != nil {
+		defer target.Cleanup()
 	}
 	if cmd.Action == "apply" {
 		// Safety: refuse to deploy if the control plane went away after the

@@ -43,6 +43,47 @@ const STATE_LABEL = {
 
 const fmt = (t) => (t ? new Date(t).toLocaleString() : '—')
 
+const varsToText = (vars = {}) => Object.entries(vars || {})
+  .map(([key, value]) => {
+    const text = typeof value === 'string' ? value : JSON.stringify(value)
+    return `${key}=${/\s/.test(text) ? JSON.stringify(text) : text}`
+  })
+  .join(' ')
+
+const textToVars = (text = '') => {
+  const out = {}
+  const re = /([^\s=]+)=("[^"]*"|'[^']*'|\S+)/g
+  let match
+  while ((match = re.exec(text))) {
+    let value = match[2]
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    out[match[1]] = value
+  }
+  return out
+}
+
+const toInventoryDrafts = (groups = []) => (groups || []).map((group) => ({
+  name: group.name || '',
+  varsText: varsToText(group.vars),
+  childrenText: (group.children || []).join(', '),
+  hosts: (group.hosts || []).map((host) => ({
+    name: host.name || '',
+    varsText: varsToText(host.vars),
+  })),
+}))
+
+const toInventoryGroups = (drafts = []) => (drafts || []).map((group) => ({
+  name: group.name.trim(),
+  vars: textToVars(group.varsText),
+  children: group.childrenText.split(',').map((c) => c.trim()).filter(Boolean),
+  hosts: (group.hosts || []).map((host) => ({
+    name: host.name.trim(),
+    vars: textToVars(host.varsText),
+  })),
+}))
+
 export default function ApplicationDetail({
   app,
   stats,
@@ -66,6 +107,9 @@ export default function ApplicationDetail({
   const [inventory, setInventory] = useState(null)
   const [inventoryError, setInventoryError] = useState('')
   const [inventoryLoading, setInventoryLoading] = useState(false)
+  const [draftGroups, setDraftGroups] = useState([])
+  const [newGroup, setNewGroup] = useState('')
+  const [savingInventory, setSavingInventory] = useState(false)
   const readOnly = managedByGitOps(app)
 
   useEffect(() => { setAutoheal(app.autoheal) }, [app.id, app.autoheal])
@@ -74,7 +118,7 @@ export default function ApplicationDetail({
     let cancelled = false
     setInventory(null)
     setInventoryError('')
-    if (!app.inventory_path) {
+    if (!app.inventory_path && app.inventory_source !== 'hub') {
       setInventoryLoading(false)
       return () => { cancelled = true }
     }
@@ -84,7 +128,11 @@ export default function ApplicationDetail({
       .catch((e) => { if (!cancelled) setInventoryError(e.message || 'Failed to load inventory') })
       .finally(() => { if (!cancelled) setInventoryLoading(false) })
     return () => { cancelled = true }
-  }, [app.id])
+  }, [app.id, app.inventory_path, app.inventory_source])
+
+  useEffect(() => {
+    setDraftGroups(toInventoryDrafts(inventory?.groups))
+  }, [inventory])
 
   const toggleAppAutoHeal = async () => {
     if (readOnly || !can('applications', 'update') || toggling) return
@@ -98,6 +146,53 @@ export default function ApplicationDetail({
       setToggling(false)
     }
   }
+  const updateGroup = (index, patch) => {
+    setDraftGroups((groups) => groups.map((group, i) => (i === index ? { ...group, ...patch } : group)))
+  }
+  const removeGroup = (index) => {
+    setDraftGroups((groups) => groups.filter((_, i) => i !== index))
+  }
+  const addGroup = () => {
+    const name = newGroup.trim()
+    if (!name) return
+    if (draftGroups.some((group) => group.name === name)) {
+      toast.error('Group already exists')
+      return
+    }
+    setDraftGroups((groups) => [...groups, { name, varsText: '', childrenText: '', hosts: [] }])
+    setNewGroup('')
+  }
+  const updateHost = (groupIndex, hostIndex, patch) => {
+    setDraftGroups((groups) => groups.map((group, gi) => (
+      gi === groupIndex
+        ? { ...group, hosts: group.hosts.map((host, hi) => (hi === hostIndex ? { ...host, ...patch } : host)) }
+        : group
+    )))
+  }
+  const addHost = (groupIndex) => {
+    setDraftGroups((groups) => groups.map((group, gi) => (
+      gi === groupIndex ? { ...group, hosts: [...group.hosts, { name: '', varsText: '' }] } : group
+    )))
+  }
+  const removeHost = (groupIndex, hostIndex) => {
+    setDraftGroups((groups) => groups.map((group, gi) => (
+      gi === groupIndex ? { ...group, hosts: group.hosts.filter((_, hi) => hi !== hostIndex) } : group
+    )))
+  }
+  const saveInventory = async () => {
+    if (savingInventory) return
+    setSavingInventory(true)
+    try {
+      const data = await api.saveApplicationInventory(app.id, toInventoryGroups(draftGroups))
+      setInventory(data)
+      toast.success('Inventory saved')
+    } catch (e) {
+      toast.error(e.message || 'Failed to save inventory')
+    } finally {
+      setSavingInventory(false)
+    }
+  }
+
   const s = stats || { instances: 0, drift: 0, error: 0, stuck: 0 }
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0
@@ -277,7 +372,7 @@ export default function ApplicationDetail({
         </div>
       </details>
 
-      {app.inventory_path && (
+      {(app.inventory_path || app.inventory_source === 'hub') && (
       <details className="detail-panel">
         <summary>
           <Network size={15} /> Inventory
@@ -289,7 +384,9 @@ export default function ApplicationDetail({
           {inventory && (
             <>
               <div className="inventory-meta">
-                <span className="mono">{inventory.source || 'no inventory_path set'}</span>
+                <span className="mono">
+                  {inventory.inventory_source === 'hub' ? 'Helios-managed' : (inventory.source || 'no inventory_path set')}
+                </span>
                 {inventory.commit && <span className="muted mono">{inventory.commit.slice(0, 7)}</span>}
               </div>
               {(inventory.warnings || []).map((warning) => (
@@ -297,52 +394,59 @@ export default function ApplicationDetail({
                   <AlertTriangle size={14} /> <span>{warning}</span>
                 </div>
               ))}
-              {(inventory.groups || []).length === 0 ? (
-                !inventoryLoading && !(inventory.warnings || []).length && (
-                  <p className="muted">No hosts parsed from this inventory.</p>
-                )
-              ) : (
-                inventory.groups.map((group) => (
-                  <div className="inventory-group" key={group.name}>
-                    <h4>
-                      {group.name}
-                      <span className="muted">{group.hosts?.length || 0} hosts</span>
-                    </h4>
-                    {(group.hosts || []).length > 0 && (
+              {inventory.inventory_source === 'hub' && inventory.editable ? (
+                <div className="inventory-editor">
+                  {draftGroups.length === 0 && <p className="muted">No groups yet. Add one to start.</p>}
+                  {draftGroups.map((group, gi) => (
+                    <div className="inventory-group inventory-group-edit" key={gi}>
+                      <div className="inventory-group-head">
+                        <input value={group.name} onChange={(e) => updateGroup(gi, { name: e.target.value })} placeholder="group name" aria-label="Group name" />
+                        <button type="button" className="btn ghost small" onClick={() => removeGroup(gi)}>Remove group</button>
+                      </div>
+                      <div className="two">
+                        <label>
+                          Children (comma separated)
+                          <input value={group.childrenText} onChange={(e) => updateGroup(gi, { childrenText: e.target.value })} placeholder="base, dbservers" />
+                        </label>
+                        <label>
+                          Group vars (key=value)
+                          <input value={group.varsText} onChange={(e) => updateGroup(gi, { varsText: e.target.value })} placeholder="ansible_user=deploy" />
+                        </label>
+                      </div>
                       <div className="table-wrap">
                         <table className="grid">
                           <thead>
                             <tr>
                               <th>Host</th>
-                              <th>Connection</th>
-                              <th style={{ width: '210px' }}>Instance</th>
+                              <th>Vars (key=value)</th>
+                              <th style={{ width: '180px' }}>Instance</th>
+                              <th style={{ width: '40px' }} />
                             </tr>
                           </thead>
                           <tbody>
-                            {group.hosts.map((host) => {
+                            {group.hosts.map((host, hi) => {
                               const linked = inventoryInstances.get(host.name)
-                              const vars = host.vars || {}
-                              const connection = [
-                                vars.ansible_host,
-                                vars.ansible_user,
-                                vars.ansible_port ? `:${vars.ansible_port}` : '',
-                              ].filter(Boolean).join(' · ')
                               return (
-                                <tr key={host.name}>
-                                  <td><span className="mono">{host.name}</span></td>
-                                  <td className="muted mono">{connection || '—'}</td>
+                                <tr key={hi}>
+                                  <td><input value={host.name} onChange={(e) => updateHost(gi, hi, { name: e.target.value })} placeholder="web-1" aria-label="Host name" /></td>
+                                  <td><input value={host.varsText} onChange={(e) => updateHost(gi, hi, { varsText: e.target.value })} placeholder="ansible_host=10.0.0.11 ansible_user=deploy" aria-label="Host vars" /></td>
                                   <td>
                                     {linked ? (
                                       <Link className="entity-link" to={`/instances/${linked.id}`}>
                                         <strong>{linked.name}</strong>
                                       </Link>
-                                    ) : can('instances', 'create') ? (
+                                    ) : host.name && can('instances', 'create') ? (
                                       <Link className="btn ghost small" to={registerLink(host.name)}>
                                         Register instance
                                       </Link>
                                     ) : (
-                                      <span className="muted">Not linked</span>
+                                      <span className="muted">—</span>
                                     )}
+                                  </td>
+                                  <td>
+                                    <button type="button" className="btn ghost small" title="Remove host" onClick={() => removeHost(gi, hi)}>
+                                      <Trash2 size={13} />
+                                    </button>
                                   </td>
                                 </tr>
                               )
@@ -350,12 +454,80 @@ export default function ApplicationDetail({
                           </tbody>
                         </table>
                       </div>
-                    )}
-                    {(group.children || []).length > 0 && (
-                      <p className="sub muted">Children: {group.children.join(', ')}</p>
-                    )}
+                      <button type="button" className="btn ghost small" onClick={() => addHost(gi)}>Add host</button>
+                    </div>
+                  ))}
+                  <div className="inventory-add-group">
+                    <input value={newGroup} onChange={(e) => setNewGroup(e.target.value)} placeholder="new group name" />
+                    <button type="button" className="btn ghost" onClick={addGroup}>Add group</button>
                   </div>
-                ))
+                  <div className="inventory-editor-actions">
+                    <button type="button" className="btn" onClick={saveInventory} disabled={savingInventory}>
+                      {savingInventory ? 'Saving…' : 'Save inventory'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                (inventory.groups || []).length === 0 ? (
+                  !inventoryLoading && !(inventory.warnings || []).length && (
+                    <p className="muted">No hosts parsed from this inventory.</p>
+                  )
+                ) : (
+                  inventory.groups.map((group) => (
+                    <div className="inventory-group" key={group.name}>
+                      <h4>
+                        {group.name}
+                        <span className="muted">{group.hosts?.length || 0} hosts</span>
+                      </h4>
+                      {(group.hosts || []).length > 0 && (
+                        <div className="table-wrap">
+                          <table className="grid">
+                            <thead>
+                              <tr>
+                                <th>Host</th>
+                                <th>Connection</th>
+                                <th style={{ width: '210px' }}>Instance</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.hosts.map((host) => {
+                                const linked = inventoryInstances.get(host.name)
+                                const vars = host.vars || {}
+                                const connection = [
+                                  vars.ansible_host,
+                                  vars.ansible_user,
+                                  vars.ansible_port ? `:${vars.ansible_port}` : '',
+                                ].filter(Boolean).join(' · ')
+                                return (
+                                  <tr key={host.name}>
+                                    <td><span className="mono">{host.name}</span></td>
+                                    <td className="muted mono">{connection || '—'}</td>
+                                    <td>
+                                      {linked ? (
+                                        <Link className="entity-link" to={`/instances/${linked.id}`}>
+                                          <strong>{linked.name}</strong>
+                                        </Link>
+                                      ) : can('instances', 'create') ? (
+                                        <Link className="btn ghost small" to={registerLink(host.name)}>
+                                          Register instance
+                                        </Link>
+                                      ) : (
+                                        <span className="muted">Not linked</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {(group.children || []).length > 0 && (
+                        <p className="sub muted">Children: {group.children.join(', ')}</p>
+                      )}
+                    </div>
+                  ))
+                )
               )}
             </>
           )}

@@ -130,6 +130,7 @@ export const api = {
   applications: () => request('GET', '/api/v1/applications'),
   application: (id) => request('GET', `/api/v1/applications/${id}`),
   applicationInventory: (id) => request('GET', `/api/v1/applications/${id}/inventory`),
+  saveApplicationInventory: (id, groups) => request('PUT', `/api/v1/applications/${id}/inventory`, { groups }),
   applicationStats: () => request('GET', '/api/v1/application-stats'),
   createApplication: (app) => request('POST', '/api/v1/applications', app),
   updateApplication: (app) => request('PUT', `/api/v1/applications/${app.id}`, app),

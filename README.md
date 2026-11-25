@@ -70,11 +70,12 @@ hub  ──HTTPS poll/results──▶  helios-runner  ──ssh──▶  host 
   log into. It does not need `ansible-core`.
 - The **runner** needs `git`, `ansible-core`, `ansible.posix` and an SSH key for
   the managed-host account. It discovers SSH instances from the hub, reads the
-  inventory from each application repository and runs
+  inventory from each application repository or from the inventory managed in
+  Helios, and runs
   `ansible-playbook -i <inventory> --connection ssh --limit <inventory_host>`.
-- The **hub** needs `HELIOS_RUNNER_TOKEN`. Each application repository declares
-  an `inventory_path`, and each instance is registered with its
-  `inventory_host`.
+- The **hub** needs `HELIOS_RUNNER_TOKEN`. Each application declares either an
+  `inventory_path` (repo source) or a hub-managed inventory, and each instance is
+  registered with its `inventory_host`.
 
 See [Runners](docs/RUNNERS.md) and [Inventory](docs/INVENTORY.md) for the
 scheduling model, capacity and SSH-key handling.
@@ -89,9 +90,10 @@ git automatically if the cache is unavailable.
 In the UI, open **Applications → New application**. Enter the Git repository
 that contains your Ansible playbook, the branch or tag, and the playbook path
 (for example `site.yml`). Assign it to the instance, then click **Check** or
-wait for the first sync. For SSH/runner applications, set the inventory path
-too: the application page previews its groups and hosts and offers to register
-an instance for any host that has none.
+wait for the first sync. For SSH/runner applications, choose an inventory source
+too: the repository `inventory_path`, or **Helios** to edit groups and hosts
+directly in the application page. The panel previews the inventory and offers to
+register an instance for any host that has none.
 
 ### Something went wrong?
 
