@@ -34,30 +34,56 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestListRunnerInstances(t *testing.T) {
-	var gotAuth string
+func TestRunnerJobCalls(t *testing.T) {
+	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		if r.URL.Path != "/api/v1/runner/instances" {
-			t.Errorf("path = %q", r.URL.Path)
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if got := r.Header.Get("Authorization"); got != "Bearer runner-token" {
+			t.Errorf("authorization = %q", got)
 		}
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %s, want GET", r.Method)
+		switch r.URL.Path {
+		case "/api/v1/runner/heartbeat":
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v1/runner/jobs/claim":
+			_, _ = w.Write([]byte(`{"job":{"id":7,"app_id":3,"mode":"check","status":"running"},"application":{"id":3,"name":"web","inventory_source":"hub"}}`))
+		case "/api/v1/runner/jobs/7/result":
+			_, _ = w.Write([]byte(`{"id":11,"app_id":3,"status":"ok"}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			http.NotFound(w, r)
 		}
-		_, _ = w.Write([]byte(`{"instances":[{"id":"web-1","name":"web-1","project":"prod","execution_mode":"ssh","inventory_host":"web-1"}]}`))
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "runner-token", false)
-	insts, err := c.ListRunnerInstances(context.Background())
-	if err != nil {
-		t.Fatalf("ListRunnerInstances: %v", err)
+	c := NewRunner(srv.URL, "runner-token", false)
+	ctx := context.Background()
+	if err := c.RunnerHeartbeat(ctx, "runner-eu", []string{"eu"}, "test"); err != nil {
+		t.Fatalf("heartbeat: %v", err)
 	}
-	if len(insts) != 1 || insts[0].InventoryHost != "web-1" || insts[0].ExecutionMode != "ssh" {
-		t.Fatalf("unexpected instances: %+v", insts)
+	job, ok, err := c.ClaimRunnerJob(ctx, "runner-eu", []string{"eu"})
+	if err != nil || !ok {
+		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
-	if gotAuth != "Bearer runner-token" {
-		t.Fatalf("authorization = %q", gotAuth)
+	if job.ID != 7 || job.Application.ID != 3 || job.Application.Name != "web" {
+		t.Fatalf("unexpected job: %+v", job)
+	}
+	if err := c.ReportRunnerJobResult(ctx, job.ID, "runner-eu", RunnerJobResult{Status: "ok"}); err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	if len(paths) != 3 {
+		t.Fatalf("paths = %v", paths)
+	}
+}
+
+func TestClaimRunnerJobEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	job, ok, err := NewRunner(srv.URL, "t", false).ClaimRunnerJob(context.Background(), "runner-eu", nil)
+	if err != nil || ok || job.ID != 0 {
+		t.Fatalf("job=%+v ok=%v err=%v", job, ok, err)
 	}
 }
 

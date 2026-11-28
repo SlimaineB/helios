@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS applications (
   sync_interval INTEGER NOT NULL DEFAULT 0,
   ignore_paths  TEXT NOT NULL DEFAULT '',
   project       TEXT NOT NULL DEFAULT '',
+  execution_mode TEXT NOT NULL DEFAULT 'agent',
+  runner_tags   TEXT NOT NULL DEFAULT '[]',
   created_at    TEXT NOT NULL
 );
 
@@ -104,6 +106,7 @@ CREATE TABLE IF NOT EXISTS assignment_variables (
 CREATE TABLE IF NOT EXISTS runs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   instance_id   TEXT NOT NULL,
+  runner_id     TEXT NOT NULL DEFAULT '',
   app_id        INTEGER NOT NULL,
   mode          TEXT NOT NULL,
   status        TEXT NOT NULL,
@@ -141,6 +144,32 @@ CREATE TABLE IF NOT EXISTS commands (
 );
 CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
 CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(instance_id, status);
+
+CREATE TABLE IF NOT EXISTS runners (
+  id         TEXT PRIMARY KEY,
+  tags       TEXT NOT NULL DEFAULT '[]',
+  version    TEXT NOT NULL DEFAULT '',
+  last_seen  TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runners_last_seen ON runners(last_seen);
+
+CREATE TABLE IF NOT EXISTS runner_jobs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_id        INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  mode          TEXT NOT NULL,
+  trigger       TEXT NOT NULL DEFAULT '',
+  status        TEXT NOT NULL DEFAULT 'queued',
+  required_tags TEXT NOT NULL DEFAULT '[]',
+  runner_id     TEXT NOT NULL DEFAULT '',
+  run_id        INTEGER NOT NULL DEFAULT 0,
+  error         TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL,
+  claimed_at    TEXT,
+  finished_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_status ON runner_jobs(status, id);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_app ON runner_jobs(app_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS projects (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,6 +317,8 @@ CREATE TABLE IF NOT EXISTS applications (
   sync_interval INTEGER NOT NULL DEFAULT 0,
   ignore_paths  TEXT NOT NULL DEFAULT '',
   project       TEXT NOT NULL DEFAULT '',
+  execution_mode TEXT NOT NULL DEFAULT 'agent',
+  runner_tags   TEXT NOT NULL DEFAULT '[]',
   created_at    TEXT NOT NULL
 );
 
@@ -337,6 +368,7 @@ CREATE TABLE IF NOT EXISTS assignment_variables (
 CREATE TABLE IF NOT EXISTS runs (
   id            BIGSERIAL PRIMARY KEY,
   instance_id   TEXT NOT NULL,
+  runner_id     TEXT NOT NULL DEFAULT '',
   app_id        BIGINT NOT NULL,
   mode          TEXT NOT NULL,
   status        TEXT NOT NULL,
@@ -374,6 +406,32 @@ CREATE TABLE IF NOT EXISTS commands (
 );
 CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
 CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(instance_id, status);
+
+CREATE TABLE IF NOT EXISTS runners (
+  id         TEXT PRIMARY KEY,
+  tags       TEXT NOT NULL DEFAULT '[]',
+  version    TEXT NOT NULL DEFAULT '',
+  last_seen  TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runners_last_seen ON runners(last_seen);
+
+CREATE TABLE IF NOT EXISTS runner_jobs (
+  id            BIGSERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  mode          TEXT NOT NULL,
+  trigger       TEXT NOT NULL DEFAULT '',
+  status        TEXT NOT NULL DEFAULT 'queued',
+  required_tags TEXT NOT NULL DEFAULT '[]',
+  runner_id     TEXT NOT NULL DEFAULT '',
+  run_id        INTEGER NOT NULL DEFAULT 0,
+  error         TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL,
+  claimed_at    TEXT,
+  finished_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_status ON runner_jobs(status, id);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_app ON runner_jobs(app_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS projects (
   id            BIGSERIAL PRIMARY KEY,
@@ -618,6 +676,8 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS inventory_path TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS inventory_source TEXT NOT NULL DEFAULT 'repo'`,
 		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS inventory_data TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'agent'`,
+		`ALTER TABLE applications ADD COLUMN IF NOT EXISTS runner_tags TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
@@ -628,6 +688,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS host_info TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
+		`ALTER TABLE runs ADD COLUMN IF NOT EXISTS runner_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := conn.ExecContext(ctx, ddl); err != nil {
 			return fmt.Errorf("postgres migrate: %w", err)
@@ -769,6 +830,8 @@ func migrate(db *sql.DB) error {
 		{"applications", "inventory_path", "ALTER TABLE applications ADD COLUMN inventory_path TEXT NOT NULL DEFAULT ''"},
 		{"applications", "inventory_source", "ALTER TABLE applications ADD COLUMN inventory_source TEXT NOT NULL DEFAULT 'repo'"},
 		{"applications", "inventory_data", "ALTER TABLE applications ADD COLUMN inventory_data TEXT NOT NULL DEFAULT ''"},
+		{"applications", "execution_mode", "ALTER TABLE applications ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent'"},
+		{"applications", "runner_tags", "ALTER TABLE applications ADD COLUMN runner_tags TEXT NOT NULL DEFAULT '[]'"},
 		{"instances", "project", "ALTER TABLE instances ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 		{"instances", "region", "ALTER TABLE instances ADD COLUMN region TEXT NOT NULL DEFAULT ''"},
 		{"instances", "tags", "ALTER TABLE instances ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'"},
@@ -779,6 +842,7 @@ func migrate(db *sql.DB) error {
 		{"instances", "host_info", "ALTER TABLE instances ADD COLUMN host_info TEXT NOT NULL DEFAULT '{}'"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
+		{"runs", "runner_id", "ALTER TABLE runs ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output", "ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output_text", "ALTER TABLE runs ADD COLUMN output_text TEXT NOT NULL DEFAULT ''"},
@@ -989,10 +1053,6 @@ func instanceWhere(s *sqlstore, f model.InstanceListFilter) (string, []any) {
 	if f.StuckOnly {
 		where = append(where, `EXISTS (SELECT 1 FROM assignments ast WHERE ast.instance_id=instances.id AND ast.stuck=1)`)
 	}
-	if f.Mode != "" {
-		where = append(where, "instances.execution_mode=?")
-		args = append(args, f.Mode)
-	}
 	online, onlineArgs := instanceOnlineExpr(s, f.Now)
 	if f.OnlineOnly {
 		where = append(where, online)
@@ -1120,10 +1180,9 @@ func (s *sqlstore) InstanceListStats(ctx context.Context, f model.InstanceListFi
 	out := model.InstanceListStats{}
 	where, whereArgs := instanceWhere(s, f)
 	online, onlineArgs := instanceOnlineExpr(s, f.Now)
-	q := `SELECT COUNT(*), COALESCE(SUM(CASE WHEN ` + online + ` THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN execution_mode=? THEN 1 ELSE 0 END),0) FROM instances WHERE ` + where
-	args := append(onlineArgs, model.ModeSSH)
-	args = append(args, whereArgs...)
-	if err := s.queryRow(ctx, q, args...).Scan(&out.Total, &out.Online, &out.SSH); err != nil {
+	q := `SELECT COUNT(*), COALESCE(SUM(CASE WHEN ` + online + ` THEN 1 ELSE 0 END),0) FROM instances WHERE ` + where
+	args := append(onlineArgs, whereArgs...)
+	if err := s.queryRow(ctx, q, args...).Scan(&out.Total, &out.Online); err != nil {
 		return out, wrap(err, "instance stats")
 	}
 	out.Offline = out.Total - out.Online
@@ -1415,25 +1474,6 @@ func (s *sqlstore) DriftAssignmentFacets(ctx context.Context, all bool, projects
 	return out, rows.Err()
 }
 
-// ListRunnerInstances returns every runner-managed (ssh) instance so a runner
-// can discover the hosts it should execute against.
-func (s *sqlstore) ListRunnerInstances(ctx context.Context) ([]model.Instance, error) {
-	rows, err := s.query(ctx, `SELECT `+instanceCols+` FROM instances WHERE execution_mode=? ORDER BY name`, model.ModeSSH)
-	if err != nil {
-		return nil, wrap(err, "list runner instances")
-	}
-	defer rows.Close()
-	out := []model.Instance{}
-	for rows.Next() {
-		inst, err := scanInstance(rows)
-		if err != nil {
-			return nil, wrap(err, "scan runner instance")
-		}
-		out = append(out, inst)
-	}
-	return out, rows.Err()
-}
-
 func (s *sqlstore) InstancesByIDs(ctx context.Context, ids []string) ([]model.Instance, error) {
 	out := []model.Instance{}
 	if len(ids) == 0 {
@@ -1476,7 +1516,7 @@ func (s *sqlstore) GetInstanceByToken(ctx context.Context, tokenHash string) (mo
 func (s *sqlstore) CreateInstance(ctx context.Context, in model.Instance) (model.Instance, error) {
 	in.CreatedAt = nowCtx(ctx)
 	if in.ExecutionMode == "" {
-		in.ExecutionMode = model.ModeAgent
+		in.ExecutionMode = model.ExecAgent
 	}
 	if in.Tags == nil {
 		in.Tags = []string{}
@@ -1572,19 +1612,24 @@ func (s *sqlstore) DeleteInstance(ctx context.Context, id string) error {
 
 // ---- Applications ----
 
-const appCols = `id, name, repo_url, branch, path, inventory_path, inventory_source, inventory_data, vars, autoheal, sync_interval, ignore_paths, project, created_at`
+const appCols = `id, name, repo_url, branch, path, inventory_path, inventory_source, inventory_data, vars, autoheal, sync_interval, ignore_paths, project, execution_mode, runner_tags, created_at`
 
 func scanApp(row interface{ Scan(...any) error }) (model.Application, error) {
 	var (
-		app     model.Application
-		created string
+		app        model.Application
+		created    string
+		runnerTags string
 	)
 	var autoheal int
-	err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.InventoryPath, &app.InventorySource, &app.InventoryData, &app.Vars, &autoheal, &app.SyncInterval, &app.IgnorePaths, &app.Project, &created)
+	err := row.Scan(&app.ID, &app.Name, &app.RepoURL, &app.Branch, &app.Path, &app.InventoryPath, &app.InventorySource, &app.InventoryData, &app.Vars, &autoheal, &app.SyncInterval, &app.IgnorePaths, &app.Project, &app.ExecutionMode, &runnerTags, &created)
 	if err != nil {
 		return app, err
 	}
 	app.AutoHeal = autoheal != 0
+	app.RunnerTags = decodeTags(runnerTags)
+	if app.ExecutionMode == "" {
+		app.ExecutionMode = model.ExecAgent
+	}
 	app.CreatedAt = parseTime(created)
 	return app, nil
 }
@@ -1656,8 +1701,8 @@ func (s *sqlstore) CreateApplication(ctx context.Context, in model.Application) 
 		autoheal = 1
 	}
 	id, err := s.insertID(ctx,
-		`INSERT INTO applications (name, repo_url, branch, path, inventory_path, inventory_source, inventory_data, vars, autoheal, sync_interval, ignore_paths, project, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		in.Name, in.RepoURL, in.Branch, in.Path, in.InventoryPath, in.InventorySource, in.InventoryData, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, tm(in.CreatedAt))
+		`INSERT INTO applications (name, repo_url, branch, path, inventory_path, inventory_source, inventory_data, vars, autoheal, sync_interval, ignore_paths, project, execution_mode, runner_tags, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		in.Name, in.RepoURL, in.Branch, in.Path, in.InventoryPath, in.InventorySource, in.InventoryData, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ExecutionMode, encodeTags(in.RunnerTags), tm(in.CreatedAt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return in, ErrConflict
@@ -1674,8 +1719,8 @@ func (s *sqlstore) UpdateApplication(ctx context.Context, in model.Application) 
 		autoheal = 1
 	}
 	_, err := s.exec(ctx,
-		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, inventory_path=?, inventory_source=?, inventory_data=?, vars=?, autoheal=?, sync_interval=?, ignore_paths=?, project=? WHERE id=?`,
-		in.Name, in.RepoURL, in.Branch, in.Path, in.InventoryPath, in.InventorySource, in.InventoryData, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ID)
+		`UPDATE applications SET name=?, repo_url=?, branch=?, path=?, inventory_path=?, inventory_source=?, inventory_data=?, vars=?, autoheal=?, sync_interval=?, ignore_paths=?, project=?, execution_mode=?, runner_tags=? WHERE id=?`,
+		in.Name, in.RepoURL, in.Branch, in.Path, in.InventoryPath, in.InventorySource, in.InventoryData, in.Vars, autoheal, in.SyncInterval, in.IgnorePaths, in.Project, in.ExecutionMode, encodeTags(in.RunnerTags), in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrConflict
@@ -2278,7 +2323,7 @@ func boolInt(b bool) int {
 // ---- Runs ----
 
 // runColsLight excludes the (potentially large) output column.
-const runColsLight = `id, instance_id, app_id, mode, status, trigger, commit_before, commit_after, commit_msg, summary, changed_tasks, output_tail, started_at, finished_at`
+const runColsLight = `id, instance_id, runner_id, app_id, mode, status, trigger, commit_before, commit_after, commit_msg, summary, changed_tasks, output_tail, started_at, finished_at`
 const runColsFull = runColsLight + `, output, output_text, output_diff, resources`
 
 // runWhere builds the shared WHERE clause for runs queries.
@@ -2393,7 +2438,7 @@ func scanRunLight(row interface{ Scan(...any) error }) (model.Run, error) {
 		summary, ct string
 		start, end  string
 	)
-	err := row.Scan(&r.ID, &r.InstanceID, &r.AppID, &r.Mode, &r.Status, &r.Trigger,
+	err := row.Scan(&r.ID, &r.InstanceID, &r.RunnerID, &r.AppID, &r.Mode, &r.Status, &r.Trigger,
 		&r.CommitBefore, &r.CommitAfter, &r.CommitMsg, &summary, &ct, &r.OutputTail, &start, &end)
 	if err != nil {
 		return r, err
@@ -2412,7 +2457,7 @@ func scanRunFull(row interface{ Scan(...any) error }) (model.Run, error) {
 		resources   string
 		start, end  string
 	)
-	err := row.Scan(&r.ID, &r.InstanceID, &r.AppID, &r.Mode, &r.Status, &r.Trigger,
+	err := row.Scan(&r.ID, &r.InstanceID, &r.RunnerID, &r.AppID, &r.Mode, &r.Status, &r.Trigger,
 		&r.CommitBefore, &r.CommitAfter, &r.CommitMsg, &summary, &ct, &r.OutputTail, &start, &end,
 		&r.Output, &r.OutputText, &r.OutputDiff, &resources)
 	if err != nil {
@@ -2428,9 +2473,9 @@ func scanRunFull(row interface{ Scan(...any) error }) (model.Run, error) {
 
 func (s *sqlstore) CreateRun(ctx context.Context, r model.Run) (model.Run, error) {
 	id, err := s.insertID(ctx,
-		`INSERT INTO runs (instance_id, app_id, mode, status, trigger, commit_before, commit_after, commit_msg, summary, changed_tasks, output_tail, output, output_text, output_diff, resources, started_at, finished_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		r.InstanceID, r.AppID, r.Mode, r.Status, r.Trigger, r.CommitBefore, r.CommitAfter, r.CommitMsg,
+		`INSERT INTO runs (instance_id, runner_id, app_id, mode, status, trigger, commit_before, commit_after, commit_msg, summary, changed_tasks, output_tail, output, output_text, output_diff, resources, started_at, finished_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.InstanceID, r.RunnerID, r.AppID, r.Mode, r.Status, r.Trigger, r.CommitBefore, r.CommitAfter, r.CommitMsg,
 		encodeSummary(r.Summary), encodeTasks(r.ChangedTasks), r.OutputTail, truncateStr(r.Output, 64<<10),
 		truncateStr(r.OutputText, 1<<20), truncateStr(r.OutputDiff, 256<<10),
 		encodeResources(r.Resources),
@@ -3414,6 +3459,258 @@ func (s *sqlstore) DeleteExpiredOperatorSessions(ctx context.Context, before tim
 		return fmt.Errorf("delete expired operator sessions: %w", err)
 	}
 	return nil
+}
+
+// ---- Runners and runner jobs ----
+
+const runnerJobCols = `j.id, j.app_id, a.name, a.project, j.mode, j.trigger, j.status, j.required_tags, j.runner_id, j.run_id, j.error, j.created_at, j.claimed_at, j.finished_at`
+
+func scanRunnerJob(row interface{ Scan(...any) error }) (model.RunnerJob, error) {
+	var (
+		job          model.RunnerJob
+		requiredTags string
+		created      string
+		claimed      sql.NullString
+		finished     sql.NullString
+	)
+	err := row.Scan(&job.ID, &job.AppID, &job.AppName, &job.Project, &job.Mode, &job.Trigger, &job.Status,
+		&requiredTags, &job.RunnerID, &job.RunID, &job.Error, &created, &claimed, &finished)
+	if err != nil {
+		return job, err
+	}
+	job.RequiredTags = decodeTags(requiredTags)
+	job.CreatedAt = parseTime(created)
+	if claimed.Valid {
+		job.ClaimedAt = parseTime(claimed.String)
+	}
+	if finished.Valid {
+		job.FinishedAt = parseTime(finished.String)
+	}
+	return job, nil
+}
+
+func (s *sqlstore) UpsertRunner(ctx context.Context, id string, tags []string, version string, now time.Time) error {
+	_, err := s.exec(ctx,
+		`INSERT INTO runners (id, tags, version, last_seen, created_at) VALUES (?,?,?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, version=excluded.version, last_seen=excluded.last_seen`,
+		id, encodeTags(tags), version, tm(now), tm(now))
+	if err != nil {
+		return fmt.Errorf("upsert runner: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) ListRunners(ctx context.Context) ([]model.Runner, error) {
+	rows, err := s.query(ctx, `SELECT id, tags, version, last_seen, created_at FROM runners ORDER BY last_seen DESC, id`)
+	if err != nil {
+		return nil, wrap(err, "list runners")
+	}
+	defer rows.Close()
+	out := []model.Runner{}
+	for rows.Next() {
+		var (
+			r                  model.Runner
+			tags, seen, create string
+		)
+		if err := rows.Scan(&r.ID, &tags, &r.Version, &seen, &create); err != nil {
+			return nil, wrap(err, "scan runner")
+		}
+		r.Tags = decodeTags(tags)
+		r.LastSeen = parseTime(seen)
+		r.CreatedAt = parseTime(create)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlstore) CreateRunnerJob(ctx context.Context, appID int64, mode, trigger string, requiredTags []string) (model.RunnerJob, error) {
+	now := nowCtx(ctx)
+	id, err := s.insertID(ctx,
+		`INSERT INTO runner_jobs (app_id, mode, trigger, status, required_tags, created_at) VALUES (?,?,?,?,?,?)`,
+		appID, mode, trigger, model.JobQueued, encodeTags(requiredTags), tm(now))
+	if err != nil {
+		return model.RunnerJob{}, fmt.Errorf("create runner job: %w", err)
+	}
+	return model.RunnerJob{
+		ID: id, AppID: appID, Mode: mode, Trigger: trigger, Status: model.JobQueued,
+		RequiredTags: requiredTags, CreatedAt: now,
+	}, nil
+}
+
+func (s *sqlstore) DeleteQueuedRunnerJobs(ctx context.Context, appID int64) error {
+	_, err := s.exec(ctx, `DELETE FROM runner_jobs WHERE app_id=? AND status=?`, appID, model.JobQueued)
+	if err != nil {
+		return fmt.Errorf("delete queued runner jobs: %w", err)
+	}
+	return nil
+}
+
+func (s *sqlstore) ListRunnerJobs(ctx context.Context, appID int64, limit int) ([]model.RunnerJob, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `SELECT ` + runnerJobCols + ` FROM runner_jobs j JOIN applications a ON a.id=j.app_id`
+	args := []any{}
+	if appID > 0 {
+		q += ` WHERE j.app_id=?`
+		args = append(args, appID)
+	}
+	q += ` ORDER BY j.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(ctx, q, args...)
+	if err != nil {
+		return nil, wrap(err, "list runner jobs")
+	}
+	defer rows.Close()
+	out := []model.RunnerJob{}
+	for rows.Next() {
+		job, err := scanRunnerJob(rows)
+		if err != nil {
+			return nil, wrap(err, "scan runner job")
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func tagsContainAll(required, provided []string) bool {
+	if len(required) == 0 {
+		return true
+	}
+	have := make(map[string]struct{}, len(provided))
+	for _, t := range provided {
+		have[strings.ToLower(strings.TrimSpace(t))] = struct{}{}
+	}
+	for _, t := range required {
+		if _, ok := have[strings.ToLower(strings.TrimSpace(t))]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *sqlstore) ClaimRunnerJob(ctx context.Context, runnerID string, tags []string, staleBefore time.Time) (model.RunnerJob, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.RunnerJob{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, s.rebind(
+		`UPDATE runner_jobs SET status=?, runner_id='', claimed_at=NULL
+		 WHERE status=? AND claimed_at IS NOT NULL AND claimed_at < ?`),
+		model.JobQueued, model.JobRunning, tm(staleBefore)); err != nil {
+		return model.RunnerJob{}, fmt.Errorf("requeue stale runner jobs: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, s.rebind(
+		`SELECT `+runnerJobCols+` FROM runner_jobs j JOIN applications a ON a.id=j.app_id
+		 WHERE j.status=? AND a.execution_mode=? ORDER BY j.id ASC`), model.JobQueued, model.ExecRunner)
+	if err != nil {
+		return model.RunnerJob{}, fmt.Errorf("list queued runner jobs: %w", err)
+	}
+	var candidates []model.RunnerJob
+	for rows.Next() {
+		job, err := scanRunnerJob(rows)
+		if err != nil {
+			rows.Close()
+			return model.RunnerJob{}, fmt.Errorf("scan queued runner job: %w", err)
+		}
+		candidates = append(candidates, job)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return model.RunnerJob{}, err
+	}
+	rows.Close()
+
+	now := nowCtx(ctx)
+	for _, job := range candidates {
+		if !tagsContainAll(job.RequiredTags, tags) {
+			continue
+		}
+		res, err := tx.ExecContext(ctx, s.rebind(
+			`UPDATE runner_jobs SET status=?, runner_id=?, claimed_at=? WHERE id=? AND status=?`),
+			model.JobRunning, runnerID, tm(now), job.ID, model.JobQueued)
+		if err != nil {
+			return model.RunnerJob{}, fmt.Errorf("claim runner job: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n != 1 {
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			return model.RunnerJob{}, err
+		}
+		job.Status = model.JobRunning
+		job.RunnerID = runnerID
+		job.ClaimedAt = now
+		return job, nil
+	}
+	return model.RunnerJob{}, ErrNotFound
+}
+
+func (s *sqlstore) FinishRunnerJob(ctx context.Context, jobID int64, runnerID, status, errMsg string, run model.Run, now time.Time) (model.Run, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return run, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, s.rebind(
+		`UPDATE runner_jobs SET status=?, error=?, finished_at=? WHERE id=? AND runner_id=? AND status=?`),
+		status, errMsg, tm(now), jobID, runnerID, model.JobRunning)
+	if err != nil {
+		return run, fmt.Errorf("finish runner job: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return run, ErrLeaseLost
+	}
+	var appID int64
+	var mode, trigger string
+	if err := tx.QueryRowContext(ctx, s.rebind(
+		`SELECT app_id, mode, trigger FROM runner_jobs WHERE id=?`), jobID).Scan(&appID, &mode, &trigger); err != nil {
+		return run, fmt.Errorf("load finished runner job: %w", err)
+	}
+	run.AppID = appID
+	run.RunnerID = runnerID
+	run.Mode = mode
+	run.Trigger = trigger
+
+	insert := `INSERT INTO runs (instance_id, runner_id, app_id, mode, status, trigger, commit_before, commit_after, commit_msg, summary, changed_tasks, output_tail, output, output_text, output_diff, resources, started_at, finished_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	args := []any{
+		run.InstanceID, run.RunnerID, run.AppID, run.Mode, run.Status, run.Trigger,
+		run.CommitBefore, run.CommitAfter, run.CommitMsg,
+		encodeSummary(run.Summary), encodeTasks(run.ChangedTasks), run.OutputTail,
+		truncateStr(run.Output, 64<<10), truncateStr(run.OutputText, 1<<20),
+		truncateStr(run.OutputDiff, 256<<10), encodeResources(run.Resources),
+		tm(run.StartedAt), tm(run.FinishedAt),
+	}
+	var runID int64
+	if s.driver == "pgx" {
+		if err := tx.QueryRowContext(ctx, s.rebind(insert+" RETURNING id"), args...).Scan(&runID); err != nil {
+			return run, fmt.Errorf("insert runner run: %w", err)
+		}
+	} else {
+		res, err := tx.ExecContext(ctx, s.rebind(insert), args...)
+		if err != nil {
+			return run, fmt.Errorf("insert runner run: %w", err)
+		}
+		runID, err = res.LastInsertId()
+		if err != nil {
+			return run, fmt.Errorf("runner run id: %w", err)
+		}
+	}
+	run.ID = runID
+	if _, err := tx.ExecContext(ctx, s.rebind(`UPDATE runner_jobs SET run_id=? WHERE id=?`), runID, jobID); err != nil {
+		return run, fmt.Errorf("link runner run: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return run, err
+	}
+	return run, nil
 }
 
 // ---- Leases ----

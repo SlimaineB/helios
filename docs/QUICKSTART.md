@@ -74,11 +74,12 @@ systemctl status helios-agent
 journalctl -u helios-agent -f
 ```
 
-> **Host that should not run Ansible?** When registering, choose **SSH ·
-> managed by a runner** instead. The managed host only needs `sshd` and
-> `python3`; a `helios-runner` runs `ansible-playbook` over SSH using the
-> inventory from the application repository. Nothing is installed on the host.
-> See [Runners](RUNNERS.md) and [Inventory](INVENTORY.md).
+> **Host that should not run Ansible?** Run `helios-runner` on a bastion and
+> mark the application as **runner** mode instead. The managed host only needs
+> `sshd` and `python3`; the runner claims tagged jobs and runs
+> `ansible-playbook` over SSH using the application inventory. Nothing is
+> installed on the host. See [Runners](RUNNERS.md) and
+> [Inventory](INVENTORY.md).
 
 ## 3. Add an application
 
@@ -89,8 +90,9 @@ In the UI, open **Applications → New application** and fill in:
 - the playbook path, for example `site.yml`;
 - optional variables and `autoheal`.
 
-Assign the application to the instance. Click **Check** to run a dry run, or
-**Sync** to apply it now.
+For agent mode, assign the application to the instance. Click **Check** to run
+a dry run, or **Sync** to apply it now. For runner mode, choose `runner_tags`
+and an inventory source, then click **Run** to queue a job.
 
 To manage applications, projects, repositories and assignments from Git
 instead, see [Optional GitOps](GITOPS.md). It is disabled until you register a

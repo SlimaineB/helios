@@ -59,11 +59,6 @@ export default function InstancesCard({ instance, onCheckAll, onApplyAll, onHost
             <Link to={`/instances/${instance.id}`} className="instance-link"><strong>{instance.name}</strong></Link>
           </div>
           <span className="instance-meta">
-            <Badge
-              state={instance.execution_mode === 'ssh' ? 'ssh' : 'agent'}
-              label={instance.execution_mode === 'ssh' ? 'ssh' : 'agent'}
-              small
-            />
             <CopyButton value={String(instance.id)} size="small" title="Copy instance ID" />
             {instance.id} · {instance.project || 'global'}{instance.region ? ` · ${instance.region}` : ''}
             <TagList tags={instance.tags} />

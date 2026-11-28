@@ -1,31 +1,26 @@
-# Inventory and SSH keys
+# Inventory for runner-mode applications
 
-> **Status: implemented.** This describes the runner (push) mode. The runner
-> reads a standard Ansible inventory either from the application repository or
-> from an inventory managed in Helios, then connects over SSH; the tunnel
-> behavior has been removed.
+> **Status: implemented (v1).** A runner executes a playbook against a standard
+> Ansible inventory, over SSH, with no agent on the managed hosts. The old
+> SSH-instance model (one instance per inventory host, leases, per-instance
+> `--limit`) is removed.
 
-This page covers the **runner (push)** path: how a runner runs a playbook
-against managed hosts using a standard Ansible inventory and SSH, without an
-agent on those hosts.
+This page covers the **runner (push)** path: how the runner obtains an inventory
+and how the hub-managed inventory editor works.
 
 ## Inventory sources
 
-An application chooses where its inventory comes from:
+A runner-mode application chooses where its inventory comes from:
 
 | `inventory_source` | Meaning |
 |--------------------|---------|
 | `repo` (default) | Read `inventory_path` from the application repository at run time. |
 | `hub` | Use the inventory edited in Helios (stored in the hub database). |
 
-The source is selected in the application form. The rest of this page applies to
-both sources; differences are called out explicitly.
-
 ### Repository inventory
 
-Like the playbook, the inventory is versioned in the application's Git
-repository. This keeps the standard Ansible workflow: the repo contains the
-playbook, `group_vars`, `host_vars` and the inventory.
+The inventory is versioned in the application's Git repository together with
+the playbook, `group_vars` and `host_vars`.
 
 | Field | Meaning |
 |-------|---------|
@@ -39,8 +34,6 @@ playbook, `group_vars`, `host_vars` and the inventory.
 With `inventory_source=hub`, operators edit groups, hosts and variables directly
 in the application page. Helios stores the inventory as a JSON document on the
 application row (`inventory_data`), so it can change without a Git commit.
-This is the "dynamic" path: the hub is the source of truth and the runner renders
-the inventory at run time.
 
 The editor supports:
 
@@ -49,10 +42,9 @@ The editor supports:
   `ansible_user`, `ansible_port`, `ansible_ssh_common_args`, ...);
 - adding/removing groups and hosts inline, with validation before saving.
 
-The runner receives the document at checkin, renders it to a private INI file
-(`0600`), passes `-i <file>` to Ansible, and removes the file after the run.
-Only SSH instances receive the document; pull agents never see hub inventory
-secrets.
+At claim time the hub sends the document to the runner. The runner renders it to
+a private temporary INI file (`0600`), passes `-i <file>` to Ansible, and removes
+the file after the run. Pull agents never see hub-managed inventory data.
 
 The API is `GET`/`PUT /api/v1/applications/{appId}/inventory`. `PUT` accepts
 `{"groups":[...]}` in the same canonical shape returned by `GET`. Values shown as
@@ -66,26 +58,40 @@ static inventory from its repo snapshot cache and lists groups, children and
 hosts. For `hub`, the same panel is an editor. Values for
 password/secret/token variables are redacted in both modes.
 
-The panel links each host to the instance that uses it as `inventory_host`, and
-offers **Register instance** for hosts that have none. That action opens the SSH
-instance form prefilled with the host name, so operators pick from the real
-inventory instead of typing it. Warnings explain an empty `inventory_path`, a
-disabled snapshot cache, unreadable files or parse errors.
+Warnings explain an empty `inventory_path`, a disabled snapshot cache, unreadable
+files or parse errors.
 
-## Instances map to inventory hosts
+## Invocation
 
-An instance in runner/SSH mode does not carry connection details. It carries the
-name it has **in the inventory**:
+The runner runs the playbook against the inventory as a whole:
 
-| Field | Meaning |
-|-------|---------|
-| `execution_mode` | `ssh` |
-| `inventory_host` | The host name used for `--limit` |
-| `ssh_key_id` | Reference to a hub-managed SSH key |
+```sh
+ansible-playbook \
+  -i <repo>/<inventory_path or rendered hub inventory> \
+  --connection ssh \
+  --private-key <runner SSH key> \
+  --check --diff \
+  -e '<merged vars>' \
+  <playbook>
+```
 
-Everything else about the connection — `ansible_host`, `ansible_user`,
-`ansible_port`, `ansible_ssh_common_args` / `ProxyJump` — belongs to the
-inventory. The hub owns only the **private key**.
+There is no per-instance `--limit`: a runner job targets the application's
+inventory, and one run produces one `runs` row with `runner_id` set. Use
+inventory groups, `hosts:` patterns or `--limit`-style vars inside the playbook
+when a job should touch a subset.
+
+## SSH credentials
+
+SSH credentials belong to the **inventory**, not to a hub-side instance:
+
+- set `ansible_user` / `ansible_ssh_private_key_file` (or
+  `ansible_ssh_common_args`) in the inventory, `group_vars` or `host_vars`;
+- or mount a key on the runner and pass it with `--ssh-key`.
+
+The hub does not store or inject per-instance private keys for runner jobs. Hub
+inventories may still contain passwords or key paths as Ansible variables; they
+are sent only to runners, never to pull agents. Treat a runner as trusted
+infrastructure because it receives application variables and inventory data.
 
 ```ini
 # inventory/hosts.ini
@@ -97,59 +103,19 @@ web-2 ansible_host=10.0.0.12 ansible_user=deploy
 ansible_ssh_common_args=-o ProxyJump=bastion.example.com
 ```
 
-The operator registers an instance with `inventory_host = web-1`, points the
-application at `inventory/hosts.ini`, and assigns one to the other.
-
-## Invocation
-
-For each assignment the runner executes:
-
-```sh
-ansible-playbook \
-  -i <repo>/<inventory_path or rendered hub inventory> \
-  --limit <inventory_host> \
-  --connection ssh \
-  --private-key <fetched-key> \
-  --check --diff \
-  -e '<merged vars>' \
-  <playbook>
-```
-
-`--limit` is the key decision: Helios runs **one assignment at a time**, so each
-instance keeps its own drift state, run history, autoheal and safety checks.
-Helios never runs "the whole inventory" in a single run. Group and `hosts: all`
-plays still work; `--limit` intersects them with the target host.
-
-## SSH key injection
-
-Keys are managed by the hub and encrypted at rest (`secretbox`,
-`HELIOS_SECRET_KEY`):
-
-1. The runner leases an assignment.
-2. It calls the runner-authenticated key endpoint for that instance only.
-3. It writes the key to a `0600` temporary file.
-4. It passes `--private-key <file>` to Ansible.
-5. It wipes the file after the run.
-
-The operator API never returns key material; only the owning runner can fetch a
-key, and only for assignments it holds.
-
 ## Validation
 
-- `inventory_host` **must** exist in the inventory. If it does not, the run is
-  reported as `failed` with an explicit reason — never a silent `ok`.
-- A missing `inventory_path`, an unreadable inventory or a missing `ssh_key_id`
-  fail the assignment the same way.
-- Validation runs on each sync, so an inventory that drifts away from the
-  registered instances is caught on the next check.
+- A missing or unreadable `inventory_path` fails the job with an explicit error.
+- A hub inventory with no groups or hosts is allowed to save, but the run will
+  fail if Ansible cannot match any host.
+- Ansible parse errors are returned in the job result and stored on the run.
 
 ## Variables precedence
 
 Helios variables are passed as extra vars (`-e`), which have the **highest**
 Ansible precedence. They therefore override inventory `group_vars` /
-`host_vars`. Per-host overrides edited in Helios win over the application
-defaults, and both win over the repo's inventory vars. This is documented so
-teams do not expect the reverse.
+`host_vars`. Application variables win over the repo's inventory vars. This is
+documented so teams do not expect the reverse.
 
 ## Scope (v1)
 
@@ -158,8 +124,7 @@ teams do not expect the reverse.
 - External Ansible dynamic inventory plugins/scripts and cloud provider sync are
   not wired yet; they can later feed the hub inventory without changing the
   runner contract.
-- One inventory per application; the instance selects its host via
-  `inventory_host`.
+- One inventory per application.
 - The connection is SSH; `local` and `docker` connections are not supported on
   this path (use the pull agent for local execution).
 
@@ -177,11 +142,10 @@ spec:
   repoURL: https://github.com/acme/web-infra.git
   branch: main
   path: ansible/site.yml
+  executionMode: runner
+  runnerTags: [eu, web]
   inventoryPath: inventory/hosts.ini
 ```
 
-Instance: `execution_mode: ssh`, `inventory_host: web-1`,
-`ssh_key_id: prod-deploy-key`.
-
-See [Runners and the SSH push model](RUNNERS.md) for scheduling, leases,
-capacity and Kubernetes.
+See [Runners and tagged job execution](RUNNERS.md) for scheduling, tags, capacity
+and security.

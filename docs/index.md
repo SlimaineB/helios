@@ -36,9 +36,9 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
   reconcile projects, repositories, applications and assignments.
 - **No inbound SSH to managed hosts** — agents only need outbound HTTPS to
   the hub and read access to Git.
-- **SSH runner** — hosts that should not run Ansible can be registered as
-  *SSH* instances. A `helios-runner` executes Ansible over SSH using the
-  inventory from the application repository; nothing is installed on the host.
+- **Runner mode** — hosts that should not run Ansible stay agentless. A
+  `helios-runner` claims tagged jobs and executes Ansible over SSH using the
+  application inventory; nothing is installed on the host.
 
 ## Architecture
 
@@ -46,7 +46,7 @@ hub and re-apply when needed — like ArgoCD, but for Ansible playbooks.
 |-----------|------|
 | **Hub** | Go API + React dashboard + SQLite/PostgreSQL. Stores desired state, runs, commands and audit history. |
 | **Agent** | One static Go binary per managed host. Polls the hub, clones the playbooks, runs Ansible, reports results. |
-| **Runner** | `helios-runner`: a stateless worker that leases SSH assignments and runs Ansible over SSH. |
+| **Runner** | `helios-runner`: a stateless worker that claims tagged jobs and runs Ansible over SSH. |
 | **Git** | Source of truth for playbooks, inventory and variables. |
 | **Managed hosts** | Machines reconciled by the agents, or reached by a runner over SSH. |
 
@@ -96,7 +96,7 @@ Building from source, running the development demo and tests:
 - [Airgap install](AIRGAP.md) — offline bundles for Debian, Ubuntu and RHEL 9-compatible.
 - [k3s reference](K3S.md) — full cluster walkthrough.
 - [Optional GitOps](GITOPS.md) — manage Helios objects from Git manifests.
-- [Runners and SSH](RUNNERS.md) — the push model: tagged runners, leases, Kubernetes.
+- [Runners](RUNNERS.md) — runner mode: tagged jobs, capacity and security.
 - [Inventory and SSH keys](INVENTORY.md) — run playbooks from a standard inventory.
 - [High availability](HA.md) — run stateless server replicas on PostgreSQL.
 - [Authentication & RBAC](AUTH.md) — local admin, OIDC, ArgoCD-style policies.

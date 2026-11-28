@@ -47,7 +47,7 @@ helios-airgap-v0.1.1-debian12-amd64.tar.gz.sha256
 
 Each bundle contains:
 
-- the matching `helios-server` / `helios-agent` release tarballs;
+- the matching `helios-server`, `helios-agent` and `helios-runner` release tarballs;
 - a local APT or DNF repository with `git`, `python3`, `ca-certificates`,
   `tar`, `curl` and SSH client packages;
 - a self-contained Ansible virtualenv (`ansible-core` + `ansible.posix`);
@@ -116,9 +116,10 @@ for OS packages and the systemd unit. For a no-root setup, make Ansible availabl
 to that user and follow the
 [Rootless install](INSTALL.md#rootless-install-no-root).
 
-Hosts managed as **SSH** instances do not run the agent at all: register them as
-SSH in the hub and run `helios-runner` on a machine that can reach them over
-SSH. See [Runners](RUNNERS.md).
+Agentless hosts do not run the agent at all: run `helios-runner` on a machine
+that can reach them over SSH, mark the application as runner mode with matching
+tags, and choose an inventory source. The bundle includes the runner tarball,
+`helios-runner.service` and `runner.env.example`. See [Runners](RUNNERS.md).
 
 If the host is already provisioned with the required packages and Ansible:
 

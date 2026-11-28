@@ -31,13 +31,22 @@ const (
 	CmdFailed  = "failed"
 )
 
-// Instance execution modes.
+// Application execution modes.
 const (
-	// ModeAgent runs the Helios agent on the managed host (default).
-	ModeAgent = "agent"
-	// ModeSSH keeps the managed host agentless: a runner executes Ansible over
-	// SSH against a host described by an inventory in the application repo.
-	ModeSSH = "ssh"
+	// ExecAgent runs the Helios agent on each assigned managed host (default).
+	ExecAgent = "agent"
+	// ExecRunner runs the playbook from a tagged bastion/runner against the
+	// application inventory. No agent is installed on the target hosts.
+	ExecRunner = "runner"
+)
+
+// Runner job statuses.
+const (
+	JobQueued  = "queued"
+	JobRunning = "running"
+	JobOK      = "ok"
+	JobDrift   = "drift"
+	JobFailed  = "failed"
 )
 
 type Instance struct {
@@ -66,11 +75,9 @@ type Instance struct {
 	// AutoHeal is the host-level auto-apply switch. When false, no application
 	// on this host is applied automatically; drift checks keep running.
 	AutoHeal bool `json:"autoheal"`
-	// ExecutionMode is "agent" (default) or "ssh" (a runner executes Ansible
-	// over SSH using an inventory in the application repo).
-	ExecutionMode string `json:"execution_mode"`
-	// InventoryHost is the instance's host name in the application inventory,
-	// used as `--limit` by the runner (ssh mode only).
+	// ExecutionMode and InventoryHost are retained for databases created by
+	// the old SSH-instance model. New instances are always agent-managed.
+	ExecutionMode string `json:"execution_mode,omitempty"`
 	InventoryHost string `json:"inventory_host,omitempty"`
 	// HostInfo is the last basic host inventory reported by the agent. It is
 	// best-effort (missing values are omitted) and stored as JSON.
@@ -101,7 +108,7 @@ type Application struct {
 	Branch  string `json:"branch"` // target revision: branch, tag, SHA or semver range
 	Path    string `json:"path"`
 	// InventoryPath is the inventory file or directory inside the repo, used by
-	// runner/SSH execution when InventorySource is "repo".
+	// runner execution when InventorySource is "repo".
 	InventoryPath string `json:"inventory_path"`
 	// InventorySource selects where the runner reads the inventory: "repo"
 	// (default) reads InventoryPath from the app repository, "hub" uses the
@@ -120,8 +127,14 @@ type Application struct {
 	// and no longer counts as drift (ArgoCD ignoreDifferences analogue).
 	IgnorePaths string `json:"ignore_paths"`
 	// Project scopes this application (empty = global/default project).
-	Project   string    `json:"project"`
-	CreatedAt time.Time `json:"created_at"`
+	Project string `json:"project"`
+	// ExecutionMode is "agent" (default) or "runner". Runner applications are
+	// executed by a tagged bastion from the runner fleet, not by an agent.
+	ExecutionMode string `json:"execution_mode"`
+	// RunnerTags selects which runners may execute this application. A runner
+	// must advertise every tag. Empty means any runner.
+	RunnerTags []string  `json:"runner_tags"`
+	CreatedAt  time.Time `json:"created_at"`
 	// ManagedBy is the GitOps config repo name when this application is owned by
 	// a config repository. Empty means manually managed. It is read-only for
 	// API/UI clients.
@@ -132,7 +145,7 @@ type Application struct {
 	Connection *Repository `json:"connection,omitempty"`
 }
 
-// Inventory sources for runner/SSH execution.
+// Inventory sources for runner execution.
 const (
 	InventorySourceRepo = "repo"
 	InventorySourceHub  = "hub"
@@ -193,6 +206,35 @@ type Assignment struct {
 	ManagedByRepoID int64  `json:"managed_by_repo_id,omitempty"`
 }
 
+// Runner is a bastion/worker registered with the hub. Runners are stateless
+// and can run on a VM, in Docker or as a Kubernetes pod.
+type Runner struct {
+	ID        string    `json:"id"`
+	Tags      []string  `json:"tags"`
+	Version   string    `json:"version,omitempty"`
+	LastSeen  time.Time `json:"last_seen"`
+	Online    bool      `json:"online"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RunnerJob is one playbook execution assigned to a runner.
+type RunnerJob struct {
+	ID           int64     `json:"id"`
+	AppID        int64     `json:"app_id"`
+	AppName      string    `json:"app_name,omitempty"`
+	Project      string    `json:"project,omitempty"`
+	Mode         string    `json:"mode"`
+	Trigger      string    `json:"trigger,omitempty"`
+	Status       string    `json:"status"`
+	RequiredTags []string  `json:"required_tags"`
+	RunnerID     string    `json:"runner_id,omitempty"`
+	RunID        int64     `json:"run_id,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	ClaimedAt    time.Time `json:"claimed_at,omitempty"`
+	FinishedAt   time.Time `json:"finished_at,omitempty"`
+}
+
 type ChangedTask struct {
 	Task string `json:"task"`
 	Host string `json:"host"`
@@ -201,6 +243,7 @@ type ChangedTask struct {
 type Run struct {
 	ID           int64          `json:"id"`
 	InstanceID   string         `json:"instance_id"`
+	RunnerID     string         `json:"runner_id,omitempty"`
 	AppID        int64          `json:"app_id"`
 	Mode         string         `json:"mode"`
 	Status       string         `json:"status"`
@@ -261,7 +304,6 @@ type InstanceListFilter struct {
 	NotAppID       int64
 	RepoURL        string
 	UnassignedOnly bool
-	Mode           string
 	State          string
 	OnlineOnly     bool
 	StuckOnly      bool
@@ -286,7 +328,6 @@ type InstanceListStats struct {
 	Total   int `json:"total"`
 	Online  int `json:"online"`
 	Offline int `json:"offline"`
-	SSH     int `json:"ssh"`
 	Apps    int `json:"apps"`
 	Synced  int `json:"synced"`
 	Drift   int `json:"drift"`

@@ -266,8 +266,6 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
           <span><span className="legend-dot unknown" />No check</span>
           <span className="legend-divider" />
           <span><span className="legend-line" />Application → host</span>
-          <span className="legend-divider" />
-          <span>SSH hosts run Ansible on a runner</span>
         </div>
         <div className="topology-toolbar-actions">
           {hasExpandable && (
@@ -400,8 +398,8 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                       onFocus={() => setFocus({ kind: 'host', instanceId: inst.id })}
                       onBlur={() => setFocus(null)}
                       onClick={() => navigate(`/instances/${inst.id}`)}
-                      title={`${inst.name} · ${group.app ? `runs ${group.app.name}` : 'no application'} · ${inst.execution_mode === 'ssh' ? 'ssh runner' : 'agent'} · ${stateLabel(aState)}`}
-                      aria-label={`Open ${inst.execution_mode === 'ssh' ? 'ssh' : 'agent'} ${inst.name}`}
+                      title={`${inst.name} · ${group.app ? `runs ${group.app.name}` : 'no application'} · ${stateLabel(aState)}`}
+                      aria-label={`Open ${inst.name}`}
                     >
                       <span className={`topology-agent-icon ${aState}`}>
                         <Server size={18} />
@@ -412,9 +410,6 @@ export default function TopologyView({ instances, emptyMessage = 'No instances t
                           <span className={`status-dot ${online ? 'online' : 'offline'}`} title={online ? 'online' : 'offline'} />
                         </span>
                         <span className="topology-agent-meta">
-                          <span className={`topology-mode-badge ${inst.execution_mode === 'ssh' ? 'is-ssh' : ''}`}>
-                            {inst.execution_mode === 'ssh' ? 'ssh' : 'agent'}
-                          </span>
                           <span className="project-badge">{projectLabel(inst.project)}</span>
                           <span>{plural((inst.apps || []).length, 'app')}</span>
                           {inst.version && <span>v{inst.version}</span>}

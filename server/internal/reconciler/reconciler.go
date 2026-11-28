@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -492,6 +493,7 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 			SyncInterval:    spec.SyncInterval,
 			IgnorePaths:     spec.IgnorePaths,
 			Project:         spec.Project,
+			ExecutionMode:   model.ExecAgent,
 		})
 		if err != nil {
 			return err
@@ -512,7 +514,9 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 	next.SyncInterval = spec.SyncInterval
 	next.IgnorePaths = spec.IgnorePaths
 	next.Project = spec.Project
-	if next == existing {
+	next.ExecutionMode = model.ExecAgent
+	next.RunnerTags = nil
+	if reflect.DeepEqual(next, existing) {
 		summary["unchanged"]++
 		return nil
 	}

@@ -56,29 +56,40 @@ create system users, install packages, or write outside the agent state
 dir/home, opt that host into root with a systemd override:
 `systemctl edit helios-agent` and set `User=root`/`Group=root`.
 
-### Remote servers without installing Ansible: SSH runner
+### Remote servers without installing an agent: runners
 
-Register the instance as *SSH · managed by a runner* instead. Nothing is
-installed on the managed host; a **`helios-runner` process runs Ansible over
-SSH**:
+For hosts that must stay agentless, run a **`helios-runner`** on a
+controller/bastion and mark the application as **runner mode**. Nothing is
+installed on the managed hosts and Ansible runs over SSH:
 
 ```text
-hub  ──HTTPS poll/results──▶  helios-runner  ──ssh──▶  host sshd:22
+hub  ──HTTPS heartbeat/claim/result──▶  helios-runner  ──ssh──▶  inventory hosts
 ```
 
-- The **managed host** needs `sshd`, `python3` and an SSH account the runner can
-  log into. It does not need `ansible-core`.
-- The **runner** needs `git`, `ansible-core`, `ansible.posix` and an SSH key for
-  the managed-host account. It discovers SSH instances from the hub, reads the
-  inventory from each application repository or from the inventory managed in
-  Helios, and runs
-  `ansible-playbook -i <inventory> --connection ssh --limit <inventory_host>`.
-- The **hub** needs `HELIOS_RUNNER_TOKEN`. Each application declares either an
-  `inventory_path` (repo source) or a hub-managed inventory, and each instance is
-  registered with its `inventory_host`.
+- The **managed hosts** need `sshd`, `python3` and an SSH account the runner can
+  log into. They do not need the agent or `ansible-core`.
+- The **runner** needs `git`, `ansible-core`, `ansible.posix` and the SSH
+  identity used by the inventories. It advertises tags (for example
+  `--tags eu,web`), claims matching jobs and reports the result.
+- The **hub** needs `HELIOS_RUNNER_TOKEN`. Each runner-mode application declares
+  `runner_tags` and an inventory source: a repo `inventory_path` or a
+  hub-managed inventory edited in Helios.
 
-See [Runners](docs/RUNNERS.md) and [Inventory](docs/INVENTORY.md) for the
-scheduling model, capacity and SSH-key handling.
+Runners are stateless workers: any runner with the required tags can take the
+next queued job, and jobs are requeued if a runner disappears. Start one or more
+processes per network segment; no leader election is required.
+
+```sh
+HELIOS_SERVER=https://hub.example.com \
+HELIOS_RUNNER_TOKEN='...' \
+HELIOS_RUNNER_TAGS=eu,web \
+HELIOS_RUNNER_SSH_KEY=/etc/helios/runner_id \
+helios-runner
+```
+
+See [Runners](docs/RUNNERS.md) and [Inventory](docs/INVENTORY.md) for the job
+lifecycle, tags, capacity and security. Runner mode v1 does not auto-heal or
+schedule drift checks; use the agent for those.
 
 **Large fleet?** Enable the hub's [repo snapshot cache](docs/INSTALL.md#repo-snapshot-cache)
 so agents download one immutable tarball per commit instead of cloning the same
@@ -89,11 +100,11 @@ git automatically if the cache is unavailable.
 
 In the UI, open **Applications → New application**. Enter the Git repository
 that contains your Ansible playbook, the branch or tag, and the playbook path
-(for example `site.yml`). Assign it to the instance, then click **Check** or
-wait for the first sync. For SSH/runner applications, choose an inventory source
-too: the repository `inventory_path`, or **Helios** to edit groups and hosts
-directly in the application page. The panel previews the inventory and offers to
-register an instance for any host that has none.
+(for example `site.yml`). For agent mode, assign it to instances and click
+**Check** (or wait for the first sync). For runner mode, choose
+`runner_tags` and an inventory source: the repository `inventory_path`, or
+**Helios** to edit groups and hosts directly in the application page, then click
+**Run** to queue a job.
 
 ### Something went wrong?
 

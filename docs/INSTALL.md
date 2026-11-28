@@ -3,14 +3,15 @@
 Helios has two parts:
 
 1. **Hub** — Go server + React UI + database. Runs on one host or in Kubernetes.
-2. **Execution side** — an agent per managed host, or a **runner** for SSH
-   instances. The agent clones the assigned playbooks, runs
-   `ansible-playbook --check`, reports drift and can apply on demand. SSH
-   instances are managed by a runner over SSH; nothing is installed on the host.
+2. **Execution side** — an agent per managed host, or a **runner** for
+   runner-mode applications. The agent clones the assigned playbooks, runs
+   `ansible-playbook --check`, reports drift and can apply on demand. A runner
+   claims tagged jobs from the hub and runs Ansible over SSH; nothing is
+   installed on the managed hosts.
 
 The hub itself never needs SSH access to the managed hosts. Agents only need
-outbound HTTPS to the hub and read access to the git repositories. SSH
-instances are reached by a runner, which needs SSH access to those hosts.
+outbound HTTPS to the hub and read access to the git repositories. Managed
+hosts reached by a runner need an SSH account for that runner.
 
 ## Requirements
 
@@ -24,7 +25,7 @@ instances are reached by a runner, which needs SSH access to those hosts.
 | Hub exposure | HTTPS recommended (reverse proxy or `-tls-cert`/`-tls-key`) |
 | Agent | Linux amd64/arm64, `git`, `ansible-core` + `ansible.posix` |
 | Runner | Linux amd64/arm64, `git`, `ansible-core`, `ansible.posix`, `openssh-client` |
-| Network | Agent → hub HTTPS; agent → git repo HTTPS/SSH; runner → managed host SSH |
+| Network | Agent → hub HTTPS; agent → git repo HTTPS/SSH; runner → hub HTTPS; runner → managed host SSH |
 
 Docker is only needed for the container path. The server and agent are static Go
 binaries. The published server image already includes `git` and
@@ -343,8 +344,7 @@ sudo ./deploy/install-agent.sh --server https://hub.example.com \
 ```
 
 Useful flags: `--instance-id`, `--autoheal 0|1`, `--max-concurrent N`,
-`--poll-interval 30s`, `--state-dir /var/lib/helios`. For hosts managed over
-SSH, see [SSH runner](#ssh-runner).
+`--poll-interval 30s`, `--state-dir /var/lib/helios`. For agentless hosts, see [Runner mode](#runner-mode-agentless-targets).
 
 ### Rootless install (no root)
 
@@ -452,38 +452,35 @@ mirror and one Ansible process per check.
 
 ---
 
-## SSH runner
+## Runner mode (agentless targets)
 
-Use this for hosts that should not run Ansible, or that only allow outbound
-connections. Nothing is installed on the managed host: a **runner** leases the
-SSH assignment and runs the same Ansible checks/applies over SSH. The UI calls
-this **SSH** mode.
+Use this for hosts that should not run the agent or Ansible, or that only allow
+inbound SSH. Nothing is installed on the managed host: a **runner** claims a
+tagged job from the hub and runs the playbook over SSH.
 
 The managed host needs `sshd`, `python3` and an account the runner can log into.
 Install `ansible-core`, `ansible.posix` and `git` on the runner, not on the host.
 
-Traffic path: `runner → ssh → managed host sshd:22`.
+Traffic path: `runner → ssh → managed host sshd:22`, plus outbound HTTPS from
+the runner to the hub.
 
 ```text
-┌────────────────────┐   HTTPS poll / results   ┌──────────────────────┐
-│ Helios hub         │ ◀──────────────────────▶ │ Runner               │
-│ control plane      │                          │ helios-runner        │
-└────────────────────┘                          └──────────┬───────────┘
-                                                           │ ssh
-                                                           ▼
-                                              ┌──────────────────────┐
-                                              │ Managed host         │
-                                              │ sshd :22 · python3   │
-                                              └──────────────────────┘
+┌────────────────────┐   HTTPS heartbeat/claim/result   ┌──────────────────────┐
+│ Helios hub         │ ◀──────────────────────────────▶ │ Runner               │
+│ control plane      │                                  │ helios-runner        │
+└────────────────────┘                                  └──────────┬───────────┘
+                                                                   │ ssh
+                                                                   ▼
+                                                      ┌──────────────────────┐
+                                                      │ Managed host         │
+                                                      │ sshd :22 · python3   │
+                                                      └──────────────────────┘
 ```
 
-The UI shows the mode on every instance (`agent` or `ssh`), provides a **Mode**
-filter on the Instances page, and marks SSH hosts in the **Topology** view. The
-instance detail page shows the inventory host.
-
-Both Applications and Instances open in **Topology** by default. Use the
-**Topology / Cards / List** switch in the toolbar to change the view; the choice
-is remembered in the browser.
+Applications choose their execution mode. Instances are always agent-managed;
+runner mode is configured on the application (`execution_mode: runner`) with
+`runner_tags` and an inventory source. The Runners page shows the fleet and the
+job queue.
 
 ### 1. Configure the hub
 
@@ -507,30 +504,31 @@ sudo install -m 0644 deploy/helios-runner.service /etc/systemd/system/helios-run
 sudo install -d -m 0750 -o helios-runner -g helios-runner /etc/helios
 sudo install -m 0600 -o helios-runner -g helios-runner ./runner_id /etc/helios/runner_id
 sudo install -m 0640 -o root -g helios-runner deploy/runner.env.example /etc/helios/runner.env
-sudo editor /etc/helios/runner.env   # HELIOS_SERVER, HELIOS_RUNNER_TOKEN, SSH user/key
+sudo editor /etc/helios/runner.env   # HELIOS_SERVER, HELIOS_RUNNER_TOKEN, tags, SSH user/key
 sudo systemctl daemon-reload
 sudo systemctl enable --now helios-runner
 ```
 
 `HELIOS_RUNNER_SSH_USER` is the account on the **managed host**. Authorize
-`runner_id` in that account's `~/.ssh/authorized_keys`. The runner discovers
-SSH instances from the hub and starts one execution loop per instance; it marks
-an instance online after a successful check-in.
+`runner_id` in that account's `~/.ssh/authorized_keys`. The runner advertises
+its `HELIOS_RUNNER_TAGS` and claims matching queued jobs; it is stateless, so
+any runner with the right tags can take the next job.
 
-### 3. Register the instance
+### 3. Configure the application
 
-In **Instances → Register**, choose **SSH · managed by a runner** and enter the
-**inventory host** (the address the runner connects to and the Ansible
-`--limit`). Assign applications whose repository contains an `inventory_path`;
-see [Inventory](INVENTORY.md).
+In **Applications**, set the execution mode to **runner**, choose
+`runner_tags`, and pick an inventory source: a repository `inventory_path` or a
+hub-managed inventory edited in the application page. Then click **Run** to
+queue a `check` or `apply` job. See [Runners](RUNNERS.md) and
+[Inventory](INVENTORY.md).
 
-From then on, checks, applies, drift state and commands are identical to agent
-mode. Nothing is installed on the managed host.
+Runner mode v1 does not auto-heal or schedule drift checks; those remain agent
+features. Jobs that outlive their runner are requeued after 30 minutes.
 
-> The runner holds SSH keys for managed hosts and the shared runner token can
-> act on every SSH instance. Run it on a dedicated host, restrict
-> `HELIOS_RUNNER_TOKEN`, keep the runner key per-runner, and serve the hub over
-> HTTPS.
+> The runner holds SSH credentials for managed hosts and the shared runner
+> token can act on every runner-mode application. Run it on a dedicated host,
+> restrict `HELIOS_RUNNER_TOKEN`, keep the runner key per-runner, and serve the
+> hub over HTTPS.
 
 ---
 
@@ -594,7 +592,7 @@ history.
 - [ ] Back up the database volume before the first upgrade.
 - [ ] Restrict the hub port/API to your network.
 - [ ] Install agents on the managed hosts; assign apps and run a first check.
-- [ ] For SSH instances, run a runner and add `inventory_path` to the app repositories (see [SSH runner](#ssh-runner)).
+- [ ] For agentless targets, run a runner, mark the app as runner mode with tags, and add an inventory source (see [Runner mode](#runner-mode-agentless-targets)).
 - [ ] Enable the repo snapshot cache for larger fleets (see Repo snapshot cache).
 - [ ] Configure `HELIOS_WEBHOOK_URL` and scrape `/metrics` if you need alerts.
 - [ ] Review the **Settings** page for webhook, retention and secret-key status.
@@ -609,10 +607,10 @@ history.
   system users, install packages, or write outside the agent state dir/home.
   Treat the hub and instance tokens as highly privileged.
 - The agent is **fail-closed**: it refuses applies if the hub is unreachable.
-- The runner holds SSH keys for managed hosts and the shared runner token can
-  act on every SSH instance. Run it on a dedicated host, restrict
-  `HELIOS_RUNNER_TOKEN`, keep the runner key per-runner, and serve the hub over
-  HTTPS. The managed host only needs an SSH account for the runner and
+- The runner holds SSH credentials for managed hosts and the shared runner
+  token can act on every runner-mode application. Run it on a dedicated host,
+  restrict `HELIOS_RUNNER_TOKEN`, keep the runner key per-runner, and serve the
+  hub over HTTPS. The managed host only needs an SSH account for the runner and
   `python3`; it never executes playbooks.
 - Secret application variables are redacted by the API, but Ansible output can
   still contain values from your playbooks. Use lookups (SSM/Vault) for real

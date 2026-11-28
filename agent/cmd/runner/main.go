@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,14 +18,13 @@ func main() {
 	var (
 		server        = flag.String("server", env("HELIOS_SERVER", ""), "Helios hub URL, e.g. https://hub.example.com")
 		token         = flag.String("token", env("HELIOS_RUNNER_TOKEN", ""), "runner bearer token")
-		stateDir      = flag.String("state-dir", env("HELIOS_RUNNER_STATE_DIR", "/var/lib/helios/runner"), "where repo mirrors and run files live")
-		poll          = flag.Duration("poll-interval", envDuration("HELIOS_RUNNER_POLL_INTERVAL", 30*time.Second), "per-instance drift check interval")
-		discover      = flag.Duration("discover-interval", envDuration("HELIOS_RUNNER_DISCOVER_INTERVAL", 15*time.Second), "instance discovery interval")
-		maxConcurrent = flag.Int("max-concurrent", envInt("HELIOS_RUNNER_MAX_CONCURRENT", 4), "parallel app checks per instance")
-		maxInstances  = flag.Int("max-instances", envInt("HELIOS_RUNNER_MAX_INSTANCES", 0), "maximum SSH instances this runner leases (0 = unlimited)")
-		runnerID      = flag.String("runner-id", env("HELIOS_RUNNER_ID", ""), "stable runner identity for leases (default: generated in state-dir)")
-		sshUser       = flag.String("ssh-user", env("HELIOS_RUNNER_SSH_USER", ""), "SSH user on the managed host (default: current user)")
-		sshKey        = flag.String("ssh-key", env("HELIOS_RUNNER_SSH_KEY", ""), "SSH private key for managed hosts (default: ssh-agent/default keys)")
+		stateDir      = flag.String("state-dir", env("HELIOS_RUNNER_STATE_DIR", "/var/lib/helios/runner"), "where repo mirrors and temp inventories live")
+		poll          = flag.Duration("poll-interval", envDuration("HELIOS_RUNNER_POLL_INTERVAL", 10*time.Second), "heartbeat and job claim interval")
+		tags          = flag.String("tags", env("HELIOS_RUNNER_TAGS", ""), "comma-separated job tags, e.g. eu,prod,linux")
+		maxConcurrent = flag.Int("max-concurrent", envInt("HELIOS_RUNNER_MAX_CONCURRENT", 2), "parallel playbook runs on this runner")
+		runnerID      = flag.String("runner-id", env("HELIOS_RUNNER_ID", ""), "stable runner identity (default: generated in state-dir)")
+		sshUser       = flag.String("ssh-user", env("HELIOS_RUNNER_SSH_USER", ""), "default SSH user when the inventory does not set one")
+		sshKey        = flag.String("ssh-key", env("HELIOS_RUNNER_SSH_KEY", ""), "SSH private key mounted on the runner")
 		sshArgs       = flag.String("ssh-common-args", env("HELIOS_RUNNER_SSH_COMMON_ARGS", ""), "extra ssh(1) arguments for Ansible")
 		ansibleBin    = flag.String("ansible-bin", env("HELIOS_RUNNER_ANSIBLE_BIN", "ansible-playbook"), "ansible-playbook binary")
 		insecure      = flag.Bool("insecure", envBool("HELIOS_INSECURE"), "skip TLS verification (testing only)")
@@ -49,19 +49,18 @@ func main() {
 	}
 
 	cfg := runner.Config{
-		Server:            *server,
-		Token:             *token,
-		StateDir:          *stateDir,
-		PollInterval:      *poll,
-		DiscoverInterval:  *discover,
-		MaxConcurrentApps: *maxConcurrent,
-		MaxInstances:      *maxInstances,
-		RunnerID:          *runnerID,
-		SSHUser:           *sshUser,
-		SSHKey:            *sshKey,
-		SSHCommonArgs:     *sshArgs,
-		AnsibleBin:        *ansibleBin,
-		Insecure:          *insecure,
+		Server:        *server,
+		Token:         *token,
+		StateDir:      *stateDir,
+		PollInterval:  *poll,
+		Tags:          splitTags(*tags),
+		MaxConcurrent: *maxConcurrent,
+		RunnerID:      *runnerID,
+		SSHUser:       *sshUser,
+		SSHKey:        *sshKey,
+		SSHCommonArgs: *sshArgs,
+		AnsibleBin:    *ansibleBin,
+		Insecure:      *insecure,
 	}
 	r := runner.New(cfg, log)
 
@@ -71,6 +70,16 @@ func main() {
 		log.Error("runner stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func splitTags(raw string) []string {
+	var out []string
+	for _, tag := range strings.Split(raw, ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 func env(name, def string) string {

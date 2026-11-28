@@ -52,7 +52,6 @@ type Store interface {
 	CountDriftAssignments(ctx context.Context, f model.AssignmentFilter) (int, error)
 	DriftAssignmentStats(ctx context.Context, f model.AssignmentFilter) (model.AssignmentStats, error)
 	DriftAssignmentFacets(ctx context.Context, all bool, projects []string) (model.AssignmentFacets, error)
-	ListRunnerInstances(ctx context.Context) ([]model.Instance, error)
 	CountInstances(ctx context.Context) (int, error)
 	// Scoped variants restrict by project names (RBAC visibility).
 	ListInstancesScoped(ctx context.Context, projects []string, limit, offset int) ([]model.Instance, error)
@@ -218,6 +217,15 @@ type Store interface {
 	GetOperatorSession(ctx context.Context, tokenHash string) (model.OperatorSession, error)
 	DeleteOperatorSession(ctx context.Context, tokenHash string) error
 	DeleteExpiredOperatorSessions(ctx context.Context, before time.Time) error
+
+	// Runners (tagged bastion fleet) and their playbook jobs.
+	UpsertRunner(ctx context.Context, id string, tags []string, version string, now time.Time) error
+	ListRunners(ctx context.Context) ([]model.Runner, error)
+	CreateRunnerJob(ctx context.Context, appID int64, mode, trigger string, requiredTags []string) (model.RunnerJob, error)
+	DeleteQueuedRunnerJobs(ctx context.Context, appID int64) error
+	ListRunnerJobs(ctx context.Context, appID int64, limit int) ([]model.RunnerJob, error)
+	ClaimRunnerJob(ctx context.Context, runnerID string, tags []string, staleBefore time.Time) (model.RunnerJob, error)
+	FinishRunnerJob(ctx context.Context, jobID int64, runnerID, status, errMsg string, run model.Run, now time.Time) (model.Run, error)
 
 	// Leases coordinate background work across server replicas.
 	AcquireLease(ctx context.Context, name, owner string, ttl time.Duration) (bool, error)

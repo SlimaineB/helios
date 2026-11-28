@@ -13,6 +13,8 @@ const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/
 
 export default function ApplicationCard({ app, stats, repo, focused, can, onEdit, onDelete, onVars, onHistory, onCheckAll, onApplyAll }) {
   const s = { ...EMPTY, ...(stats || {}) }
+  const isRunner = app.execution_mode === 'runner'
+  const tags = (app.runner_tags || []).join(' · ')
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0
     ? 'failed'
@@ -21,17 +23,19 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
       : s.instances === 0 || s.synced < s.instances
         ? 'unknown'
         : 'ok'
-  const healthLabel = unhealthy > 0
-    ? `${unhealthy} failed`
-    : s.drift > 0
-      ? `${s.drift} drifted`
-      : s.instances === 0
-        ? 'Unassigned'
-        : s.synced === s.instances
-          ? 'Synced'
-          : `${s.synced}/${s.instances} synced`
+  const healthLabel = isRunner
+    ? 'Runner mode'
+    : unhealthy > 0
+      ? `${unhealthy} failed`
+      : s.drift > 0
+        ? `${s.drift} drifted`
+        : s.instances === 0
+          ? 'Unassigned'
+          : s.synced === s.instances
+            ? 'Synced'
+            : `${s.synced}/${s.instances} synced`
 
-  const canRun = s.instances > 0 && can('commands', 'create')
+  const canRun = (isRunner || s.instances > 0) && can('commands', 'create')
   const readOnly = managedByGitOps(app)
   const menu = [
     { label: 'View nodes', icon: Network, to: `/instances?app=${app.id}` },
@@ -66,6 +70,7 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
         <div className="card-actions">
           <span className="project-badge">{projectLabel(app.project)}</span>
           <GitOpsBadge obj={app} />
+          {isRunner && <span className="runner-mode-tag accent">runner</span>}
           <HealthBadge state={health} label={healthLabel} size={16} />
           <QuickMenu label={`Actions for ${app.name}`} items={menu} />
         </div>
@@ -74,9 +79,9 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
       <div className="card-body">
         <div className="kpi-row">
           <div className="kpi">
-            <label>Nodes</label>
-            <strong>{s.instances}</strong>
-            <span>{s.synced} synced{s.unknown ? ` · ${s.unknown} unknown` : ''}</span>
+            <label>{isRunner ? 'Dispatch' : 'Nodes'}</label>
+            <strong>{isRunner ? 'Fleet' : s.instances}</strong>
+            <span>{isRunner ? (tags || 'any runner') : `${s.synced} synced${s.unknown ? ` · ${s.unknown} unknown` : ''}`}</span>
           </div>
           <div className="kpi">
             <label>Drift</label>
@@ -85,8 +90,8 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
           </div>
           <div className="kpi">
             <label>Auto-heal</label>
-            <strong>{app.autoheal ? 'On' : 'Off'}</strong>
-            <span>{s.autoheal}/{s.instances} hosts</span>
+            <strong>{isRunner ? 'n/a' : app.autoheal ? 'On' : 'Off'}</strong>
+            <span>{isRunner ? 'runner v1' : `${s.autoheal}/${s.instances} hosts`}</span>
           </div>
         </div>
 
@@ -120,7 +125,7 @@ export default function ApplicationCard({ app, stats, repo, focused, can, onEdit
         <AutoHealChip
           enabled={!!app.autoheal}
           scope="app"
-          label={app.autoheal ? `auto-heal · ${s.autoheal}/${s.instances} hosts` : 'auto-heal off'}
+          label={isRunner ? 'runner mode · no auto-heal' : app.autoheal ? `auto-heal · ${s.autoheal}/${s.instances} hosts` : 'auto-heal off'}
           reason={app.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
         />
         <div className="actions">

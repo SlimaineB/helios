@@ -58,10 +58,6 @@ const TERMS = [
     definition: 'A Git repository that declares projects, applications and assignments. Reconciling it updates Helios; owned objects get a GitOps badge and are read-only in the UI.',
   },
   {
-    term: 'SSH instance',
-    definition: 'A host managed by a runner: the runner runs Ansible over SSH using the inventory from the application repository. Nothing is installed on the host.',
-  },
-  {
     term: 'Rollback',
     definition: 'Pins an assignment to a previous commit and applies it again. Track branch resumes normal revision tracking.',
   },

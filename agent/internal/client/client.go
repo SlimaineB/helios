@@ -25,6 +25,7 @@ type Client struct {
 	prefix         string
 	http           *http.Client
 	requestTimeout time.Duration
+	userAgent      string
 }
 
 func New(base, token string, insecure bool) *Client {
@@ -36,14 +37,15 @@ func New(base, token string, insecure bool) *Client {
 		prefix:         "/api/v1/agent",
 		http:           &http.Client{Transport: tr, Timeout: 10 * time.Minute},
 		requestTimeout: controlPlaneTimeout,
+		userAgent:      "helios-agent",
 	}
 }
 
-// NewRunner returns a client that speaks the runner API for one managed
-// instance.
-func NewRunner(base, token, instanceID string, insecure bool) *Client {
+// NewRunner returns a client that speaks the runner job API. Runners are
+// stateless workers: they heartbeat, claim a tagged job and report its result.
+func NewRunner(base, token string, insecure bool) *Client {
 	c := New(base, token, insecure)
-	c.prefix = "/api/v1/runner/instances/" + instanceID
+	c.userAgent = "helios-runner"
 	return c
 }
 
@@ -132,7 +134,7 @@ func (c *Client) Snapshot(ctx context.Context, appID int64, current string) (Sna
 		return Snapshot{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("User-Agent", "helios-agent")
+	req.Header.Set("User-Agent", c.userAgent)
 	if current != "" {
 		req.Header.Set("If-None-Match", `"`+current+`"`)
 	}
@@ -221,75 +223,106 @@ func (c *Client) PendingCommands(ctx context.Context) (bool, error) {
 	return out.Pending, nil
 }
 
-// RunnerInstance is one managed instance discovered by a runner.
-type RunnerInstance struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Project       string `json:"project"`
-	ExecutionMode string `json:"execution_mode"`
-	InventoryHost string `json:"inventory_host"`
+// RunnerJob is one playbook execution claimed by a runner.
+type RunnerJob struct {
+	ID           int64       `json:"id"`
+	AppID        int64       `json:"app_id"`
+	AppName      string      `json:"app_name,omitempty"`
+	Mode         string      `json:"mode"`
+	Trigger      string      `json:"trigger,omitempty"`
+	Status       string      `json:"status"`
+	RequiredTags []string    `json:"required_tags"`
+	Application  Application `json:"application"`
 }
 
-type runnerInstancesOK struct {
-	Instances []RunnerInstance `json:"instances"`
+type runnerJobClaim struct {
+	Job         RunnerJob   `json:"job"`
+	Application Application `json:"application"`
 }
 
-// ListRunnerInstances returns every runner-managed (ssh) instance.
-func (c *Client) ListRunnerInstances(ctx context.Context) ([]RunnerInstance, error) {
-	var out runnerInstancesOK
-	if err := c.do(ctx, http.MethodGet, "/api/v1/runner/instances", nil, &out); err != nil {
-		return nil, err
-	}
-	return out.Instances, nil
+// RunnerHeartbeat registers the runner and refreshes its liveness and tags.
+func (c *Client) RunnerHeartbeat(ctx context.Context, id string, tags []string, version string) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/runner/heartbeat", map[string]any{
+		"runner_id": id, "tags": tags, "version": version,
+	}, nil)
 }
 
-// ClaimRunnerInstance leases an SSH instance to this runner. It returns false
-// when another runner already holds a live lease.
-func (c *Client) ClaimRunnerInstance(ctx context.Context, instanceID, runnerID string) (bool, error) {
-	return c.runnerLease(ctx, http.MethodPost, instanceID, runnerID)
-}
-
-// RenewRunnerInstance extends the lease. False means the lease was lost and
-// the runner must stop the instance loop.
-func (c *Client) RenewRunnerInstance(ctx context.Context, instanceID, runnerID string) (bool, error) {
-	return c.runnerLease(ctx, http.MethodPut, instanceID, runnerID)
-}
-
-// ReleaseRunnerInstance returns the lease so another runner can take over.
-func (c *Client) ReleaseRunnerInstance(ctx context.Context, instanceID, runnerID string) error {
-	_, err := c.runnerLease(ctx, http.MethodDelete, instanceID, runnerID)
-	return err
-}
-
-func (c *Client) runnerLease(ctx context.Context, method, instanceID, runnerID string) (bool, error) {
+// ClaimRunnerJob returns the next queued job whose tags match. ok is false when
+// the queue is empty for this runner.
+func (c *Client) ClaimRunnerJob(ctx context.Context, id string, tags []string) (RunnerJob, bool, error) {
 	if c.requestTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.requestTimeout)
 		defer cancel()
 	}
-	req, err := http.NewRequestWithContext(ctx, method,
-		c.base+"/api/v1/runner/instances/"+url.PathEscape(instanceID)+"/lease", nil)
+	body, err := json.Marshal(map[string]any{"runner_id": id, "tags": tags})
 	if err != nil {
-		return false, err
+		return RunnerJob{}, false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/v1/runner/jobs/claim", bytes.NewReader(body))
+	if err != nil {
+		return RunnerJob{}, false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("X-Helios-Runner-ID", runnerID)
-	req.Header.Set("User-Agent", "helios-runner")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return false, err
+		return RunnerJob{}, false, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch resp.StatusCode {
-	case http.StatusOK, http.StatusNoContent:
-		return true, nil
-	case http.StatusConflict:
-		return false, nil
+	case http.StatusNoContent:
+		return RunnerJob{}, false, nil
+	case http.StatusOK:
+		var out runnerJobClaim
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return RunnerJob{}, false, err
+		}
+		out.Job.Application = out.Application
+		return out.Job, true, nil
 	default:
-		return false, fmt.Errorf("%s lease %s: server responded %d: %s",
-			method, instanceID, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return RunnerJob{}, false, fmt.Errorf("claim job: server responded %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
+}
+
+// RunnerJobResult is the outcome of a claimed job.
+type RunnerJobResult struct {
+	Status       string         `json:"status"`
+	Error        string         `json:"error,omitempty"`
+	CommitBefore string         `json:"commit_before,omitempty"`
+	CommitAfter  string         `json:"commit_after,omitempty"`
+	CommitMsg    string         `json:"commit_msg,omitempty"`
+	Summary      map[string]int `json:"summary,omitempty"`
+	ChangedTasks []ChangedTask  `json:"changed_tasks,omitempty"`
+	OutputTail   string         `json:"output_tail,omitempty"`
+	Output       string         `json:"output,omitempty"`
+	OutputText   string         `json:"output_text,omitempty"`
+	OutputDiff   string         `json:"diff,omitempty"`
+	Resources    []Resource     `json:"resources,omitempty"`
+	StartedAt    time.Time      `json:"started_at"`
+	FinishedAt   time.Time      `json:"finished_at"`
+}
+
+func (c *Client) ReportRunnerJobResult(ctx context.Context, jobID int64, runnerID string, result RunnerJobResult) error {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/runner/jobs/%d/result", jobID), map[string]any{
+		"runner_id":     runnerID,
+		"status":        result.Status,
+		"error":         result.Error,
+		"commit_before": result.CommitBefore,
+		"commit_after":  result.CommitAfter,
+		"commit_msg":    result.CommitMsg,
+		"summary":       result.Summary,
+		"changed_tasks": result.ChangedTasks,
+		"output_tail":   result.OutputTail,
+		"output":        result.Output,
+		"output_text":   result.OutputText,
+		"diff":          result.OutputDiff,
+		"resources":     result.Resources,
+		"started_at":    result.StartedAt,
+		"finished_at":   result.FinishedAt,
+	}, nil)
 }
 
 // StatusReport is the outcome of a check/apply run.
@@ -360,7 +393,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "helios-agent")
+	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

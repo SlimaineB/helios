@@ -16,21 +16,14 @@ import (
 
 const redactedValue = "••••••"
 
-type inventoryInstanceRef struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	InventoryHost string `json:"inventory_host"`
-}
-
 type applicationInventory struct {
-	Enabled         bool                   `json:"enabled"`
-	Source          string                 `json:"source"`
-	InventorySource string                 `json:"inventory_source"`
-	Editable        bool                   `json:"editable"`
-	Commit          string                 `json:"commit,omitempty"`
-	Groups          []inventory.Group      `json:"groups"`
-	Warnings        []string               `json:"warnings"`
-	Instances       []inventoryInstanceRef `json:"instances"`
+	Enabled         bool              `json:"enabled"`
+	Source          string            `json:"source"`
+	InventorySource string            `json:"inventory_source"`
+	Editable        bool              `json:"editable"`
+	Commit          string            `json:"commit,omitempty"`
+	Groups          []inventory.Group `json:"groups"`
+	Warnings        []string          `json:"warnings"`
 }
 
 // handleApplicationInventory parses the application's static Ansible inventory
@@ -59,22 +52,11 @@ func (s *Server) handleApplicationInventory(w http.ResponseWriter, r *http.Reque
 		InventorySource: app.InventorySource,
 		Groups:          []inventory.Group{},
 		Warnings:        []string{},
-		Instances:       []inventoryInstanceRef{},
 	}
 	if out.InventorySource == "" {
 		out.InventorySource = model.InventorySourceRepo
 	}
 	out.Editable = out.InventorySource == model.InventorySourceHub && s.allow(r, "applications.update", app.Project)
-	if insts, err := s.store.ListRunnerInstances(r.Context()); err == nil {
-		for _, inst := range insts {
-			if inst.Project != app.Project {
-				continue
-			}
-			out.Instances = append(out.Instances, inventoryInstanceRef{
-				ID: inst.ID, Name: inst.Name, InventoryHost: inst.InventoryHost,
-			})
-		}
-	}
 
 	if out.InventorySource == model.InventorySourceHub {
 		out.Enabled = true
@@ -202,17 +184,6 @@ func (s *Server) handleUpdateApplicationInventory(w http.ResponseWriter, r *http
 		Editable:        true,
 		Groups:          in.Groups,
 		Warnings:        []string{},
-		Instances:       []inventoryInstanceRef{},
-	}
-	if insts, err := s.store.ListRunnerInstances(r.Context()); err == nil {
-		for _, inst := range insts {
-			if inst.Project != app.Project {
-				continue
-			}
-			out.Instances = append(out.Instances, inventoryInstanceRef{
-				ID: inst.ID, Name: inst.Name, InventoryHost: inst.InventoryHost,
-			})
-		}
 	}
 	redactInventoryGroups(out.Groups)
 	writeJSON(w, http.StatusOK, out)

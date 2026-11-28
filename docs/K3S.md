@@ -181,11 +181,11 @@ reconciling the miniPC hosts themselves; safety requirements (playbooks must
 stay idempotent; drive state — see the root README's convergence notes) still
 apply.
 
-## 6. SSH runner (optional)
+## 6. Runner mode (optional)
 
-Hosts managed as **SSH** instances do not run an agent. A `helios-runner` leases
-those assignments and runs Ansible over SSH using the inventory from the
-application repository. The managed host needs only `sshd` and `python3`.
+Hosts reached by a runner do not run an agent. A `helios-runner` claims tagged
+jobs from the hub and runs Ansible over SSH using the application inventory. The
+managed host needs only `sshd` and `python3`.
 
 Enable the runner API on the hub:
 
@@ -195,11 +195,11 @@ helm upgrade --install helios-server helm/helios-server -n helios \
   --set runner.token="$RUNNER_TOKEN"
 ```
 
-Run `helios-runner` on a VM or as a Deployment. It must be able to reach each
-instance's `inventory_host` over SSH and needs an SSH key authorized for that
-account (see `deploy/runner.env.example`). On Kubernetes, provide the runner
-token and SSH key as a Secret and give the pod network reachability to the
-managed hosts:
+Run `helios-runner` on a VM or as a Deployment. It must be able to reach the
+inventory hosts over SSH and needs an SSH key authorized for that account (see
+`deploy/runner.env.example`). Set `HELIOS_RUNNER_TAGS` to the tags it serves. On
+Kubernetes, provide the runner token and SSH key as a Secret and give the pod
+network reachability to the managed hosts:
 
 ```sh
 kubectl -n helios create secret generic helios-runner \
@@ -207,9 +207,9 @@ kubectl -n helios create secret generic helios-runner \
   --from-file=runner_id=/etc/helios/runner_id
 ```
 
-Register the host as **SSH · managed by a runner**, set its `inventory_host`, and
-assign applications whose repositories contain an `inventory_path`. See
-[Runners](RUNNERS.md) and [Inventory](INVENTORY.md).
+Mark the application as runner mode, choose `runner_tags` matching the runner,
+and pick an inventory source (repo `inventory_path` or a hub-managed inventory).
+See [Runners](RUNNERS.md) and [Inventory](INVENTORY.md).
 
 ## 7. Validation
 

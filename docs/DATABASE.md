@@ -92,6 +92,8 @@ is persisted.
 | `project` | `TEXT NOT NULL DEFAULT ''` | Logical project scope |
 | `region` | `TEXT NOT NULL DEFAULT ''` | Operator-defined location label |
 | `tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array of operator labels (`prod`, `team-a`, …) |
+| `execution_mode` | `TEXT NOT NULL DEFAULT 'agent'` | Legacy SSH-instance column; new rows are always `agent` |
+| `inventory_host` | `TEXT NOT NULL DEFAULT ''` | Legacy SSH-instance column; unused |
 | `created_at` | `TEXT NOT NULL` | Registration timestamp |
 
 ### `applications`
@@ -105,6 +107,11 @@ An Ansible repository, playbook path and desired git revision.
 | `repo_url` | `TEXT NOT NULL` | Git repository URL |
 | `branch` | `TEXT NOT NULL DEFAULT 'main'` | Branch, tag, SHA or semver range |
 | `path` | `TEXT NOT NULL DEFAULT 'site.yml'` | Playbook path inside the repository |
+| `inventory_path` | `TEXT NOT NULL DEFAULT ''` | Inventory file/directory inside the repo (`inventory_source=repo`) |
+| `inventory_source` | `TEXT NOT NULL DEFAULT 'repo'` | `repo` or `hub` |
+| `inventory_data` | `TEXT NOT NULL DEFAULT '{}'` | JSON inventory document for `hub` source |
+| `execution_mode` | `TEXT NOT NULL DEFAULT 'agent'` | `agent` or `runner` |
+| `runner_tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array of tags required to run jobs |
 | `vars` | `TEXT NOT NULL DEFAULT '{}'` | Legacy JSON extra-vars object |
 | `autoheal` | `INTEGER NOT NULL DEFAULT 0` | Default autoheal flag (`0`/`1`) |
 | `sync_interval` | `INTEGER NOT NULL DEFAULT 0` | Seconds between checks; `0` inherits the agent poll interval |
@@ -183,15 +190,48 @@ Per-instance overrides of application variables. They take precedence over
 
 Primary key: `(instance_id, app_id, key)`.
 
+### `runners`
+
+Registered `helios-runner` workers. Rows are upserted by heartbeat; liveness is
+computed from `last_seen`, so there is no status column to clean up.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `TEXT` PK | Runner identity (`--runner-id` or generated) |
+| `tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array advertised by the runner |
+| `version` | `TEXT NOT NULL DEFAULT ''` | Reported runner version |
+| `last_seen` | `TEXT NOT NULL` | Last heartbeat |
+| `created_at` | `TEXT NOT NULL` | First registration |
+
+### `runner_jobs`
+
+Queue for runner-mode applications. One row per check/apply request.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | Job ID (`BIGSERIAL` on PostgreSQL) |
+| `app_id` | integer `NOT NULL` | Logical application reference |
+| `mode` | `TEXT NOT NULL` | `check` or `apply` |
+| `trigger` | `TEXT NOT NULL DEFAULT 'manual'` | e.g. manual |
+| `status` | `TEXT NOT NULL` | `queued`, `running`, `ok`, `drift` or `failed` |
+| `required_tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array copied from the application |
+| `runner_id` | `TEXT NOT NULL DEFAULT ''` | Claiming runner while `running` |
+| `claimed_at` | `TEXT NULL` | Claim timestamp; stale running jobs are requeued after 30 minutes |
+| `finished_at` | `TEXT NULL` | Completion timestamp |
+| `run_id` | integer `NULL` | Linked `runs.id` |
+| `error` | `TEXT NOT NULL DEFAULT ''` | Failure message |
+| `created_at` | `TEXT NOT NULL` | Queue timestamp |
+
 ### `runs`
 
-Check and apply history reported by agents. The table intentionally has no
-foreign keys so history survives instance/application deletion.
+Check and apply history reported by agents and runners. The table intentionally
+has no foreign keys so history survives instance/application deletion.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | integer PK | Run ID |
-| `instance_id` | `TEXT NOT NULL` | Logical instance reference |
+| `instance_id` | `TEXT NOT NULL DEFAULT ''` | Logical instance reference (empty for runner runs) |
+| `runner_id` | `TEXT NOT NULL DEFAULT ''` | Runner that executed the job (empty for agent runs) |
 | `app_id` | integer `NOT NULL` | Logical application reference |
 | `mode` | `TEXT NOT NULL` | `check` or `apply` |
 | `status` | `TEXT NOT NULL` | `ok`, `drift` or `failed` |

@@ -454,6 +454,8 @@ label.row.small { font-size: 12px; }
 }
 .badge.small { font-size: 11px; padding: 1px 7px; }
 .badge.ok { color: #067a5e; background: var(--ok-soft); border-color: #b7ebdd; }
+.badge.running { color: #0e7490; background: #ecfeff; border-color: #bae6fd; }
+.badge.queued { color: var(--muted); background: var(--panel-2); border-color: var(--border); }
 .badge.drift { color: #8a5a00; background: var(--drift-soft); border-color: #f0d9a8; }
 .badge.stuck { color: #9a3a00; background: #fdeee2; border-color: #f7cdb2; }
 .badge.error, .badge.failed { color: #b4232f; background: var(--err-soft); border-color: #f6c9cf; }

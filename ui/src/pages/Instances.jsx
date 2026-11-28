@@ -125,11 +125,7 @@ function InstancesTree({ instances, onCheckAll, onApplyAll, onHostAutoHeal, can,
                       <strong>{inst.name}</strong>
                     </Link>
                     <span className="cell-sub">
-                      <Badge
-                        state={inst.execution_mode === 'ssh' ? 'ssh' : 'agent'}
-                        label={inst.execution_mode === 'ssh' ? 'ssh' : 'agent'}
-                        small
-                      />
+                      <Badge state="agent" label="agent" small />
                       <span className="mono">{inst.id}</span>
                       {inst.region && <span>· {inst.region}</span>}
                       <TagList tags={inst.tags} />
@@ -197,8 +193,6 @@ export default function Instances() {
   const [regProject, setRegProject] = useState(DEFAULT_PROJECT)
   const [regRegion, setRegRegion] = useState('')
   const [regTags, setRegTags] = useState('')
-  const [regMode, setRegMode] = useState('agent')
-  const [regInventoryHost, setRegInventoryHost] = useState('')
   const [projects, setProjects] = useState([])
   const [regions, setRegions] = useState([])
   const [regResult, setRegResult] = useState(null)
@@ -220,7 +214,6 @@ export default function Instances() {
   const [stateFilter, setStateFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [appFilter, setAppFilter] = useState(searchParams.get('app') || '')
-  const [modeFilter, setModeFilter] = useState('')
   const [tagFilter, setTagFilter] = useState('')
   const [onlineOnly, setOnlineOnly] = useState(false)
 
@@ -238,7 +231,6 @@ export default function Instances() {
       if (stateFilter) params.set('state', stateFilter)
       if (projectFilter) params.set('project', projectFilter)
       if (appFilter) params.set('app_id', appFilter)
-      if (modeFilter) params.set('mode', modeFilter)
       if (tagFilter) params.set('tag', tagFilter)
       if (onlineOnly) params.set('online', '1')
       const [d, projectList, regionList] = await Promise.all([
@@ -267,7 +259,7 @@ export default function Instances() {
         setLoading(false)
       }
     }
-  }, [appFilter, modeFilter, onlineOnly, pageOff, projectFilter, search, stateFilter, tagFilter])
+  }, [appFilter, onlineOnly, pageOff, projectFilter, search, stateFilter, tagFilter])
 
   const commands = useCommandRunner(refresh)
   const modalOpen = showReg || !!confirm
@@ -292,20 +284,18 @@ export default function Instances() {
 
   useEffect(() => {
     setPageOff(0)
-  }, [search, stateFilter, projectFilter, appFilter, modeFilter, tagFilter, onlineOnly])
+  }, [search, stateFilter, projectFilter, appFilter, tagFilter, onlineOnly])
 
   const addInstance = async (e) => {
     e.preventDefault()
     setRegError('')
     try {
-      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regMode, regRegion.trim(), parseTags(regTags), regInventoryHost.trim())
+      const res = await api.createInstance(regName.trim(), projectForApi(regProject), regRegion.trim(), parseTags(regTags))
       setRegResult(res)
       setRegName('')
       setRegProject(DEFAULT_PROJECT)
       setRegRegion('')
       setRegTags('')
-      setRegMode('agent')
-      setRegInventoryHost('')
       toast.success('Instance registered')
       refresh()
     } catch (err) {
@@ -320,8 +310,6 @@ export default function Instances() {
     setRegRegion('')
     setRegTags('')
     setRegError('')
-    setRegMode('agent')
-    setRegInventoryHost('')
   }
 
   useEffect(() => {
@@ -331,8 +319,6 @@ export default function Instances() {
 
   useEffect(() => {
     if (searchParams.get('register') !== '1') return
-    setRegMode(searchParams.get('mode') === 'ssh' ? 'ssh' : 'agent')
-    setRegInventoryHost(searchParams.get('inventory_host') || '')
     setRegName(searchParams.get('name') || '')
     setRegProject(searchParams.get('project') || DEFAULT_PROJECT)
     setShowReg(true)
@@ -395,7 +381,6 @@ export default function Instances() {
     if (stateFilter) params.set('state', stateFilter)
     if (projectFilter) params.set('project', projectFilter)
     if (appFilter) params.set('app_id', appFilter)
-    if (modeFilter) params.set('mode', modeFilter)
     if (tagFilter) params.set('tag', tagFilter)
     if (onlineOnly) params.set('online', '1')
     api.instances(`?${params}`).then((d) => {
@@ -411,14 +396,13 @@ export default function Instances() {
       if (!cancelled) toast.error(e.message)
     })
     return () => { cancelled = true }
-  }, [view, search, stateFilter, projectFilter, appFilter, modeFilter, tagFilter, onlineOnly, q])
+  }, [view, search, stateFilter, projectFilter, appFilter, tagFilter, onlineOnly, q])
 
   const stats = {
     total: serverStats?.total ?? total,
     ok: serverStats?.synced ?? 0,
     drift: serverStats?.drift ?? 0,
     offline: serverStats?.offline ?? instances.filter((i) => !online(i)).length,
-    ssh: serverStats?.ssh ?? instances.filter((i) => i.execution_mode === 'ssh').length,
   }
 
   const changeView = (next) => {
@@ -473,7 +457,7 @@ export default function Instances() {
     variant: 'warn',
     onConfirm: () => { setConfirm(null); bulk('apply') },
   })
-  const filtersActive = !!(search || stateFilter || projectFilter || appFilter || modeFilter || tagFilter || onlineOnly)
+  const filtersActive = !!(search || stateFilter || projectFilter || appFilter || tagFilter || onlineOnly)
   const clearFilters = () => {
     setSearchInput('')
     setSearch('')
@@ -507,7 +491,6 @@ export default function Instances() {
         <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{stats.drift}</span><span className="stat-label">Drifted apps</span></div>
         <div className="stat-card"><span className="stat-dot offline" /><span className="stat-num">{stats.offline}</span><span className="stat-label">Offline</span></div>
         <div className="stats-note">
-          {stats.ssh ? `${stats.ssh} managed over SSH · ` : ''}
           App states from latest checks · live refresh every 30s
         </div>
       </div>
@@ -539,11 +522,6 @@ export default function Instances() {
             <option key={p} value={p}>{p}</option>
           ))}
         </select>
-        <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} aria-label="Execution mode">
-          <option value="">All modes</option>
-          <option value="agent">Agent</option>
-          <option value="ssh">SSH · runner</option>
-        </select>
         <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
           <option value="">All tags</option>
           {tagOptions.map((t) => (
@@ -573,14 +551,9 @@ export default function Instances() {
         </button>
       </div>
 
-      {(appFilter || projectFilter || stateFilter || modeFilter || tagFilter) && (
+      {(appFilter || projectFilter || stateFilter || tagFilter) && (
         <div className="active-filter">
           <span>Showing</span>
-          {modeFilter && (
-            <span className="filter-chip">
-              Mode: {modeFilter === 'ssh' ? 'ssh · runner' : 'agent'}
-            </span>
-          )}
           {appFilter && (
             <span className="filter-chip">
               Application: {appOptions.find((a) => String(a.id) === appFilter)?.name || `#${appFilter}`}
@@ -673,27 +646,18 @@ export default function Instances() {
         <Modal title="Register an instance" onClose={closeReg}>
           {regResult ? (
             <div className="form-card">
-              {regResult.instance.execution_mode === 'ssh' ? (
+              <p><strong>{regResult.instance.name}</strong> registered. The bootstrap token is only shown once — put it in the agent&apos;s config:</p>
+              <pre className="token-pre">
+                server: {`${location.origin || location.protocol + '//' + location.host}`}
+                {'\n'}
+                token: {regResult.token}
+                {'\n'}
+                instance_id: {regResult.instance.id}
+              </pre>
+              {installCommand && (
                 <>
-                  <p><strong>{regResult.instance.name}</strong> registered as an <strong>SSH</strong> instance. A runner executes Ansible over SSH against <code className="mono">{regResult.instance.inventory_host}</code>; nothing is installed on the host.</p>
-                  <p className="sub">Start <code>helios-runner</code> with the hub runner token, make sure it can reach this host with the configured SSH key, then assign applications. The runner reads the inventory from each application repository.</p>
-                </>
-              ) : (
-                <>
-                  <p><strong>{regResult.instance.name}</strong> registered. The bootstrap token is only shown once — put it in the agent&apos;s config:</p>
-                  <pre className="token-pre">
-                    server: {`${location.origin || location.protocol + '//' + location.host}`}
-                    {'\n'}
-                    token: {regResult.token}
-                    {'\n'}
-                    instance_id: {regResult.instance.id}
-                  </pre>
-                  {installCommand && (
-                    <>
-                      <p><strong>Install from this hub</strong> <CopyButton value={installCommand} title="Copy install command" /></p>
-                      <pre className="token-pre">{installCommand}</pre>
-                    </>
-                  )}
+                  <p><strong>Install from this hub</strong> <CopyButton value={installCommand} title="Copy install command" /></p>
+                  <pre className="token-pre">{installCommand}</pre>
                 </>
               )}
               <div className="form-actions">
@@ -720,14 +684,10 @@ export default function Instances() {
                 </span>
               </div>
               <label>Tags<input value={regTags} onChange={(e) => setRegTags(e.target.value)} placeholder="e.g. prod, team-a" /><span className="sub">Optional · comma-separated labels for search and grouping.</span></label>
-              <label>Execution mode<select value={regMode} onChange={(e) => setRegMode(e.target.value)}><option value="agent">Agent installed on the host</option><option value="ssh">SSH · managed by a runner</option></select><span className="sub">{regMode === 'ssh' ? 'A runner runs Ansible over SSH; nothing is installed on the host. The application repository supplies the inventory.' : 'The Helios agent runs Ansible locally on the host.'}</span></label>
-              {regMode === 'ssh' && (
-                <label>Inventory host<input value={regInventoryHost} onChange={(e) => setRegInventoryHost(e.target.value)} placeholder="e.g. web-prod-01.example.com" required /><span className="sub">Host or address the runner connects to; also used as the Ansible <code>--limit</code>.</span></label>
-              )}
               {regError && <div className="error">{regError}</div>}
               <div className="form-actions">
                 <button type="button" className="ghost" onClick={closeReg}>Cancel</button>
-                <button type="submit" disabled={!regName.trim() || (regMode === 'ssh' && !regInventoryHost.trim())}>Create</button>
+                <button type="submit" disabled={!regName.trim()}>Create</button>
               </div>
             </form>
           )}

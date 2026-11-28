@@ -76,7 +76,7 @@ export const api = {
   drift: (query) => request('GET', `/api/v1/drift${query || ''}`),
   instances: (query) => request('GET', `/api/v1/instances${query || ''}`),
   instance: (id) => request('GET', `/api/v1/instances/${id}`),
-  createInstance: (name, project, executionMode = 'agent', region = '', tags = [], inventoryHost = '') => request('POST', '/api/v1/instances', { name, project, region, tags, execution_mode: executionMode, inventory_host: inventoryHost }),
+  createInstance: (name, project, region = '', tags = []) => request('POST', '/api/v1/instances', { name, project, region, tags }),
   updateInstance: (id, name, project, region = '', tags = []) => request('PUT', `/api/v1/instances/${id}`, { name, project, region, tags }),
   deleteInstance: (id) => request('DELETE', `/api/v1/instances/${id}`),
   assign: (id, appId) => request('POST', `/api/v1/instances/${id}/assign`, { app_id: appId }),
@@ -85,6 +85,7 @@ export const api = {
   check: (id, appId) => request('POST', `/api/v1/instances/${id}/check`, { app_id: appId }),
   runs: (id, query) => request('GET', `/api/v1/instances/${id}/runs${query || ''}`),
   appRuns: (id, query) => request('GET', `/api/v1/applications/${id}/runs${query || ''}`),
+  runApplication: (id, mode) => request('POST', `/api/v1/applications/${id}/run`, { mode }),
   runLog: (runId) => request('GET', `/api/v1/runs/${runId}/log`),
 
   setAutoHeal: (id, appId, enabled, inherit) =>

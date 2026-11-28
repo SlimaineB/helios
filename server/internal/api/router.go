@@ -54,7 +54,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/downloads", s.op("instances.get", s.handleListDownloads))
 	m.HandleFunc("GET /api/v1/instances", s.op("instances.get", s.handleListInstances))
 	m.HandleFunc("GET /api/v1/overview", s.op("instances.get", s.handleOverview))
-	m.HandleFunc("GET /api/v1/runners", s.op("instances.get", s.handleRunnerInventory))
+	m.HandleFunc("GET /api/v1/runners", s.op("instances.get", s.handleListRunners))
 	m.HandleFunc("GET /api/v1/drift", s.op("instances.get", s.handleListDrift))
 	m.HandleFunc("POST /api/v1/instances", s.op("instances.create", s.handleCreateInstance))
 	m.HandleFunc("GET /api/v1/instances/{id}", s.op("instances.get", s.handleGetInstance))
@@ -75,6 +75,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/v1/applications/{appId}/inventory", s.op("applications.get", s.handleApplicationInventory))
 	m.HandleFunc("PUT /api/v1/applications/{appId}/inventory", s.op("applications.update", s.handleUpdateApplicationInventory))
 	m.HandleFunc("GET /api/v1/application-stats", s.op("applications.get", s.handleApplicationStats))
+	m.HandleFunc("POST /api/v1/applications/{appId}/run", s.op("commands.create", s.handleRunApplication))
 	m.HandleFunc("POST /api/v1/applications", s.op("applications.create", s.handleCreateApplication))
 	m.HandleFunc("PUT /api/v1/applications/{appId}", s.op("applications.update", s.handleUpdateApplication))
 	m.HandleFunc("DELETE /api/v1/applications/{appId}", s.op("applications.delete", s.handleDeleteApplication))
@@ -126,18 +127,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/v1/agent/status", s.agentAuth(s.handleStatus))
 	m.HandleFunc("POST /api/v1/agent/commands/{cmdId}/result", s.agentAuth(s.handleCommandResult))
 
-	// Runner (controller-side, shared bearer token). Reuses the agent handlers
-	// so ssh-managed instances get the same drift/autoheal/command semantics.
-	m.HandleFunc("GET /api/v1/runner/instances", s.runnerAuth(s.handleRunnerInstances))
-	m.HandleFunc("POST /api/v1/runner/instances/{id}/lease", s.runnerAuth(s.handleRunnerClaim))
-	m.HandleFunc("PUT /api/v1/runner/instances/{id}/lease", s.runnerAuth(s.handleRunnerRenew))
-	m.HandleFunc("DELETE /api/v1/runner/instances/{id}/lease", s.runnerAuth(s.handleRunnerRelease))
-	m.HandleFunc("POST /api/v1/runner/instances/{id}/checkin", s.runnerInstanceAuth(s.handleCheckin))
-	m.HandleFunc("POST /api/v1/runner/instances/{id}/heartbeat", s.runnerInstanceAuth(s.handleHeartbeat))
-	m.HandleFunc("GET /api/v1/runner/instances/{id}/commands/pending", s.runnerInstanceAuth(s.handlePendingCommands))
-	m.HandleFunc("GET /api/v1/runner/instances/{id}/apps/{appId}/snapshot", s.runnerInstanceAuth(s.handleAgentSnapshot))
-	m.HandleFunc("POST /api/v1/runner/instances/{id}/status", s.runnerInstanceAuth(s.handleStatus))
-	m.HandleFunc("POST /api/v1/runner/instances/{id}/commands/{cmdId}/result", s.runnerInstanceAuth(s.handleCommandResult))
+	// Runner fleet (controller-side, shared bearer token). Runners heartbeat,
+	// claim a tagged job, run Ansible and report the result.
+	m.HandleFunc("POST /api/v1/runner/heartbeat", s.runnerAuth(s.handleRunnerHeartbeat))
+	m.HandleFunc("POST /api/v1/runner/jobs/claim", s.runnerAuth(s.handleRunnerClaim))
+	m.HandleFunc("POST /api/v1/runner/jobs/{id}/result", s.runnerAuth(s.handleRunnerJobResult))
 }
 
 // agentAuth authenticates the agent bearer token and resolves the instance.

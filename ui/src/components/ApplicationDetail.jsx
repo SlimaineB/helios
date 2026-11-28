@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowLeft,
+  ClipboardCheck,
   ExternalLink,
   GitBranch,
   GitCommit,
   History,
   Network,
   Pencil,
+  Play,
   Server,
   Settings2,
   Trash2,
@@ -194,6 +196,7 @@ export default function ApplicationDetail({
   }
 
   const s = stats || { instances: 0, drift: 0, error: 0, stuck: 0 }
+  const isRunner = app.execution_mode === 'runner'
   const unhealthy = s.error + s.stuck
   const health = unhealthy > 0
     ? 'failed'
@@ -202,13 +205,15 @@ export default function ApplicationDetail({
       : s.drift > 0
         ? 'drift'
         : 'ok'
-  const healthLabel = unhealthy > 0
-    ? `${unhealthy} failed`
-    : s.instances === 0
-      ? 'Unassigned'
-      : s.drift > 0
-        ? `${s.drift} in drift`
-        : 'Synced'
+  const healthLabel = isRunner
+    ? 'Runner mode'
+    : unhealthy > 0
+      ? `${unhealthy} failed`
+      : s.instances === 0
+        ? 'Unassigned'
+        : s.drift > 0
+          ? `${s.drift} in drift`
+          : 'Synced'
 
   const repoLabel = repo?.name && repo.name !== app.repo_url
     ? repo.name
@@ -224,16 +229,17 @@ export default function ApplicationDetail({
     .filter(({ assignment }) => !!assignment)
 
   const available = availableInstances || []
-  const inventoryInstances = new Map(
-    (inventory?.instances || []).map((inst) => [inst.inventory_host, inst]),
-  )
   const inventoryHostCount = (inventory?.groups || [])
     .reduce((total, group) => total + (group.hosts?.length || 0), 0)
-  const registerLink = (host) => (
-    `/instances?register=1&mode=ssh&name=${encodeURIComponent(host)}`
-    + `&inventory_host=${encodeURIComponent(host)}`
-    + `&project=${encodeURIComponent(app.project || '')}`
-  )
+
+  const runJob = async (mode) => {
+    try {
+      await api.runApplication(app.id, mode)
+      toast.success(mode === 'apply' ? 'Apply queued on the runner fleet' : 'Check queued on the runner fleet')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
 
   const assign = async () => {
     const inst = available.find((i) => i.id === assignTo)
@@ -260,7 +266,9 @@ export default function ApplicationDetail({
             <HealthBadge state={health} label={healthLabel} size={16} />
             <span className="project-badge">{projectLabel(app.project)}</span>
             <GitOpsBadge obj={app} />
-            <span className="detail-chip"><Server size={13} /> {s.instances} instance{s.instances === 1 ? '' : 's'}</span>
+            {isRunner
+              ? <span className="runner-mode-tag accent">runner</span>
+              : <span className="detail-chip"><Server size={13} /> {s.instances} instance{s.instances === 1 ? '' : 's'}</span>}
             <span className="detail-chip"><GitBranch size={13} /> {app.branch || '—'}</span>
             {s.revision && (
               <span className="detail-chip"><GitCommit size={13} /> {s.revision.slice(0, 7)}</span>
@@ -268,7 +276,17 @@ export default function ApplicationDetail({
           </div>
         </div>
         <div className="detail-head-actions">
-          <Link className="btn ghost" to={`/instances?app=${app.id}`}>
+          {isRunner && can('commands', 'create') && (
+            <>
+              <button type="button" className="btn" onClick={() => runJob('apply')}>
+                <Play size={15} /> Apply
+              </button>
+              <button type="button" className="btn ghost" onClick={() => runJob('check')}>
+                <ClipboardCheck size={15} /> Check
+              </button>
+            </>
+          )}
+          <Link className="btn ghost" to={isRunner ? '/runners' : `/instances?app=${app.id}`}>
             <Server size={15} /> Open fleet
           </Link>
           <button type="button" className="btn ghost" disabled={readOnly || !can('applications', 'update')} title={managedTitle(app)} onClick={() => onEdit(app)}>
@@ -286,6 +304,18 @@ export default function ApplicationDetail({
         </div>
       </div>
 
+      {isRunner && (
+        <div className="settings-note">
+          <Server size={15} />
+          <span>
+            Runner mode: jobs are dispatched to the tagged bastion fleet. Targets are only in the
+            inventory; no agent is installed on them.
+            {(app.runner_tags || []).length ? ` Tags: ${app.runner_tags.join(', ')}.` : ' Any runner may claim the job.'}
+          </span>
+        </div>
+      )}
+
+      {!isRunner && (
       <div className="host-setting-bar">
         <div className="host-setting-copy">
           <strong>Auto-apply on drift</strong>
@@ -308,13 +338,16 @@ export default function ApplicationDetail({
           <span className="slider" />
         </label>
       </div>
+      )}
 
+      {!isRunner && (
       <div className="stats">
         <div className="stat-card"><span className="stat-dot total" /><span className="stat-num">{s.instances}</span><span className="stat-label">Instances</span></div>
         <div className="stat-card"><span className="stat-dot ok" /><span className="stat-num">{s.synced}</span><span className="stat-label">Synced</span></div>
         <div className="stat-card"><span className="stat-dot drift" /><span className="stat-num">{s.drift}</span><span className="stat-label">Drift</span></div>
         <div className="stat-card"><span className="stat-dot error" /><span className="stat-num">{unhealthy}</span><span className="stat-label">Failed</span></div>
       </div>
+      )}
 
       <details className="detail-panel" open>
         <summary><Settings2 size={15} /> Configuration</summary>
@@ -333,17 +366,27 @@ export default function ApplicationDetail({
               <div className="value mono">{app.path || '—'}</div>
             </div>
             <div className="detail">
-              <label>Inventory path</label>
-              <div className="value mono">{app.inventory_path || '—'}</div>
+              <label>Execution</label>
+              <div className="value">{isRunner ? 'runner fleet' : 'agent on each host'}</div>
+            </div>
+            <div className="detail">
+              <label>Runner tags</label>
+              <div className="value mono">{isRunner ? ((app.runner_tags || []).join(', ') || 'any') : '—'}</div>
+            </div>
+            <div className="detail">
+              <label>Inventory</label>
+              <div className="value mono">{app.inventory_source === 'hub' ? 'Helios-managed' : (app.inventory_path || '—')}</div>
             </div>
             <div className="detail">
               <label>Branch</label>
               <div className="value mono">{app.branch || '—'}</div>
             </div>
+            {!isRunner && (
             <div className="detail">
               <label>Check interval</label>
               <div className="value">{app.sync_interval ? `${app.sync_interval}s` : 'inherit (0)'}</div>
             </div>
+            )}
             <div className="detail">
               <label>Latest revision</label>
               <div className="value">
@@ -419,38 +462,21 @@ export default function ApplicationDetail({
                             <tr>
                               <th>Host</th>
                               <th>Vars (key=value)</th>
-                              <th style={{ width: '180px' }}>Instance</th>
                               <th style={{ width: '40px' }} />
                             </tr>
                           </thead>
                           <tbody>
-                            {group.hosts.map((host, hi) => {
-                              const linked = inventoryInstances.get(host.name)
-                              return (
-                                <tr key={hi}>
-                                  <td><input value={host.name} onChange={(e) => updateHost(gi, hi, { name: e.target.value })} placeholder="web-1" aria-label="Host name" /></td>
-                                  <td><input value={host.varsText} onChange={(e) => updateHost(gi, hi, { varsText: e.target.value })} placeholder="ansible_host=10.0.0.11 ansible_user=deploy" aria-label="Host vars" /></td>
-                                  <td>
-                                    {linked ? (
-                                      <Link className="entity-link" to={`/instances/${linked.id}`}>
-                                        <strong>{linked.name}</strong>
-                                      </Link>
-                                    ) : host.name && can('instances', 'create') ? (
-                                      <Link className="btn ghost small" to={registerLink(host.name)}>
-                                        Register instance
-                                      </Link>
-                                    ) : (
-                                      <span className="muted">—</span>
-                                    )}
-                                  </td>
-                                  <td>
-                                    <button type="button" className="btn ghost small" title="Remove host" onClick={() => removeHost(gi, hi)}>
-                                      <Trash2 size={13} />
-                                    </button>
-                                  </td>
-                                </tr>
-                              )
-                            })}
+                            {group.hosts.map((host, hi) => (
+                              <tr key={hi}>
+                                <td><input value={host.name} onChange={(e) => updateHost(gi, hi, { name: e.target.value })} placeholder="web-1" aria-label="Host name" /></td>
+                                <td><input value={host.varsText} onChange={(e) => updateHost(gi, hi, { varsText: e.target.value })} placeholder="ansible_host=10.0.0.11 ansible_user=deploy" aria-label="Host vars" /></td>
+                                <td>
+                                  <button type="button" className="btn ghost small" title="Remove host" onClick={() => removeHost(gi, hi)}>
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>
@@ -486,12 +512,10 @@ export default function ApplicationDetail({
                               <tr>
                                 <th>Host</th>
                                 <th>Connection</th>
-                                <th style={{ width: '210px' }}>Instance</th>
                               </tr>
                             </thead>
                             <tbody>
                               {group.hosts.map((host) => {
-                                const linked = inventoryInstances.get(host.name)
                                 const vars = host.vars || {}
                                 const connection = [
                                   vars.ansible_host,
@@ -502,19 +526,6 @@ export default function ApplicationDetail({
                                   <tr key={host.name}>
                                     <td><span className="mono">{host.name}</span></td>
                                     <td className="muted mono">{connection || '—'}</td>
-                                    <td>
-                                      {linked ? (
-                                        <Link className="entity-link" to={`/instances/${linked.id}`}>
-                                          <strong>{linked.name}</strong>
-                                        </Link>
-                                      ) : can('instances', 'create') ? (
-                                        <Link className="btn ghost small" to={registerLink(host.name)}>
-                                          Register instance
-                                        </Link>
-                                      ) : (
-                                        <span className="muted">Not linked</span>
-                                      )}
-                                    </td>
                                   </tr>
                                 )
                               })}
@@ -535,6 +546,8 @@ export default function ApplicationDetail({
       </details>
       )}
 
+      {!isRunner && (
+      <>
       <h2 className="detail-section-heading">
         <Server size={16} /> Assigned instances
         <span className="muted detail-count">{assigned.length}</span>
@@ -643,6 +656,18 @@ export default function ApplicationDetail({
           )}
         </>
       )}
+      </>
+      )}
+
+      {isRunner && (
+        <div className="empty">
+          <p className="muted">
+            This application is dispatched as jobs to the runner fleet. Track runners and recent jobs on the
+            <Link className="entity-link" to="/runners"> Runners page</Link>.
+          </p>
+        </div>
+      )}
+
     </section>
   )
 }

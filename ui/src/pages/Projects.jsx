@@ -63,7 +63,6 @@ function buildSummaries(projects, applications, instances) {
         instances: 0,
         online: 0,
         tags: new Map(),
-        modes: new Set(),
         states: new Set(),
         search: [project.name, project.repo_patterns || ''],
       }
@@ -86,7 +85,6 @@ function buildSummaries(projects, applications, instances) {
     const isOnline = instanceOnline(inst)
     summary.instances++
     if (isOnline) summary.online++
-    summary.modes.add(inst.execution_mode || 'agent')
     summary.states.add(normalizeState(!isOnline ? 'offline' : inst.state))
     summary.search.push(inst.name, inst.id, inst.region || '', ...(inst.tags || []))
     for (const tag of inst.tags || []) {
@@ -203,7 +201,6 @@ export default function Projects() {
   const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
   const [tagFilter, setTagFilter] = useState('')
   const [appFilter, setAppFilter] = useState('')
-  const [modeFilter, setModeFilter] = useState('')
   const [onlineOnly, setOnlineOnly] = useState(false)
   const [view, setView] = useState(() => {
     const saved = localStorage.getItem('helios_projects_view')
@@ -277,7 +274,6 @@ export default function Projects() {
       }
     }
     if (stateFilter && !summary.states.has(stateFilter)) return false
-    if (modeFilter && !summary.modes.has(modeFilter)) return false
     if (tagFilter && !summary.tagKeys.has(tagFilter.toLowerCase())) return false
     if (appFilter && !summary.appIds.has(Number(appFilter))) return false
     if (onlineOnly && summary.online === 0) return false
@@ -287,7 +283,7 @@ export default function Projects() {
     if (!a.key) return -1
     if (!b.key) return 1
     return a.key.localeCompare(b.key)
-  }), [summaries, projectFilter, stateFilter, modeFilter, tagFilter, appFilter, onlineOnly, search])
+  }), [summaries, projectFilter, stateFilter, tagFilter, appFilter, onlineOnly, search])
 
   const stats = useMemo(() => filtered.reduce((acc, summary) => ({
     projects: acc.projects + 1,
@@ -296,7 +292,7 @@ export default function Projects() {
     online: acc.online + summary.online,
   }), { projects: 0, apps: 0, instances: 0, online: 0 }), [filtered])
 
-  const filtersActive = !!(search || stateFilter || projectFilter || tagFilter || appFilter || modeFilter || onlineOnly)
+  const filtersActive = !!(search || stateFilter || projectFilter || tagFilter || appFilter || onlineOnly)
 
   const setParam = (key, value) => {
     const next = new URLSearchParams(searchParams)
@@ -316,7 +312,6 @@ export default function Projects() {
     setProjectFilter('')
     setTagFilter('')
     setAppFilter('')
-    setModeFilter('')
     setOnlineOnly(false)
     setSearchParams({}, { replace: true })
   }
@@ -402,11 +397,6 @@ export default function Projects() {
           <option value="__global__">Global</option>
           {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
-        <select value={modeFilter} onChange={(e) => setModeFilter(e.target.value)} aria-label="Execution mode">
-          <option value="">All modes</option>
-          <option value="agent">Agent</option>
-          <option value="ssh">SSH · runner</option>
-        </select>
         <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
           <option value="">All tags</option>
           {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
@@ -423,12 +413,11 @@ export default function Projects() {
         <button type="button" className="filter-add" onClick={openNew} disabled={!can('projects', 'create')}>＋ New project</button>
       </div>
 
-      {(projectFilter || stateFilter || modeFilter || tagFilter || appFilter) && (
+      {(projectFilter || stateFilter || tagFilter || appFilter) && (
         <div className="active-filter">
           <span>Showing</span>
           {projectFilter && <span className="filter-chip">Project: {projectLabel(projectFilter === '__global__' ? '' : projectFilter)}</span>}
           {stateFilter && <span className="filter-chip">State: {stateLabel(stateFilter)}</span>}
-          {modeFilter && <span className="filter-chip">Mode: {modeFilter === 'ssh' ? 'ssh · runner' : 'agent'}</span>}
           {tagFilter && <span className="filter-chip">Tag: {tagFilter}</span>}
           {appFilter && <span className="filter-chip">Application: {appOptions.find((app) => String(app.id) === appFilter)?.name || `#${appFilter}`}</span>}
           <span className="spacer" />

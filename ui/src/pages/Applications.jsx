@@ -35,7 +35,7 @@ async function fetchAppInstanceIDs(appId) {
   return ids
 }
 
-const emptyApp = { name: '', branch: 'main', path: 'site.yml', inventory_source: 'repo', inventory_path: '', autoheal: false, sync_interval: 0, ignore_paths: '', project: DEFAULT_PROJECT }
+const emptyApp = { name: '', branch: 'main', path: 'site.yml', execution_mode: 'agent', runner_tags: [], inventory_source: 'repo', inventory_path: '', autoheal: false, sync_interval: 0, ignore_paths: '', project: DEFAULT_PROJECT }
 const emptyRepo = { name: '', url: '', username: '', password: '', ssh_key: '', insecure_skip_verify: false }
 const shortRepo = (url = '') => url.replace(/^https?:\/\//, '').replace(/^ssh:\/\//, '').replace(/\.git$/, '')
 
@@ -165,7 +165,7 @@ export default function Applications() {
       return
     }
     setEditing(app)
-    setForm({ name: app.name, branch: app.branch, path: app.path, inventory_source: app.inventory_source || 'repo', inventory_path: app.inventory_path || '', autoheal: app.autoheal, sync_interval: app.sync_interval || 0, ignore_paths: app.ignore_paths || '', project: projectForUi(app.project) })
+    setForm({ name: app.name, branch: app.branch, path: app.path, execution_mode: app.execution_mode || 'agent', runner_tags: app.runner_tags || [], inventory_source: app.inventory_source || 'repo', inventory_path: app.inventory_path || '', autoheal: app.autoheal, sync_interval: app.sync_interval || 0, ignore_paths: app.ignore_paths || '', project: projectForUi(app.project) })
     const m = matchRepo(app.repo_url, app.project)
     if (m) {
       setRepoId(String(m.id))
@@ -229,6 +229,10 @@ export default function Applications() {
         throw new Error('sync interval must be 0 (inherit) or at least 10 seconds')
       }
       const app = { ...form, project: projectForApi(form.project), repo_url: repoUrl }
+      if (app.execution_mode === 'runner') {
+        app.autoheal = false
+        app.sync_interval = 0
+      }
       if (editing) await api.updateApplication({ ...app, id: editing.id })
       else await api.createApplication(app)
       toast.success(editing ? 'Application updated' : 'Application created')
@@ -266,6 +270,17 @@ export default function Applications() {
   }
 
   const runApp = async (app, action) => {
+    if (app.execution_mode === 'runner') {
+      const label = action === 'apply' ? 'Apply' : 'Check'
+      try {
+        await api.runApplication(app.id, action)
+        toast.success(`${label} queued on the runner fleet`)
+        setTimeout(refresh, 800)
+      } catch (e) {
+        toast.error(e.message)
+      }
+      return
+    }
     let ids = []
     try {
       ids = await fetchAppInstanceIDs(app.id)
@@ -385,8 +400,8 @@ export default function Applications() {
     <section>
       <h1>Applications</h1>
       <p className="muted page-intro">
-        Entry point: each application rolls out to the instances it is assigned to. Pick an application
-        to see and operate its instances.
+        Each application runs either on assigned agent instances or as jobs on the tagged runner fleet.
+        Pick an application to inspect and operate it.
       </p>
 
       <div className="stats">
@@ -553,30 +568,58 @@ export default function Applications() {
                 <input {...f('path')} />
               </label>
             </div>
-            <label>
-              Inventory source
-              <select value={form.inventory_source || 'repo'} onChange={(e) => setForm((p) => ({ ...p, inventory_source: e.target.value }))}>
-                <option value="repo">Repository (inventory_path)</option>
-                <option value="hub">Helios (managed here)</option>
-              </select>
-              <span className="sub">Helios-managed inventories are edited from the application page.</span>
-            </label>
-            {(form.inventory_source || 'repo') === 'repo' && (
+            <div className="two">
               <label>
-                Inventory path (optional, file or directory)
-                <input {...f('inventory_path')} placeholder="inventory/hosts.yml" />
-                <span className="sub">Required for SSH instances. Leave empty for agent-only applications.</span>
+                Execution
+                <select value={form.execution_mode || 'agent'} onChange={(e) => setForm((p) => ({ ...p, execution_mode: e.target.value }))}>
+                  <option value="agent">Agent (installed on each host)</option>
+                  <option value="runner">Runner (tagged bastion fleet)</option>
+                </select>
+                <span className="sub">Runner mode dispatches jobs; no agent is installed on target hosts.</span>
               </label>
+              <label>
+                Runner tags
+                <input
+                  disabled={(form.execution_mode || 'agent') !== 'runner'}
+                  value={(form.runner_tags || []).join(', ')}
+                  onChange={(e) => setForm((p) => ({ ...p, runner_tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) }))}
+                  placeholder="eu, prod, linux"
+                />
+                <span className="sub">A job runs on a runner that has all these tags. Empty = any runner.</span>
+              </label>
+            </div>
+            {(form.execution_mode || 'agent') === 'runner' && (
+              <>
+                <label>
+                  Inventory source
+                  <select value={form.inventory_source || 'repo'} onChange={(e) => setForm((p) => ({ ...p, inventory_source: e.target.value }))}>
+                    <option value="repo">Repository (inventory_path)</option>
+                    <option value="hub">Helios (managed here)</option>
+                  </select>
+                  <span className="sub">Helios-managed inventories are edited from the application page.</span>
+                </label>
+                {(form.inventory_source || 'repo') === 'repo' && (
+                  <label>
+                    Inventory path (file or directory)
+                    <input {...f('inventory_path')} placeholder="inventory/hosts.yml" />
+                    <span className="sub">Path inside the repository. Required for runner jobs.</span>
+                  </label>
+                )}
+              </>
             )}
-            <label className="row" title="Automatically apply when a check detects drift">
-              <input type="checkbox" checked={form.autoheal} onChange={(e) => setForm((p) => ({ ...p, autoheal: e.target.checked }))} />{' '}
-              Auto-apply on drift (apply on detection)
-            </label>
-            <label title="How often to check this application for drift">
-              Check interval (seconds)
-              <input type="number" min="0" step="10" value={form.sync_interval} onChange={(e) => setForm((p) => ({ ...p, sync_interval: Number(e.target.value) || 0 }))} />
-              <span className="sub">0 = inherit the agent poll interval (otherwise min 10s)</span>
-            </label>
+            {(form.execution_mode || 'agent') === 'agent' && (
+              <>
+                <label className="row" title="Automatically apply when a check detects drift">
+                  <input type="checkbox" checked={form.autoheal} onChange={(e) => setForm((p) => ({ ...p, autoheal: e.target.checked }))} />{' '}
+                  Auto-apply on drift (apply on detection)
+                </label>
+                <label title="How often to check this application for drift">
+                  Check interval (seconds)
+                  <input type="number" min="0" step="10" value={form.sync_interval} onChange={(e) => setForm((p) => ({ ...p, sync_interval: Number(e.target.value) || 0 }))} />
+                  <span className="sub">0 = inherit the agent poll interval (otherwise min 10s)</span>
+                </label>
+              </>
+            )}
             <label>
               Ignore drift paths / task patterns (one per line)
               <textarea rows={3} spellCheck={false} placeholder="copy /etc/motd&#10;write /etc/foo/*&#10;prod-*" value={form.ignore_paths} onChange={(e) => setForm((p) => ({ ...p, ignore_paths: e.target.value }))} />
@@ -650,18 +693,21 @@ export default function Applications() {
               {filteredApps.map((a) => {
                 const st = appStats.get(a.id) || {}
                 const s = { instances: 0, synced: 0, unknown: 0, drift: 0, error: 0, stuck: 0, autoheal: 0, ...st }
+                const isRunner = a.execution_mode === 'runner'
                 const unhealthy = s.error + s.stuck
-                const health = unhealthy > 0 ? 'failed' : s.drift > 0 ? 'drift' : s.instances === 0 || s.synced < s.instances ? 'unknown' : 'ok'
-                const healthLabel = unhealthy > 0
-                  ? `${unhealthy} failed`
-                  : s.drift > 0
-                    ? `${s.drift} drifted`
-                    : s.instances === 0
-                      ? 'Unassigned'
-                      : s.synced === s.instances
-                        ? 'Synced'
-                        : `${s.synced}/${s.instances} synced`
-                const canRun = can('commands', 'create') && s.instances > 0
+                const health = isRunner ? 'unknown' : unhealthy > 0 ? 'failed' : s.drift > 0 ? 'drift' : s.instances === 0 || s.synced < s.instances ? 'unknown' : 'ok'
+                const healthLabel = isRunner
+                  ? 'Runner mode'
+                  : unhealthy > 0
+                    ? `${unhealthy} failed`
+                    : s.drift > 0
+                      ? `${s.drift} drifted`
+                      : s.instances === 0
+                        ? 'Unassigned'
+                        : s.synced === s.instances
+                          ? 'Synced'
+                          : `${s.synced}/${s.instances} synced`
+                const canRun = can('commands', 'create') && (a.execution_mode === 'runner' || s.instances > 0)
                 const readOnly = managedByGitOps(a)
                 const menu = [
                   { label: 'View nodes', icon: Network, to: `/instances?app=${a.id}` },
@@ -694,20 +740,29 @@ export default function Applications() {
                     <td><span className="project-badge">{projectLabel(a.project)}</span> <GitOpsBadge obj={a} /></td>
                     <td>
                       <div className="cell-title">
-                        <strong className="mono">{s.synced}/{s.instances}</strong>
-                        <span className="cell-sub">
-                          {s.instances} node{s.instances === 1 ? '' : 's'}
-                          {s.unknown ? ` · ${s.unknown} unknown` : ''}
-                        </span>
+                        {isRunner ? (
+                          <>
+                            <strong className="mono">Fleet</strong>
+                            <span className="cell-sub">{(a.runner_tags || []).join(' · ') || 'any runner'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <strong className="mono">{s.synced}/{s.instances}</strong>
+                            <span className="cell-sub">
+                              {s.instances} node{s.instances === 1 ? '' : 's'}
+                              {s.unknown ? ` · ${s.unknown} unknown` : ''}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </td>
                     <td><HealthBadge state={health} label={healthLabel} size={13} small /></td>
                     <td>
                       <AutoHealChip
-                        enabled={!!a.autoheal}
+                        enabled={!isRunner && !!a.autoheal}
                         scope="app"
-                        label={a.autoheal ? `on · ${s.autoheal}/${s.instances} hosts` : 'off'}
-                        reason={a.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
+                        label={isRunner ? 'n/a · runner mode' : a.autoheal ? `on · ${s.autoheal}/${s.instances} hosts` : 'off'}
+                        reason={isRunner ? 'Runner jobs run on demand; auto-heal is not part of runner mode v1' : a.autoheal ? 'Drift is applied automatically on hosts where auto-heal is enabled' : 'Drift is detected but never applied automatically'}
                       />
                     </td>
                     <td>

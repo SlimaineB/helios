@@ -90,7 +90,6 @@ export default function InstanceDetail() {
   }, [appFilter])
 
   const online = instanceOnline(inst)
-  const isSSH = inst?.execution_mode === 'ssh'
 
   const toggleAutoHeal = async (app) => {
     try {
@@ -252,7 +251,6 @@ export default function InstanceDetail() {
           <h1>{inst.name}</h1>
           <div className="detail-chips">
             <Badge state={inst.state} label={stateLabel(inst.state)} />
-            {isSSH && <Badge state="ssh" label="ssh" small />}
             <span className={`detail-chip ${online ? 'online' : 'offline'}`}>
               <span className={`dot ${online ? 'online' : 'offline'}`} />
               {online ? 'Online' : 'Offline'}
@@ -321,7 +319,6 @@ export default function InstanceDetail() {
             <div className="detail"><label>Hostname</label><div className="value">{inst.hostname || '—'}</div></div>
             <div className="detail"><label>Platform</label><div className="value">{inst.platform || '—'}</div></div>
             <div className="detail"><label>Version</label><div className="value">{inst.version || '—'}</div></div>
-            <div className="detail"><label>Mode</label><div className="value">{isSSH ? 'ssh · runner' : 'agent'}</div></div>
             {inst.host_info?.os && <div className="detail"><label>OS</label><div className="value">{inst.host_info.os}</div></div>}
             {inst.host_info?.arch && <div className="detail"><label>Arch</label><div className="value">{inst.host_info.arch}</div></div>}
             {inst.host_info?.cpu_count > 0 && <div className="detail"><label>CPU</label><div className="value">{inst.host_info.cpu_count} vCPU</div></div>}
@@ -330,20 +327,6 @@ export default function InstanceDetail() {
             {inst.host_info?.ansible && <div className="detail"><label>Ansible</label><div className="value">{inst.host_info.ansible}</div></div>}
           </div>
 
-          {isSSH && (
-            <div className="detail-subsection">
-              <div className="detail-section-head">
-                <strong>SSH execution</strong>
-                <Badge state="ssh" label="ssh" small />
-              </div>
-              <div className="host-detail-grid">
-                <div className="detail"><label>Inventory host</label><div className="value mono">{inst.inventory_host || '—'}</div></div>
-              </div>
-              <p className="sub">
-                A runner executes Ansible over SSH against this host, using the inventory in each application repository and this address as the <code>--limit</code>. Nothing needs to be installed on the host.
-              </p>
-            </div>
-          )}
         </div>
       </details>
 

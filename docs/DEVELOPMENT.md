@@ -74,10 +74,11 @@ make compose-down     # stop, keep the database and agent state
 make compose-clean    # stop and delete the compose volumes
 ```
 
-The Docker lab exercises agent mode only. To work on the SSH runner, run
-`helios-runner` against the hub with `HELIOS_RUNNER_TOKEN` set and register an
-SSH instance whose `inventory_host` the runner can reach; see
-[Runners](RUNNERS.md) for the execution and lease model.
+The Docker lab exercises agent mode only. To work on runner mode, run
+`helios-runner` against the hub with `HELIOS_RUNNER_TOKEN` and
+`HELIOS_RUNNER_TAGS` set, mark an application as `runner` with matching tags,
+and point its inventory at hosts the runner can reach over SSH; see
+[Runners](RUNNERS.md) for the job model.
 
 ### Full Dex + PostgreSQL example
 

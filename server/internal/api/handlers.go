@@ -269,7 +269,6 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		Projects:       scopes,
 		Query:          strings.TrimSpace(r.URL.Query().Get("q")),
 		Tag:            strings.TrimSpace(r.URL.Query().Get("tag")),
-		Mode:           strings.TrimSpace(r.URL.Query().Get("mode")),
 		State:          strings.TrimSpace(r.URL.Query().Get("state")),
 		OnlineOnly:     r.URL.Query().Get("online") == "1" || r.URL.Query().Get("online") == "true",
 		RepoURL:        strings.TrimSpace(r.URL.Query().Get("repo")),
@@ -770,12 +769,10 @@ func normalizeInstanceTags(in []string) []string {
 // handleCreateInstance registers a new instance and returns its bootstrap token once.
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name          string   `json:"name"`
-		Project       string   `json:"project"`
-		Region        string   `json:"region"`
-		Tags          []string `json:"tags"`
-		ExecutionMode string   `json:"execution_mode"`
-		InventoryHost string   `json:"inventory_host"`
+		Name    string   `json:"name"`
+		Project string   `json:"project"`
+		Region  string   `json:"region"`
+		Tags    []string `json:"tags"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -788,19 +785,6 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	body.Project = strings.TrimSpace(body.Project)
 	body.Region = strings.TrimSpace(body.Region)
 	body.Tags = normalizeInstanceTags(body.Tags)
-	body.ExecutionMode = strings.TrimSpace(body.ExecutionMode)
-	if body.ExecutionMode == "" {
-		body.ExecutionMode = model.ModeAgent
-	}
-	if body.ExecutionMode != model.ModeAgent && body.ExecutionMode != model.ModeSSH {
-		writeErr(w, http.StatusBadRequest, "execution_mode must be agent|ssh")
-		return
-	}
-	body.InventoryHost = strings.TrimSpace(body.InventoryHost)
-	if body.ExecutionMode == model.ModeSSH && body.InventoryHost == "" {
-		writeErr(w, http.StatusBadRequest, "inventory_host is required for ssh mode")
-		return
-	}
 	if !s.requireObject(w, r, "instances.create", body.Project) {
 		return
 	}
@@ -822,8 +806,7 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		Project:       body.Project,
 		Region:        body.Region,
 		Tags:          body.Tags,
-		ExecutionMode: body.ExecutionMode,
-		InventoryHost: body.InventoryHost,
+		ExecutionMode: model.ExecAgent,
 		TokenHash:     auth.Hash(token),
 	})
 	if err != nil {
@@ -977,6 +960,10 @@ func (s *Server) handleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 	if app.Project != inst.Project {
 		writeErr(w, http.StatusConflict, "application and instance belong to different projects")
+		return
+	}
+	if app.ExecutionMode == model.ExecRunner {
+		writeErr(w, http.StatusConflict, "runner applications are executed by the runner fleet, not assigned to instances")
 		return
 	}
 	if err := s.store.Assign(r.Context(), id, body.AppID); err != nil {
@@ -1591,6 +1578,20 @@ func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "sync_interval must be 0 (inherit) or at least 10 seconds")
 		return
 	}
+	in.ExecutionMode = strings.TrimSpace(in.ExecutionMode)
+	if in.ExecutionMode == "" {
+		in.ExecutionMode = model.ExecAgent
+	}
+	if in.ExecutionMode != model.ExecAgent && in.ExecutionMode != model.ExecRunner {
+		writeErr(w, http.StatusBadRequest, "execution_mode must be agent or runner")
+		return
+	}
+	in.RunnerTags = normalizeInstanceTags(in.RunnerTags)
+	if in.ExecutionMode == model.ExecRunner {
+		in.AutoHeal = false
+	} else {
+		in.RunnerTags = nil
+	}
 	in.Project = strings.TrimSpace(in.Project)
 	if !s.requireObject(w, r, "applications.create", in.Project) {
 		return
@@ -1671,6 +1672,26 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	in.ID = old.ID
+	if _, ok := present["execution_mode"]; !ok {
+		in.ExecutionMode = old.ExecutionMode
+	}
+	in.ExecutionMode = strings.TrimSpace(in.ExecutionMode)
+	if in.ExecutionMode == "" {
+		in.ExecutionMode = model.ExecAgent
+	}
+	if in.ExecutionMode != model.ExecAgent && in.ExecutionMode != model.ExecRunner {
+		writeErr(w, http.StatusBadRequest, "execution_mode must be agent or runner")
+		return
+	}
+	if _, ok := present["runner_tags"]; !ok {
+		in.RunnerTags = old.RunnerTags
+	}
+	in.RunnerTags = normalizeInstanceTags(in.RunnerTags)
+	if in.ExecutionMode == model.ExecRunner {
+		in.AutoHeal = false
+	} else {
+		in.RunnerTags = nil
+	}
 	if in.Name == "" {
 		in.Name = old.Name
 	}
@@ -1744,6 +1765,12 @@ func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request)
 		}
 		s.internalError(w, r, err)
 		return
+	}
+	if old.ExecutionMode != in.ExecutionMode || !equalTags(old.RunnerTags, in.RunnerTags) {
+		if err := s.store.DeleteQueuedRunnerJobs(r.Context(), in.ID); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
 	}
 	if err := s.annotateApplication(r.Context(), &in); err != nil {
 		s.internalError(w, r, err)
@@ -2219,10 +2246,18 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 	}
 	appIDs := make([]int64, 0, len(assignments))
 	urls := make([]string, 0, len(assignments))
+	filtered := assignments[:0]
 	for _, row := range assignments {
+		// Runner-mode applications are dispatched as jobs to the bastion fleet;
+		// an agent assignment must never execute them locally.
+		if row.Application.ExecutionMode == model.ExecRunner {
+			continue
+		}
+		filtered = append(filtered, row)
 		appIDs = append(appIDs, row.Assignment.AppID)
 		urls = append(urls, row.Application.RepoURL)
 	}
+	assignments = filtered
 	repos, repoErr := s.store.RepositoriesByProjectURLs(r.Context(), inst.Project, urls)
 	if repoErr != nil {
 		s.log.Warn("failed to load repositories for checkin", "instance", inst.ID, "error", repoErr)
@@ -2267,10 +2302,9 @@ func (s *Server) handleCheckin(w http.ResponseWriter, r *http.Request) {
 		if merged, err := mergeVarsJSON(app.Vars, appVars[a.AppID], hostVars[a.AppID]); err == nil {
 			app.Vars = merged
 		}
-		// The hub inventory can carry SSH credentials; only runners need it.
-		if inst.ExecutionMode != "ssh" {
-			app.InventoryData = ""
-		}
+		// Agent checkins never receive inventory data: it can carry SSH
+		// credentials and only the runner fleet consumes it.
+		app.InventoryData = ""
 		resp.Applications = append(resp.Applications, app)
 	}
 	// Claim pending commands atomically and hand them to this agent.
@@ -2524,4 +2558,54 @@ func (s *Server) refreshInstanceState(ctx context.Context, inst model.Instance) 
 	}
 	inst.State = state
 	return s.store.UpdateInstanceState(ctx, inst.ID, state, inst.LastCommit)
+}
+
+// decorateInstance adds non-persisted, server-derived fields for the UI.
+// Staleness detection. An agent checks in once per poll interval, so allow
+// three missed beats (with a floor for very fast agents and a cap for slow
+// ones). Agents that predate poll_interval reporting keep the historical
+// seven-minute grace.
+const (
+	defaultOfflineGrace = 7 * time.Minute
+	minOfflineGrace     = 30 * time.Second
+	maxOfflineGrace     = 15 * time.Minute
+)
+
+func offlineGrace(inst model.Instance) time.Duration {
+	if inst.PollInterval <= 0 {
+		return defaultOfflineGrace
+	}
+	grace := time.Duration(inst.PollInterval) * time.Second * 3
+	if grace < minOfflineGrace {
+		grace = minOfflineGrace
+	}
+	if grace > maxOfflineGrace {
+		grace = maxOfflineGrace
+	}
+	return grace
+}
+
+func equalTags(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !strings.EqualFold(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) decorateInstance(inst model.Instance) model.Instance {
+	// Never-seen instances stay "unknown"; only hosts that did check in and
+	// then went silent are marked offline, so the last result is not shown as
+	// current forever.
+	if !inst.LastSeen.IsZero() {
+		inst.Online = time.Since(inst.LastSeen) <= offlineGrace(inst)
+		if !inst.Online {
+			inst.State = model.StateOffline
+		}
+	}
+	return inst
 }

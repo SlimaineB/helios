@@ -1,151 +1,119 @@
-# Runners and the SSH push model
+# Runners and tagged job execution
 
-> **Status: implemented.** This document describes the runner architecture.
-> The reverse-SSH tunnel mode has been removed; agents remain the pull path.
+> **Status: implemented (v1).** Runners execute runner-mode applications as
+> tagged jobs. The old SSH-instance lease model and the reverse-SSH tunnel are
+> removed. The installed agent remains the pull path and is unchanged.
 
-Helios has two execution paths and only two:
+Helios has two execution modes:
 
-| Path | Where Ansible runs | When to use |
+| Mode | Where Ansible runs | Use it when |
 |------|--------------------|-------------|
-| **Agent (pull)** | On the managed host, `--connection local` | Hosts that can reach the hub outbound and may install the agent |
-| **Runner (push)** | On a controller, over SSH using an Ansible inventory | Hosts reachable by SSH that should stay agentless, or where execution must be centralized |
+| **Agent** | On each managed host, by `helios-agent` | You can install the agent and want local drift checks/auto-heal |
+| **Runner** | On a controller/bastion, over SSH using an inventory | Targets must stay agentless, or execution must be centralized |
 
-A **runner** is a stateless worker that registers with the hub, advertises its
-capabilities, leases work, runs Ansible and reports results. The same runner
-binary runs on a VM or a Kubernetes pod.
+A **runner** is a stateless worker: it heartbeats, claims a matching job, runs
+Ansible and reports the result. Any runner with the required tags can take the
+next job; there is no per-instance ownership or lease.
 
-> The reverse-SSH **tunnel mode is removed**. It solved one niche (outbound-only
-> hosts) at the cost of a second topology, a port allocator, a tunnel-only agent
-> and a runner that could not be sharded. Outbound-only hosts are expected to be
-> reachable through a jump host configured in the inventory (`ProxyJump`)
-> instead.
+```text
+hub  ──HTTPS heartbeat/claim/result──▶  helios-runner  ──ssh──▶  inventory hosts
+```
 
-## How multiple runners share the fleet
+## Requirements
 
-Runners are horizontally scalable: start as many `helios-runner` processes as
-you need, on VMs, hosts or Kubernetes pods. They all use the same
-`HELIOS_RUNNER_TOKEN`; the hub arbitrates which runner owns which instance.
+- **Managed hosts**: `sshd`, `python3` and an SSH account. No agent, no Ansible.
+- **Runner**: `git`, `ansible-core`, `ansible.posix` and the SSH identity used by
+  the application inventories.
+- **Hub**: `HELIOS_RUNNER_TOKEN` set to a shared bearer token.
 
-Each runner has a stable identity (`--runner-id`, or one generated and persisted
-in `--state-dir`). It discovers SSH instances from
-`GET /api/v1/runner/instances` and, before starting an instance loop, leases it:
+## Application configuration
 
-- lease name `runner:instance:<instanceID>`, owner `<runnerID>`;
-- TTL 90 s, renewed on every discovery pass (15 s by default);
-- `AcquireLease` is atomic, so two runners can never run the same instance.
+A runner-mode application declares:
 
-If a runner dies, its leases expire and another runner claims them on its next
-pass. On `SIGTERM` a runner releases its leases, so failover is immediate.
+| Field | Meaning |
+|-------|---------|
+| `execution_mode` | `runner` (default is `agent`). |
+| `runner_tags` | All tags a runner must advertise. Empty means any runner. |
+| `inventory_source` | `repo` (read `inventory_path` from the repo) or `hub` (inventory edited in Helios). |
+| `inventory_path` | Path inside the repo when `inventory_source=repo`. |
 
-## Scheduling
+Auto-heal, check intervals, assignments and drift/stuck tracking are **agent
+concepts**. Runner mode v1 runs jobs on demand; it does not auto-heal, schedule
+drift checks or mark stuck assignments. Those features can be layered on later
+without changing the job contract.
 
-Scheduling is **first-come, first-served** in v1:
+## Job lifecycle
 
-1. Every runner lists the SSH instances it could run.
-2. It tries to claim each instance it does not already own.
-3. The hub grants the lease to exactly one runner; the others skip the instance.
-4. A runner that already holds an instance renews its lease instead of claiming
-   it again.
+1. An operator (UI or `POST /api/v1/applications/{appId}/run`) queues a `check`
+   or `apply` job with the application's required tags.
+2. A runner heartbeats its tags and calls `POST /api/v1/runner/jobs/claim`.
+3. The hub atomically marks the oldest matching queued job `running`, sets
+   `runner_id` and returns the job plus the application configuration.
+4. The runner checks out the repository, renders the inventory (for `hub`
+   sources), runs `ansible-playbook`, then posts
+   `POST /api/v1/runner/jobs/{id}/result`.
+5. The hub writes a normal `runs` row (with `runner_id`) and links it from the
+   job. Status is `ok`, `drift` (a `--check` found changes) or `failed`.
 
-There are no runner tags, capability constraints or `runner_selector` yet: all
-runners with the token are equivalent. Use `--max-instances` to cap how much of
-the fleet one runner takes.
+A job claimed by a runner that disappears is requeued after **30 minutes** (longer
+than the Ansible timeout) by the next claim. Runners do not renew anything.
 
-## Work units and leases
+## Runner configuration
 
-The unit of work is an **instance**: one runner loop owns all applications
-assigned to that SSH host. This keeps the repo mirror, drift state and command
-handling for a host in one place.
+```sh
+HELIOS_SERVER=https://hub.example.com
+HELIOS_RUNNER_TOKEN=...
+HELIOS_RUNNER_TAGS=eu,prod,linux
+HELIOS_RUNNER_SSH_USER=ansible
+HELIOS_RUNNER_SSH_KEY=/etc/helios/runner_id
+HELIOS_RUNNER_POLL_INTERVAL=10s
+HELIOS_RUNNER_MAX_CONCURRENT=2
+HELIOS_RUNNER_ID=runner-eu-1   # optional; generated in --state-dir otherwise
+helios-runner
+```
 
-- state is keyed by `instance` — repo mirror, drift state, commit marker;
-- reports reuse the existing run/command endpoints, scoped to the instance;
-- commands and autoheal keep their current semantics.
+Flags mirror the environment variables: `--server`, `--token`, `--tags`,
+`--ssh-user`, `--ssh-key`, `--ssh-common-args`, `--poll-interval`,
+`--max-concurrent`, `--runner-id`, `--ansible-bin`, `--insecure`.
 
-Leases reuse the existing database primitive (`AcquireLease` / `RenewLease` /
-`ReleaseLease` / `ErrLeaseLost`):
+The state directory holds disposable repo mirrors (`repos/app-<id>`) and
+temporary rendered inventories. Deleting it is safe.
 
-- `name = "runner:instance:<instanceID>"`, `owner = <runnerID>`;
-- TTL 90 s, renewed on each discovery tick;
-- `AcquireLease` is atomic, so two runners can never hold the same instance;
-- losing the lease (`ErrLeaseLost`) stops the local instance loop immediately.
+## Capacity and scaling
 
-### High availability
-
-- **Failover**: if a runner dies, its leases expire after the TTL and another
-  runner claims them on its next discovery pass.
-- **Drain**: on `SIGTERM`, a runner releases all its leases, so failover is
-  immediate instead of waiting for the TTL.
-- **No single point of failure**: N runners split the fleet. The hub arbitrates
-  leases; a single hub replica on SQLite is enough for many runners. PostgreSQL
-  is only required for multiple **hub** replicas, not for multiple runners.
-- **Known limit**: a runner that is alive but stuck keeps renewing its lease, so
-  a hung run does not fail over. It is bounded by the Ansible timeout
-  (15 min). Set `terminationGracePeriodSeconds` accordingly on Kubernetes.
-
-### Parallelism and capacity
-
-Three independent budgets:
-
-| Scope | Knob | Effect |
-|-------|------|--------|
-| Across runners | leases | More runners = more throughput, automatic split |
-| Within a runner | `--max-concurrent` | Cap on simultaneous Ansible processes |
-| Per runner | `--max-instances` | Cap on how many SSH instances one runner leases |
-
-`--max-concurrent` is a **runner-wide** semaphore shared by every instance loop.
-`--max-instances` prevents a single runner from grabbing the whole fleet at
-startup; set it to roughly `total SSH instances / number of runners` (plus a
-small margin).
-
-There is **no active rebalancing** in v1: runners take free or expired leases
-and are not stolen back. Rebalancing causes repo-mirror churn and is deferred.
-
-## Kubernetes
-
-A runner is designed to run as a stateless pod:
-
-- set `--runner-id` from the pod name (or let the runner generate one in its
-  ephemeral state directory) so each replica is a distinct `runnerID`;
-- git mirrors and run files live on ephemeral storage and are rebuilt on
-  demand — no PVC required;
-- a `Deployment` with N replicas is N runners; HA and parallelism come from the
-  leases, with no leader election;
-- use a `preStop` hook to release leases and
-  `terminationGracePeriodSeconds` long enough for an in-flight run (or rely on
-  Ansible idempotency and let another runner re-run it).
-
-The hub is unchanged: a runner pod and a runner VM speak the same API.
+- Start N runner processes or pods. The hub gives each queued job to one runner;
+  no leader election is required.
+- `--max-concurrent` caps simultaneous Ansible processes per runner (default 2).
+- Tags keep jobs on the right network segment (for example `eu`, `prod`,
+  `dmz`). Use separate runner pools per environment when hosts are isolated.
+- A single SQLite hub is enough for many runners; PostgreSQL is only required
+  for multiple **hub** replicas.
 
 ## Security
 
-- **Runner token**: v1 uses a shared `HELIOS_RUNNER_TOKEN` plus the unique
-  `runnerID`; leases make duplication impossible. Per-runner tokens with
-  rotation are a later step.
-- **SSH keys are managed by the hub** and encrypted at rest with
-  `HELIOS_SECRET_KEY` (the existing `secretbox`). An instance references a key by
-  `ssh_key_id`.
-- The runner fetches **only the keys for the assignments it holds**, over TLS,
-  through a runner-authenticated endpoint. It writes them to a `0600` temporary
-  file, passes `--private-key`, and wipes them after the run. Keys are never
-  exposed by the operator API.
-- The runner is untrusted for authorization: the hub decides which assignments
-  a runner may lease.
+- The runner API is disabled when `HELIOS_RUNNER_TOKEN` is empty.
+- Runners authenticate with a shared bearer token; treat a runner as trusted
+  infrastructure because it receives application variables and inventory data.
+- Hub-managed inventories may contain SSH credentials. They are only sent to
+  runners, never to pull agents.
+- Repository credentials are resolved by the hub and sent with the job; the
+  runner uses them for `git` only and keeps no permanent copy.
+- Managed hosts only need the SSH account used by Ansible; no inbound connection
+  to the hub is required.
 
-## What this removes
+## API summary
 
-Removing the tunnel mode deleted:
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `POST /api/v1/runner/heartbeat` | runner token | Register identity, tags and liveness |
+| `POST /api/v1/runner/jobs/claim` | runner token | Claim the next matching job (204 = none) |
+| `POST /api/v1/runner/jobs/{id}/result` | runner token | Report status and run output |
+| `POST /api/v1/applications/{appId}/run` | operator | Queue a runner job |
+| `GET /api/v1/runners` | operator | Fleet, recent jobs and summary |
 
-- `agent/internal/tunnel/` and the `--mode tunnel` branch in the agent;
-- `Mode`, `Tunnel*` config fields and `IsTunnel`;
-- `ModeTunnel`, `tunnel_port`, `tunnel_gateway` and `server/internal/api/tunnel.go`;
-- tunnel discovery in the runner;
-- the `hub → runner → tunnel host` node in the topology UI;
+## Not in v1
 
-## Non-goals (v1)
-
-- external dynamic inventory plugins/scripts and cloud provider sync (hub-managed inventories are supported);
-- per-runner tokens and rotation;
-- active rebalancing / preemption;
-- assignment priorities and queues beyond leases.
-
-See [Inventory and SSH keys](INVENTORY.md) for the push execution details.
+- runner-side auto-heal, drift scheduling and stuck detection;
+- per-runner tokens/rotation;
+- job priorities, retries beyond stale requeue, and cancellation;
+- key distribution from the hub (mount the SSH key on the runner).
