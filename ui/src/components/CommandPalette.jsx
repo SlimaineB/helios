@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useDialog } from '../hooks/useDialog.js'
 import { NAV_ITEMS } from '../nav.js'
+import { api } from '../api/client.js'
 
 const SHORTCUTS = [
   { keys: '⌘K', label: 'Command palette' },
+  { keys: '/', label: 'Focus page search' },
   { keys: 'Esc', label: 'Close dialog' },
   { keys: 'Enter', label: 'Confirm action' },
 ]
@@ -12,8 +14,10 @@ const SHORTCUTS = [
 export default function CommandPalette({ open, onClose, can, navigate }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
+  const [entities, setEntities] = useState([])
   const inputRef = useRef(null)
   const dialogRef = useDialog(open, onClose)
+  const entitySeq = useRef(0)
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim()
@@ -34,23 +38,54 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
     if (!open) return
     setQuery('')
     setSelected(0)
+    setEntities([])
   }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const q = query.trim()
+    if (q.length < 2) {
+      setEntities([])
+      return
+    }
+    const seq = ++entitySeq.current
+    const timer = setTimeout(async () => {
+      try {
+        const page = await api.instances(`?q=${encodeURIComponent(q)}&compact=1&limit=8`)
+        if (seq === entitySeq.current) setEntities(Array.isArray(page.items) ? page.items : [])
+      } catch {
+        if (seq === entitySeq.current) setEntities([])
+      }
+    }, 180)
+    return () => clearTimeout(timer)
+  }, [open, query])
+
+  const items = useMemo(() => {
+    const servers = entities.map((inst) => ({
+      type: 'server',
+      id: inst.id,
+      label: `${inst.name} (id ${inst.id})`,
+      path: `/instances/${inst.id}`,
+      hint: [inst.region, inst.project, inst.state].filter(Boolean).join(' · '),
+    }))
+    return [...filtered, ...servers]
+  }, [filtered, entities])
 
   useEffect(() => {
     const handler = (e) => {
       if (!open) return
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, filtered.length - 1)) }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSelected((s) => Math.min(s + 1, items.length - 1)) }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelected((s) => Math.max(s - 1, 0)) }
-      if (e.key === 'Enter') { e.preventDefault(); handleSelect(filtered[selected]) }
+      if (e.key === 'Enter') { e.preventDefault(); handleSelect(items[selected]) }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, filtered, selected])
+  }, [open, items, selected])
 
   const handleSelect = (item) => {
     if (!item) return
-    if (item.type === 'nav') {
-      if (item.path) navigate(item.path)
+    if ((item.type === 'nav' || item.type === 'server') && item.path) {
+      navigate(item.path)
       onClose()
     }
   }
@@ -79,7 +114,7 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
             type="text"
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelected(0) }}
-            placeholder="Type a command or navigate…"
+            placeholder="Type a command, page or host…"
             style={{
               width: '100%', padding: '10px 12px',
               background: 'var(--panel-3)', border: '1px solid var(--border)',
@@ -89,11 +124,11 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
             autoFocus
           />
           <div style={{ maxHeight: '45vh', overflow: 'auto' }}>
-            {filtered.length === 0 ? (
+            {items.length === 0 ? (
               <div className="muted" style={{ padding: '20px', textAlign: 'center' }}>No matches</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                {filtered.map((item, i) => (
+                {items.map((item, i) => (
                   <button
                     key={`${item.type}-${item.id || item.keys}`}
                     className={`command-item ${i === selected ? 'selected' : ''}`}
@@ -107,7 +142,7 @@ export default function CommandPalette({ open, onClose, can, navigate }) {
                     onMouseEnter={() => setSelected(i)}
                   >
                     <span>{item.label}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--muted-2)', marginLeft: '12px' }}>{item.keys || (item.path ? `→ ${item.path}` : '')}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--muted-2)', marginLeft: '12px' }}>{item.keys || item.hint || (item.path ? `→ ${item.path}` : '')}</span>
                   </button>
                 ))}
               </div>

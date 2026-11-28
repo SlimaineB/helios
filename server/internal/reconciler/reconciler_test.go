@@ -68,6 +68,26 @@ spec:
   autoHeal: true
 ---
 apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: runner-demo
+  project: team
+spec:
+  repoRef: app-repo
+  branch: main
+  path: site.yml
+  executionMode: runner
+  runnerTags:
+    - eu
+    - web
+  inventorySource: hub
+  inventory:
+    groups:
+      - name: web
+        hosts:
+          - name: web-1
+---
+apiVersion: helios.dev/v1alpha1
 kind: Assignment
 metadata:
   name: demo-on-host
@@ -104,6 +124,18 @@ spec:
 	}
 	if app.Vars != `{"env":"prod","replicas":2}` {
 		t.Fatalf("unexpected app vars: %s", app.Vars)
+	}
+	runnerApp, err := st.GetApplicationByName(ctx, "runner-demo")
+	if err != nil {
+		t.Fatalf("runner application not created: %v", err)
+	}
+	if runnerApp.ExecutionMode != model.ExecRunner || runnerApp.AutoHeal ||
+		runnerApp.InventorySource != model.InventorySourceHub ||
+		len(runnerApp.RunnerTags) != 2 || runnerApp.RunnerTags[0] != "eu" {
+		t.Fatalf("unexpected runner app: %+v", runnerApp)
+	}
+	if !strings.Contains(runnerApp.InventoryData, "web-1") {
+		t.Fatalf("runner inventory = %s", runnerApp.InventoryData)
 	}
 	if _, err := st.GetAssignment(ctx, "ins-1", app.ID); err != nil {
 		t.Fatalf("assignment not created: %v", err)

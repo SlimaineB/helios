@@ -42,13 +42,17 @@ concepts**. Runner mode v1 runs jobs on demand; it does not auto-heal, schedule
 drift checks or mark stuck assignments. Those features can be layered on later
 without changing the job contract.
 
+GitOps manifests accept the same fields (`executionMode`, `runnerTags`,
+`inventorySource` and an inline `inventory` object). See [GitOps](GITOPS.md).
+
 ## Job lifecycle
 
 1. An operator (UI or `POST /api/v1/applications/{appId}/run`) queues a `check`
    or `apply` job with the application's required tags.
 2. A runner heartbeats its tags and calls `POST /api/v1/runner/jobs/claim`.
-3. The hub atomically marks the oldest matching queued job `running`, sets
-   `runner_id` and returns the job plus the application configuration.
+3. The hub checks the runner's `max_parallel` limit, then atomically marks the
+   oldest matching queued job `running`, sets `runner_id` and returns the job
+   plus the application configuration.
 4. The runner checks out the repository, renders the inventory (for `hub`
    sources), runs `ansible-playbook`, then posts
    `POST /api/v1/runner/jobs/{id}/result`.
@@ -79,11 +83,24 @@ Flags mirror the environment variables: `--server`, `--token`, `--tags`,
 The state directory holds disposable repo mirrors (`repos/app-<id>`) and
 temporary rendered inventories. Deleting it is safe.
 
+## Fleet management
+
+Operators can register, edit and delete runner records from the **Runners** page
+(or with the API below). A record holds the runner ID, tags and `max_parallel`.
+Creating a record does not start a process: start `helios-runner` with the same
+`HELIOS_RUNNER_ID` and tags. Deleting a record requeues its running jobs; stop
+the process first or the next heartbeat registers it again.
+
+`max_parallel` is enforced by the hub at claim time. A heartbeat refreshes tags
+and liveness but does not overwrite the operator-set limit. The runner process
+still has its own hard cap.
+
 ## Capacity and scaling
 
 - Start N runner processes or pods. The hub gives each queued job to one runner;
   no leader election is required.
-- `--max-concurrent` caps simultaneous Ansible processes per runner (default 2).
+- `max_parallel` (hub) and `--max-concurrent` (runner) cap simultaneous Ansible
+  processes per runner (both default 2). The effective limit is the lower one.
 - Tags keep jobs on the right network segment (for example `eu`, `prod`,
   `dmz`). Use separate runner pools per environment when hosts are isolated.
 - A single SQLite hub is enough for many runners; PostgreSQL is only required
@@ -110,6 +127,9 @@ temporary rendered inventories. Deleting it is safe.
 | `POST /api/v1/runner/jobs/{id}/result` | runner token | Report status and run output |
 | `POST /api/v1/applications/{appId}/run` | operator | Queue a runner job |
 | `GET /api/v1/runners` | operator | Fleet, recent jobs and summary |
+| `POST /api/v1/runners` | operator | Register a runner record |
+| `PUT /api/v1/runners/{id}` | operator | Edit tags and `max_parallel` |
+| `DELETE /api/v1/runners/{id}` | operator | Remove a record and requeue its running jobs |
 
 ## Not in v1
 

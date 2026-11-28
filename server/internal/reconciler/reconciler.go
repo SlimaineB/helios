@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/slim/helios/server/internal/gitops"
+	"github.com/slim/helios/server/internal/inventory"
 	"github.com/slim/helios/server/internal/model"
 	"github.com/slim/helios/server/internal/projects"
 	"github.com/slim/helios/server/internal/store"
@@ -475,6 +476,10 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 	if _, err := r.store.EnsureRepositoryByProjectURL(ctx, spec.Project, repoURL); err != nil {
 		return err
 	}
+	mode, source, inventoryData, tags, err := applicationRunnerFields(spec)
+	if err != nil {
+		return err
+	}
 
 	existing, err := r.store.GetApplicationByName(ctx, name)
 	if err != nil {
@@ -487,13 +492,15 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 			Branch:          spec.Branch,
 			Path:            spec.Path,
 			InventoryPath:   spec.InventoryPath,
-			InventorySource: model.InventorySourceRepo,
+			InventorySource: source,
+			InventoryData:   inventoryData,
 			Vars:            spec.Vars,
-			AutoHeal:        spec.AutoHeal,
+			AutoHeal:        spec.AutoHeal && mode != model.ExecRunner,
 			SyncInterval:    spec.SyncInterval,
 			IgnorePaths:     spec.IgnorePaths,
 			Project:         spec.Project,
-			ExecutionMode:   model.ExecAgent,
+			ExecutionMode:   mode,
+			RunnerTags:      tags,
 		})
 		if err != nil {
 			return err
@@ -507,15 +514,15 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 	next.Branch = spec.Branch
 	next.Path = spec.Path
 	next.InventoryPath = spec.InventoryPath
-	next.InventorySource = model.InventorySourceRepo
-	next.InventoryData = ""
+	next.InventorySource = source
+	next.InventoryData = inventoryData
 	next.Vars = spec.Vars
-	next.AutoHeal = spec.AutoHeal
+	next.AutoHeal = spec.AutoHeal && mode != model.ExecRunner
 	next.SyncInterval = spec.SyncInterval
 	next.IgnorePaths = spec.IgnorePaths
 	next.Project = spec.Project
-	next.ExecutionMode = model.ExecAgent
-	next.RunnerTags = nil
+	next.ExecutionMode = mode
+	next.RunnerTags = tags
 	if reflect.DeepEqual(next, existing) {
 		summary["unchanged"]++
 		return nil
@@ -525,6 +532,65 @@ func (r *Reconciler) applyApplication(ctx context.Context, name string, spec git
 	}
 	summary["updated"]++
 	return nil
+}
+
+func applicationRunnerFields(spec gitops.ApplicationSpec) (string, string, string, []string, error) {
+	mode := strings.TrimSpace(spec.ExecutionMode)
+	if mode == "" {
+		mode = model.ExecAgent
+	}
+	if mode != model.ExecAgent && mode != model.ExecRunner {
+		return "", "", "", nil, fmt.Errorf("executionMode must be agent or runner")
+	}
+	source := strings.TrimSpace(spec.InventorySource)
+	if source == "" {
+		source = model.InventorySourceRepo
+	}
+	tags := normalizeRunnerTags(spec.RunnerTags)
+	if mode == model.ExecAgent {
+		if source == model.InventorySourceHub {
+			return "", "", "", nil, fmt.Errorf("inventorySource=hub requires executionMode=runner")
+		}
+		return mode, model.InventorySourceRepo, "", nil, nil
+	}
+	switch source {
+	case model.InventorySourceRepo:
+		return mode, source, "", tags, nil
+	case model.InventorySourceHub:
+		data := strings.TrimSpace(spec.InventoryData)
+		if data == "" {
+			data = `{"groups":[]}`
+		}
+		parsed, err := inventory.ParseJSON(data)
+		if err != nil {
+			return "", "", "", nil, fmt.Errorf("inventory: %w", err)
+		}
+		data, err = inventory.MarshalJSON(parsed)
+		if err != nil {
+			return "", "", "", nil, fmt.Errorf("inventory: %w", err)
+		}
+		return mode, source, data, tags, nil
+	default:
+		return "", "", "", nil, fmt.Errorf("inventorySource must be repo or hub")
+	}
+}
+
+func normalizeRunnerTags(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		tag := strings.TrimSpace(raw)
+		if tag == "" {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
 }
 
 func (r *Reconciler) applyAssignment(ctx context.Context, spec gitops.AssignmentSpec, summary map[string]int) error {

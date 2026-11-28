@@ -3,8 +3,10 @@ import { api } from '../api/client.js'
 import Pager from '../components/Pager.jsx'
 import Badge from '../components/Badge.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { SkeletonTable } from '../components/Skeleton.jsx'
 import { toast } from '../components/Toast.jsx'
+import { useUrlState } from '../hooks/useUrlState.js'
 
 const PAGE_SIZE = 50
 
@@ -28,26 +30,18 @@ export default function Audit() {
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [facets, setFacets] = useState({ methods: [], users: [] })
-  const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
-  const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [method, setMethod] = useState('')
-  const [status, setStatus] = useState('')
-  const [user, setUser] = useState('')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput.trim()), 250)
-    return () => clearTimeout(timer)
-  }, [searchInput])
+  const [list, setList, resetList] = useUrlState(
+    { q: '', method: '', status: '', user: '', from: '', to: '', offset: 0, limit: PAGE_SIZE },
+    { clamp: { limit: [1, 500], offset: [0, 1e9] } },
+  )
+  const { q: search, method, status, user, from, to, offset, limit: pageSize } = list
 
   const refresh = useCallback(async () => {
     try {
       setLoading(true)
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) })
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) })
       if (search) params.set('q', search)
       if (method) params.set('method', method)
       if (status) params.set('status', status)
@@ -58,29 +52,19 @@ export default function Audit() {
       setRows(d.items || [])
       setTotal(d.total)
       setFacets(d.facets || { methods: [], users: [] })
-      if (!d.items?.length && d.total > 0 && offset > 0) setOffset(0)
+      if (!d.items?.length && d.total > 0 && offset > 0) setList({ offset: 0 })
     } catch (e) {
       toast.error(e.message)
     } finally {
       setLoading(false)
       setLoaded(true)
     }
-  }, [offset, search, method, status, user, from, to])
+  }, [offset, pageSize, search, method, status, user, from, to, setList])
 
   useEffect(() => { refresh() }, [refresh])
 
-  useEffect(() => { setOffset(0) }, [search, method, status, user, from, to])
-
   const filtersActive = !!(search || method || status || user || from || to)
-  const clearFilters = () => {
-    setSearchInput('')
-    setSearch('')
-    setMethod('')
-    setStatus('')
-    setUser('')
-    setFrom('')
-    setTo('')
-  }
+  const clearFilters = () => resetList(['q', 'method', 'status', 'user', 'from', 'to', 'offset'])
 
   const methodOptions = useMemo(() => {
     const set = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -111,31 +95,30 @@ export default function Audit() {
       <p className="muted page-intro">Every mutating operator API call, with its identity and outcome.</p>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search path, user, IP or ID…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          value={search}
+          onSearch={(value) => setList({ q: value, offset: 0 })}
         />
-        <select value={method} onChange={(e) => setMethod(e.target.value)} aria-label="HTTP method">
+        <select value={method} onChange={(e) => setList({ method: e.target.value, offset: 0 })} aria-label="HTTP method">
           <option value="">All methods</option>
           {methodOptions.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Outcome">
+        <select value={status} onChange={(e) => setList({ status: e.target.value, offset: 0 })} aria-label="Outcome">
           {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select value={user} onChange={(e) => setUser(e.target.value)} aria-label="User">
+        <select value={user} onChange={(e) => setList({ user: e.target.value, offset: 0 })} aria-label="User">
           <option value="">All users</option>
           {userOptions.map((u) => <option key={u} value={u}>{u}</option>)}
         </select>
         <label className="date-filter">
           From
-          <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+          <input type="date" value={from} max={to || undefined} onChange={(e) => setList({ from: e.target.value, offset: 0 })} />
         </label>
         <label className="date-filter">
           To
-          <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+          <input type="date" value={to} min={from || undefined} onChange={(e) => setList({ to: e.target.value, offset: 0 })} />
         </label>
         {filtersActive && (
           <button type="button" className="ghost small" onClick={clearFilters}>Clear</button>
@@ -211,7 +194,14 @@ export default function Audit() {
         </div>
       )}
 
-      <Pager total={total} limit={PAGE_SIZE} offset={offset} onPage={setOffset} />
+      <Pager
+        total={total}
+        limit={pageSize}
+        offset={offset}
+        onPage={(offset) => setList({ offset }, { push: true })}
+        onLimit={(limit) => setList({ limit, offset: 0 })}
+        label="entries"
+      />
     </section>
   )
 }

@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { LayoutGrid, List } from 'lucide-react'
 import { api, instanceOnline, projectLabel, stateLabel } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import TagList from '../components/TagList.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import ProjectCard from '../components/ProjectCard.jsx'
+import { matchesSearch } from '../search.js'
+import { useUrlState } from '../hooks/useUrlState.js'
 
 const empty = { name: '', repo_patterns: '' }
 
@@ -27,20 +30,22 @@ const normalizeState = (state) => {
   return state || 'unknown'
 }
 
-async function fetchAllInstances() {
-  const limit = 200
+const INSTANCE_SUMMARY_CAP = 5000
+
+async function fetchInstanceSummaries() {
+  const limit = 500
   let offset = 0
   let total = 0
-  const out = []
+  const items = []
   do {
-    const page = await api.instances(`?limit=${limit}&offset=${offset}`)
-    const items = Array.isArray(page.items) ? page.items : []
-    out.push(...items)
+    const page = await api.instances(`?limit=${limit}&offset=${offset}&compact=1`)
+    const rows = Array.isArray(page.items) ? page.items : []
+    items.push(...rows)
     total = Number(page.total) || 0
-    offset += items.length
-    if (!items.length || out.length >= total) break
-  } while (out.length < total)
-  return out
+    offset += rows.length
+    if (!rows.length || items.length >= total || items.length >= INSTANCE_SUMMARY_CAP) break
+  } while (items.length < total && items.length < INSTANCE_SUMMARY_CAP)
+  return { items, total, truncated: total > items.length }
 }
 
 function buildSummaries(projects, applications, instances) {
@@ -184,10 +189,11 @@ function ProjectTable({ rows, onEdit, onDelete, can }) {
 
 export default function Projects() {
   const { can } = useAuth()
-  const [searchParams, setSearchParams] = useSearchParams()
   const [projects, setProjects] = useState([])
   const [applications, setApplications] = useState([])
   const [instances, setInstances] = useState([])
+  const [instanceTotal, setInstanceTotal] = useState(0)
+  const [instancesTruncated, setInstancesTruncated] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -195,38 +201,30 @@ export default function Projects() {
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirm, setConfirm] = useState(null)
-  const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [stateFilter, setStateFilter] = useState('')
-  const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
-  const [tagFilter, setTagFilter] = useState('')
-  const [appFilter, setAppFilter] = useState('')
-  const [onlineOnly, setOnlineOnly] = useState(false)
-  const [view, setView] = useState(() => {
-    const saved = localStorage.getItem('helios_projects_view')
-    return saved === 'list' ? 'list' : 'cards'
-  })
-
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput.trim().toLowerCase()), 250)
-    return () => clearTimeout(timer)
-  }, [searchInput])
-
-  useEffect(() => {
-    setProjectFilter(searchParams.get('project') || '')
-  }, [searchParams])
+  const [list, setList, resetList] = useUrlState(() => ({
+    q: '',
+    state: '',
+    project: '',
+    tag: '',
+    app: '',
+    online: false,
+    view: localStorage.getItem('helios_projects_view') === 'list' ? 'list' : 'cards',
+  }))
+  const { q: search, state: stateFilter, project: projectFilter, tag: tagFilter, app: appFilter, online: onlineOnly, view } = list
 
   const refresh = useCallback(async () => {
     try {
       setLoading(true)
-      const [projectList, appList, instanceList] = await Promise.all([
+      const [projectList, appList, instancePage] = await Promise.all([
         api.projects(),
         api.applications().catch(() => []),
-        fetchAllInstances().catch(() => []),
+        fetchInstanceSummaries().catch(() => ({ items: [], total: 0, truncated: false })),
       ])
       setProjects(projectList)
       setApplications(appList)
-      setInstances(instanceList)
+      setInstances(instancePage.items)
+      setInstanceTotal(instancePage.total)
+      setInstancesTruncated(instancePage.truncated)
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -277,7 +275,7 @@ export default function Projects() {
     if (tagFilter && !summary.tagKeys.has(tagFilter.toLowerCase())) return false
     if (appFilter && !summary.appIds.has(Number(appFilter))) return false
     if (onlineOnly && summary.online === 0) return false
-    if (search && !summary.searchText.includes(search)) return false
+    if (!matchesSearch(summary.searchText, search)) return false
     return true
   }).sort((a, b) => {
     if (!a.key) return -1
@@ -294,30 +292,12 @@ export default function Projects() {
 
   const filtersActive = !!(search || stateFilter || projectFilter || tagFilter || appFilter || onlineOnly)
 
-  const setParam = (key, value) => {
-    const next = new URLSearchParams(searchParams)
-    if (value) next.set(key, value)
-    else next.delete(key)
-    setSearchParams(next, { replace: true })
-  }
-  const applyProjectFilter = (value) => {
-    setProjectFilter(value)
-    setParam('project', value)
-  }
+  const applyProjectFilter = (value) => setList({ project: value })
 
-  const clearFilters = () => {
-    setSearchInput('')
-    setSearch('')
-    setStateFilter('')
-    setProjectFilter('')
-    setTagFilter('')
-    setAppFilter('')
-    setOnlineOnly(false)
-    setSearchParams({}, { replace: true })
-  }
+  const clearFilters = () => resetList(['q', 'state', 'project', 'tag', 'app', 'online'])
 
   const changeView = (next) => {
-    setView(next)
+    setList({ view: next })
     localStorage.setItem('helios_projects_view', next)
   }
 
@@ -378,14 +358,13 @@ export default function Projects() {
       </div>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search project, repo pattern, instance, tag or application…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          value={search}
+          onSearch={(value) => setList({ q: value })}
         />
-        <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} aria-label="State">
+        <select value={stateFilter} onChange={(e) => setList({ state: e.target.value })} aria-label="State">
           <option value="">All states</option>
           <option value="ok">Synced</option>
           <option value="drift">Drift</option>
@@ -397,16 +376,16 @@ export default function Projects() {
           <option value="__global__">Global</option>
           {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
-        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
+        <select value={tagFilter} onChange={(e) => setList({ tag: e.target.value })} aria-label="Tag">
           <option value="">All tags</option>
           {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
         </select>
-        <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)} aria-label="Application">
+        <select value={appFilter} onChange={(e) => setList({ app: e.target.value })} aria-label="Application">
           <option value="">All applications</option>
           {appOptions.map((app) => <option key={app.id} value={String(app.id)}>{app.name}</option>)}
         </select>
         <label className="row small filter-check">
-          <input type="checkbox" checked={onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked)} />
+          <input type="checkbox" checked={onlineOnly} onChange={(e) => setList({ online: e.target.checked })} />
           Online only
         </label>
         {filtersActive && <button type="button" className="ghost small" onClick={clearFilters}>Clear</button>}

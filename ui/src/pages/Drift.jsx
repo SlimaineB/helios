@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
   CircleCheck, ClipboardCheck, History, Play, RefreshCw, Server, TriangleAlert, Pencil,
 } from 'lucide-react'
@@ -8,6 +8,7 @@ import Badge from '../components/Badge.jsx'
 import AutoHealChip, { appAutoHealMeta } from '../components/AutoHealChip.jsx'
 import DiffModal from '../components/DiffModal.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import TagList from '../components/TagList.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import Pager from '../components/Pager.jsx'
@@ -15,6 +16,7 @@ import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 import { useCommandRunner } from '../hooks/useCommandRunner.js'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
+import { useUrlState } from '../hooks/useUrlState.js'
 
 const PAGE_SIZE = 50
 
@@ -22,33 +24,23 @@ const fmt = (t) => (t ? new Date(t).toLocaleString() : '—')
 
 export default function Drift() {
   const { can } = useAuth()
-  const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [pageOff, setPageOff] = useState(0)
-  const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
-  const [appFilter, setAppFilter] = useState(searchParams.get('app') || '')
+  const [list, setList, resetList] = useUrlState(
+    { q: '', project: '', app: '', offset: 0, limit: PAGE_SIZE },
+    { clamp: { limit: [1, 500], offset: [0, 1e9] } },
+  )
+  const { q: search, project: projectFilter, app: appFilter, offset: pageOff, limit: pageSize } = list
   const [diffRun, setDiffRun] = useState(null)
   const [busy, setBusy] = useState({})
   const loadedRef = useRef(false)
   const requestSeq = useRef(0)
 
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput.trim()), 250)
-    return () => clearTimeout(timer)
-  }, [searchInput])
-
-  useEffect(() => {
-    setPageOff(0)
-  }, [search, projectFilter, appFilter])
-
   const refresh = useCallback(async () => {
     if (!loadedRef.current) setLoading(true)
     const seq = ++requestSeq.current
     try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(pageOff), facets: '1' })
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(pageOff), facets: '1' })
       if (search) params.set('q', search)
       if (projectFilter) params.set('project', projectFilter === '__global__' ? '__global__' : projectFilter)
       if (appFilter) params.set('app_id', appFilter)
@@ -56,7 +48,7 @@ export default function Drift() {
       if (seq !== requestSeq.current) return
       const nextTotal = Number(next.total) || 0
       if (!(next.items || []).length && pageOff > 0 && nextTotal > 0) {
-        setPageOff(Math.max(0, pageOff - PAGE_SIZE))
+        setList({ offset: Math.max(0, pageOff - pageSize) })
         return
       }
       setData(next)
@@ -68,16 +60,11 @@ export default function Drift() {
         setLoading(false)
       }
     }
-  }, [appFilter, pageOff, projectFilter, search])
+  }, [appFilter, pageOff, pageSize, projectFilter, search, setList])
 
   const commands = useCommandRunner(refresh)
   useEffect(() => { refresh() }, [refresh])
   useLiveRefresh(refresh, { interval: 10000 })
-  useEffect(() => {
-    setProjectFilter(searchParams.get('project') || '')
-    setAppFilter(searchParams.get('app') || '')
-  }, [searchParams])
-
   const rows = useMemo(() => {
     return (data?.items || []).map(({ instance, app }) => ({
       inst: instance,
@@ -98,13 +85,6 @@ export default function Drift() {
     instances: data?.stats?.instances || 0,
     apps: data?.stats?.apps || 0,
     autoheal: data?.stats?.autoheal || 0,
-  }
-
-  const setParam = (key, value) => {
-    const next = new URLSearchParams(searchParams)
-    if (value) next.set(key, value)
-    else next.delete(key)
-    setSearchParams(next, { replace: true })
   }
 
   const toggleAutoHeal = async (inst, app) => {
@@ -154,24 +134,23 @@ export default function Drift() {
       </div>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search instance, region or application…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          value={search}
+          onSearch={(value) => setList({ q: value, offset: 0 })}
         />
-        <select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setParam('project', e.target.value) }} aria-label="Project">
+        <select value={projectFilter} onChange={(e) => setList({ project: e.target.value, offset: 0 })} aria-label="Project">
           <option value="">All projects</option>
           <option value="__global__">Global</option>
           {projectOptions.filter(Boolean).map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
-        <select value={appFilter} onChange={(e) => { setAppFilter(e.target.value); setParam('app', e.target.value) }} aria-label="Application">
+        <select value={appFilter} onChange={(e) => setList({ app: e.target.value, offset: 0 })} aria-label="Application">
           <option value="">All applications</option>
           {appOptions.map((app) => <option key={app.id} value={String(app.id)}>{app.name}</option>)}
         </select>
-        {(searchInput || projectFilter || appFilter) && (
-          <button type="button" className="ghost small" onClick={() => { setSearchInput(''); setProjectFilter(''); setAppFilter(''); setSearchParams({}, { replace: true }) }}>Clear</button>
+        {(search || projectFilter || appFilter) && (
+          <button type="button" className="ghost small" onClick={() => resetList(['q', 'project', 'app', 'offset'])}>Clear</button>
         )}
       </div>
 
@@ -306,7 +285,14 @@ export default function Drift() {
         </div>
       )}
 
-      <Pager total={total} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
+      <Pager
+        total={total}
+        limit={pageSize}
+        offset={pageOff}
+        onPage={(offset) => setList({ offset }, { push: true })}
+        onLimit={(limit) => setList({ limit, offset: 0 })}
+        label="assignments"
+      />
       {diffRun && <DiffModal runId={diffRun} onClose={() => setDiffRun(null)} />}
     </section>
   )

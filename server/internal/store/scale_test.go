@@ -72,6 +72,7 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 		{"all", model.InstanceListFilter{AllProjects: true}, []string{"web-1", "web-2", "web-3"}},
 		{"query", model.InstanceListFilter{AllProjects: true, Query: "web-2"}, []string{"web-2"}},
 		{"app search", model.InstanceListFilter{AllProjects: true, Query: "web"}, []string{"web-1", "web-2", "web-3"}},
+		{"multi term", model.InstanceListFilter{AllProjects: true, Query: "web staging"}, []string{"web-3"}},
 		{"tag", model.InstanceListFilter{AllProjects: true, Tag: "PROD"}, []string{"web-1", "web-2"}},
 		{"project", model.InstanceListFilter{AllProjects: true, HasProject: true, Project: "prod"}, []string{"web-1"}},
 		{"global project", model.InstanceListFilter{AllProjects: true, HasProject: true}, []string{"web-2"}},
@@ -198,6 +199,14 @@ func TestInstanceFilteringAndBatchLoaders(t *testing.T) {
 	driftTotal, err := st.CountDriftAssignments(ctx, model.AssignmentFilter{AllProjects: true, Query: "web-1"})
 	if err != nil || driftTotal != 1 {
 		t.Fatalf("drift count: err=%v %d", err, driftTotal)
+	}
+	driftMulti, err := st.CountDriftAssignments(ctx, model.AssignmentFilter{AllProjects: true, Query: "web-1 eu-west"})
+	if err != nil || driftMulti != 1 {
+		t.Fatalf("drift multi count: err=%v %d", err, driftMulti)
+	}
+	driftNone, err := st.CountDriftAssignments(ctx, model.AssignmentFilter{AllProjects: true, Query: "web-2 eu-west"})
+	if err != nil || driftNone != 0 {
+		t.Fatalf("drift multi none: err=%v %d", err, driftNone)
 	}
 	driftStats, err := st.DriftAssignmentStats(ctx, model.AssignmentFilter{AllProjects: true})
 	if err != nil || driftStats.Total != 2 || driftStats.Instances != 2 || driftStats.Apps != 1 {

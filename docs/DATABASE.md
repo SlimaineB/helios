@@ -192,13 +192,15 @@ Primary key: `(instance_id, app_id, key)`.
 
 ### `runners`
 
-Registered `helios-runner` workers. Rows are upserted by heartbeat; liveness is
-computed from `last_seen`, so there is no status column to clean up.
+Registered `helios-runner` workers. Rows are upserted by heartbeat and can also
+be created/edited/deleted by operators. Liveness is computed from `last_seen`,
+so there is no status column to clean up.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `TEXT` PK | Runner identity (`--runner-id` or generated) |
 | `tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array advertised by the runner |
+| `max_parallel` | `INTEGER NOT NULL DEFAULT 2` | Hub-side limit for simultaneously running jobs |
 | `version` | `TEXT NOT NULL DEFAULT ''` | Reported runner version |
 | `last_seen` | `TEXT NOT NULL` | Last heartbeat |
 | `created_at` | `TEXT NOT NULL` | First registration |

@@ -6,10 +6,12 @@ import { useAuth } from '../App.jsx'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { SkeletonEmpty, SkeletonCard } from '../components/Skeleton.jsx'
 import { toast } from '../components/Toast.jsx'
 import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
 import RepositoryCard from '../components/RepositoryCard.jsx'
+import { matchesSearch } from '../search.js'
 
 const empty = { name: '', url: '', project: DEFAULT_PROJECT, username: '', password: '', ssh_key: '', insecure_skip_verify: false }
 
@@ -53,12 +55,9 @@ export default function Repositories() {
   useEffect(() => { refresh() }, [refresh])
 
   const filteredRepos = useMemo(() => {
-    const q = search.trim().toLowerCase()
     return repos.filter((repo) => {
       if (authFilter && authKind(repo) !== authFilter) return false
-      if (!q) return true
-      return [repo.name, repo.url, repo.username]
-        .some((value) => (value || '').toLowerCase().includes(q))
+      return matchesSearch([repo.name, repo.url, repo.username].join(' '), search)
     })
   }, [repos, search, authFilter])
 
@@ -118,12 +117,11 @@ export default function Repositories() {
       <p className="muted">Git connections scoped to a project, reusable by its applications via <code>repo_url</code>. The agent authenticates against private repos using the matching tenant entry.</p>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search name, URL or username…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onSearch={setSearch}
         />
         <select value={authFilter} onChange={(e) => setAuthFilter(e.target.value)} aria-label="Filter by authentication">
           <option value="">All authentication</option>

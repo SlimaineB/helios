@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Globe2, Search, ZoomIn, ZoomOut, Maximize2, LocateFixed,
-  RefreshCw, Server, PowerOff, X, CircleDot,
+  Globe2, ZoomIn, ZoomOut, Maximize2, LocateFixed,
+  RefreshCw, Server, PowerOff, CircleDot,
 } from 'lucide-react'
 import { api, instanceOnline } from '../api/client.js'
 import { toast } from '../components/Toast.jsx'
 import { SkeletonCard } from '../components/Skeleton.jsx'
 import FleetTabs from '../components/FleetTabs.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
+import { useUrlState } from '../hooks/useUrlState.js'
 import world from '../assets/world-land.json'
 
 const W = 1000
 const H = 500
+const MAP_CAP = 2000
 
 const project = ([lon, lat]) => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H]
 
@@ -159,10 +162,10 @@ export default function WorldMap() {
   const [instances, setInstances] = useState(null)
   const [apps, setApps] = useState([])
   const [loading, setLoading] = useState(true)
-  const [appFilter, setAppFilter] = useState('')
-  const [stateFilter, setStateFilter] = useState('')
-  const [queryInput, setQueryInput] = useState('')
-  const [query, setQuery] = useState('')
+  const [fleetTotal, setFleetTotal] = useState(0)
+  const [fleetTruncated, setFleetTruncated] = useState(false)
+  const [list, setList, resetList] = useUrlState({ q: '', app: '', state: '' })
+  const { q: query, app: appFilter, state: stateFilter } = list
   const [selected, setSelected] = useState(null)
   const [hover, setHover] = useState(null) // { inst, sx, sy }
   const [view, setView] = useState({ k: 1, x: 0, y: 0 })
@@ -170,18 +173,13 @@ export default function WorldMap() {
   const drag = useRef(null)
   const requestSeq = useRef(0)
 
-  useEffect(() => {
-    const timer = setTimeout(() => setQuery(queryInput.trim()), 250)
-    return () => clearTimeout(timer)
-  }, [queryInput])
-
   const load = useCallback(async () => {
     const seq = ++requestSeq.current
     try {
       const all = []
       let offset = 0
       let total = Infinity
-      while (all.length < total && all.length < 20000) {
+      while (all.length < total && all.length < MAP_CAP) {
         const params = new URLSearchParams({ limit: '1000', offset: String(offset), compact: '1' })
         if (query) params.set('q', query)
         if (appFilter) params.set('app_id', appFilter)
@@ -196,7 +194,11 @@ export default function WorldMap() {
         total = Number.isFinite(Number(d.total)) ? Number(d.total) : all.length
         offset += items.length
       }
-      if (seq === requestSeq.current) setInstances(all)
+      if (seq === requestSeq.current) {
+        setInstances(all)
+        setFleetTotal(Number.isFinite(total) ? total : all.length)
+        setFleetTruncated((Number.isFinite(total) ? total : all.length) > all.length)
+      }
     } catch (e) {
       if (seq === requestSeq.current) toast.error(e.message)
     } finally {
@@ -315,31 +317,30 @@ export default function WorldMap() {
       <div className="fleet-switch"><FleetTabs /></div>
 
       <div className="wm-toolbar">
-        <div className="wm-field">
-          <Search size={14} />
-          <input
-            type="search"
-            placeholder="Filter host, id, project, app or region…"
-            value={queryInput}
-            onChange={(e) => setQueryInput(e.target.value)}
-          />
-          {queryInput && <button type="button" className="wm-clear" onClick={() => setQueryInput('')} aria-label="Clear search"><X size={13} /></button>}
-        </div>
-        <select value={appFilter} onChange={(e) => setAppFilter(e.target.value)} aria-label="Application filter">
+        <SearchBox
+          className="wm-search"
+          placeholder="Filter host, id, project, app or region…"
+          value={query}
+          onSearch={(value) => setList({ q: value })}
+        />
+        <select value={appFilter} onChange={(e) => setList({ app: e.target.value })} aria-label="Application filter">
           <option value="">All applications</option>
           {appOptions.map((app) => <option key={app.id} value={String(app.id)}>{app.name}</option>)}
         </select>
-        <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} aria-label="State filter">
+        <select value={stateFilter} onChange={(e) => setList({ state: e.target.value })} aria-label="State filter">
           <option value="">All states</option>
           <option value="ok">Healthy</option>
           <option value="drift">Drift</option>
           <option value="error">Failed</option>
           <option value="unknown">No check</option>
         </select>
-        {(queryInput || appFilter || stateFilter) && (
-          <button type="button" className="btn ghost small" onClick={() => { setQueryInput(''); setAppFilter(''); setStateFilter('') }}>Clear</button>
+        {(query || appFilter || stateFilter) && (
+          <button type="button" className="btn ghost small" onClick={() => resetList(['q', 'app', 'state'])}>Clear</button>
         )}
-        <span className="wm-count">{visible.length + visibleUnknown.length} host{visible.length + visibleUnknown.length === 1 ? '' : 's'}</span>
+        <span className="wm-count">
+          {visible.length + visibleUnknown.length} host{visible.length + visibleUnknown.length === 1 ? '' : 's'}
+          {fleetTruncated ? ` of ${fleetTotal.toLocaleString()} (capped for map performance)` : ''}
+        </span>
       </div>
 
       <div className="wm-layout">

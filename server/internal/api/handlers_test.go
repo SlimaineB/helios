@@ -463,6 +463,7 @@ func TestAuditFiltersAndFacets(t *testing.T) {
 		{name: "path search", filter: model.AuditFilter{Query: "applications"}, want: 1},
 		{name: "user search", filter: model.AuditFilter{Query: "alice"}, want: 2},
 		{name: "ip search", filter: model.AuditFilter{Query: "10.0.0.2"}, want: 1},
+		{name: "multi term", filter: model.AuditFilter{Query: "alice applications"}, want: 1},
 		{name: "since", filter: model.AuditFilter{Since: time.Now().Add(-time.Minute)}, want: 3},
 		{name: "until", filter: model.AuditFilter{Until: time.Now().Add(time.Minute)}, want: 3},
 		{name: "future since", filter: model.AuditFilter{Since: time.Now().Add(time.Hour)}, want: 0},

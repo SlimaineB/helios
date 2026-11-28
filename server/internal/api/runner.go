@@ -57,6 +57,91 @@ func validRunnerID(id string) bool {
 	return true
 }
 
+type runnerDefinition struct {
+	ID          string   `json:"id"`
+	Tags        []string `json:"tags"`
+	MaxParallel int      `json:"max_parallel"`
+}
+
+func runnerMaxParallel(n int) (int, bool) {
+	if n == 0 {
+		return 2, true
+	}
+	return n, n >= 1 && n <= 64
+}
+
+func (s *Server) handleCreateRunner(w http.ResponseWriter, r *http.Request) {
+	var body runnerDefinition
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	body.ID = strings.TrimSpace(body.ID)
+	if !validRunnerID(body.ID) {
+		writeErr(w, http.StatusBadRequest, "missing or invalid runner id")
+		return
+	}
+	maxParallel, ok := runnerMaxParallel(body.MaxParallel)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "max_parallel must be between 1 and 64")
+		return
+	}
+	runner, err := s.store.CreateRunner(r.Context(), body.ID, normalizeInstanceTags(body.Tags), maxParallel)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeErr(w, http.StatusConflict, "runner already exists")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, runner)
+}
+
+func (s *Server) handleUpdateRunner(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if !validRunnerID(id) {
+		writeErr(w, http.StatusBadRequest, "invalid runner id")
+		return
+	}
+	var body runnerDefinition
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	maxParallel, ok := runnerMaxParallel(body.MaxParallel)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "max_parallel must be between 1 and 64")
+		return
+	}
+	if err := s.store.UpdateRunner(r.Context(), id, normalizeInstanceTags(body.Tags), maxParallel); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "runner not found")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleDeleteRunner(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if !validRunnerID(id) {
+		writeErr(w, http.StatusBadRequest, "invalid runner id")
+		return
+	}
+	if err := s.store.DeleteRunner(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "runner not found")
+			return
+		}
+		s.internalError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type runnerHeartbeat struct {
 	RunnerID string   `json:"runner_id"`
 	Tags     []string `json:"tags"`

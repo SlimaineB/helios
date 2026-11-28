@@ -1,6 +1,9 @@
 package gitops
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDecodeDocumentsAndTypedSpecs(t *testing.T) {
 	raw := []byte(`
@@ -33,6 +36,14 @@ spec:
     replicas: 2
   autoHeal: true
   syncInterval: 30
+  executionMode: runner
+  runnerTags: [eu, web]
+  inventorySource: hub
+  inventory:
+    groups:
+      - name: web
+        hosts:
+          - name: web-1
 ---
 apiVersion: helios.dev/v1alpha1
 kind: Assignment
@@ -73,6 +84,13 @@ spec:
 	}
 	if app.Vars != `{"env":"prod","replicas":2}` {
 		t.Fatalf("vars = %s", app.Vars)
+	}
+	if app.ExecutionMode != "runner" || app.InventorySource != "hub" ||
+		len(app.RunnerTags) != 2 || app.RunnerTags[0] != "eu" || app.RunnerTags[1] != "web" {
+		t.Fatalf("unexpected runner app spec: %+v", app)
+	}
+	if !strings.Contains(app.InventoryData, "web-1") {
+		t.Fatalf("inventory data = %s", app.InventoryData)
 	}
 
 	assignment, err := docs[3].Assignment()

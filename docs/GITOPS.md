@@ -140,6 +140,32 @@ spec:
     templates/*.j2
 ```
 
+A runner-mode application declares its execution mode and tagged inventory
+source in the same manifest:
+
+```yaml
+apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: web
+  project: finance
+spec:
+  repoRef: finance-infra
+  branch: main
+  path: ansible/site.yml
+  executionMode: runner
+  runnerTags: [eu, prod, web]
+  inventorySource: hub
+  inventory:
+    groups:
+      - name: web
+        hosts:
+          - name: web-1
+            vars:
+              ansible_host: 10.0.0.11
+              ansible_user: deploy
+```
+
 | Field | Required | Description |
 |---|---|---|
 | `metadata.name` | yes | Unique application name |
@@ -148,6 +174,11 @@ spec:
 | `spec.repoRef` | one of | Repository manifest name, or an existing registry name |
 | `spec.branch` | no | Revision to track; default `main` |
 | `spec.path` | no | Playbook path; default `site.yml` |
+| `spec.executionMode` | no | `agent` (default) or `runner` |
+| `spec.runnerTags` | no | Tags a runner must all advertise; list or comma-separated string |
+| `spec.inventorySource` | no | `repo` (default) or `hub`; `hub` requires `executionMode: runner` |
+| `spec.inventoryPath` | no | Inventory file/directory in the repo for `inventorySource: repo` |
+| `spec.inventory` | no | Inline hub inventory object (`groups`, hosts, vars) for `inventorySource: hub` |
 | `spec.vars` | no | Map rendered to Ansible extra-vars JSON |
 | `spec.autoHeal` | no | Apply automatically on drift; default `false` |
 | `spec.syncInterval` | no | Seconds; `0` inherits the agent poll interval, minimum 10 otherwise |
@@ -155,6 +186,12 @@ spec:
 
 The project must exist and its `repoPatterns` must allow the repository URL.
 The repository is registered automatically if needed.
+
+Runner applications are **not assigned to instances**. `autoHeal` is forced to
+`false` in runner mode because v1 dispatches jobs on demand. The runner fleet
+itself is runtime infrastructure (processes or pods that heartbeat with tags),
+not a GitOps object; the manifest declares which applications and tags they may
+execute.
 
 ### Assignment
 

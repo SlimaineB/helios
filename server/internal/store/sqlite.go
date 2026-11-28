@@ -146,11 +146,12 @@ CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
 CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(instance_id, status);
 
 CREATE TABLE IF NOT EXISTS runners (
-  id         TEXT PRIMARY KEY,
-  tags       TEXT NOT NULL DEFAULT '[]',
-  version    TEXT NOT NULL DEFAULT '',
-  last_seen  TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  id           TEXT PRIMARY KEY,
+  tags         TEXT NOT NULL DEFAULT '[]',
+  max_parallel INTEGER NOT NULL DEFAULT 2,
+  version      TEXT NOT NULL DEFAULT '',
+  last_seen    TEXT NOT NULL,
+  created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_runners_last_seen ON runners(last_seen);
 
@@ -408,11 +409,12 @@ CREATE INDEX IF NOT EXISTS idx_commands_instance ON commands(instance_id);
 CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands(instance_id, status);
 
 CREATE TABLE IF NOT EXISTS runners (
-  id         TEXT PRIMARY KEY,
-  tags       TEXT NOT NULL DEFAULT '[]',
-  version    TEXT NOT NULL DEFAULT '',
-  last_seen  TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  id           TEXT PRIMARY KEY,
+  tags         TEXT NOT NULL DEFAULT '[]',
+  max_parallel INTEGER NOT NULL DEFAULT 2,
+  version      TEXT NOT NULL DEFAULT '',
+  last_seen    TEXT NOT NULL,
+  created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_runners_last_seen ON runners(last_seen);
 
@@ -686,6 +688,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS autoheal INTEGER NOT NULL DEFAULT 1`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS poll_interval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS host_info TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE runners ADD COLUMN IF NOT EXISTS max_parallel INTEGER NOT NULL DEFAULT 2`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 		`ALTER TABLE runs ADD COLUMN IF NOT EXISTS runner_id TEXT NOT NULL DEFAULT ''`,
@@ -842,6 +845,7 @@ func migrate(db *sql.DB) error {
 		{"instances", "host_info", "ALTER TABLE instances ADD COLUMN host_info TEXT NOT NULL DEFAULT '{}'"},
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
+		{"runners", "max_parallel", "ALTER TABLE runners ADD COLUMN max_parallel INTEGER NOT NULL DEFAULT 2"},
 		{"runs", "runner_id", "ALTER TABLE runs ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output", "ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''"},
@@ -965,6 +969,10 @@ func scanInstance(row interface{ Scan(...any) error }) (model.Instance, error) {
 	return inst, nil
 }
 
+func queryTerms(raw string) []string {
+	return strings.Fields(strings.ToLower(strings.TrimSpace(raw)))
+}
+
 func (s *sqlstore) ListInstances(ctx context.Context, limit, offset int) ([]model.Instance, error) {
 	q := `SELECT ` + instanceCols + ` FROM instances ORDER BY name LIMIT ? OFFSET ?`
 	if limit <= 0 {
@@ -1018,8 +1026,8 @@ func instanceWhere(s *sqlstore, f model.InstanceListFilter) (string, []any) {
 		where = append(where, "instances.project=?")
 		args = append(args, f.Project)
 	}
-	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
-		like := "%" + q + "%"
+	for _, term := range queryTerms(f.Query) {
+		like := "%" + term + "%"
 		where = append(where, `(lower(instances.name) LIKE ? OR lower(instances.id) LIKE ? OR lower(instances.project) LIKE ? OR lower(instances.region) LIKE ? OR lower(instances.hostname) LIKE ? OR lower(instances.tags) LIKE ? OR EXISTS (SELECT 1 FROM assignments sa JOIN applications sap ON sap.id=sa.app_id WHERE sa.instance_id=instances.id AND lower(sap.name) LIKE ?))`)
 		args = append(args, like, like, like, like, like, like, like)
 	}
@@ -1385,8 +1393,8 @@ func driftAssignmentWhere(f model.AssignmentFilter) (string, []any) {
 		where = append(where, "a.app_id=?")
 		args = append(args, f.AppID)
 	}
-	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
-		like := "%" + q + "%"
+	for _, term := range queryTerms(f.Query) {
+		like := "%" + term + "%"
 		where = append(where, `(lower(i.name) LIKE ? OR lower(i.id) LIKE ? OR lower(i.project) LIKE ? OR lower(i.region) LIKE ? OR lower(i.hostname) LIKE ? OR lower(i.tags) LIKE ? OR lower(ap.name) LIKE ?)`)
 		args = append(args, like, like, like, like, like, like, like)
 	}
@@ -3500,8 +3508,58 @@ func (s *sqlstore) UpsertRunner(ctx context.Context, id string, tags []string, v
 	return nil
 }
 
+func (s *sqlstore) CreateRunner(ctx context.Context, id string, tags []string, maxParallel int) (model.Runner, error) {
+	now := nowCtx(ctx)
+	res, err := s.exec(ctx,
+		`INSERT INTO runners (id, tags, max_parallel, version, last_seen, created_at) VALUES (?,?,?,?,?,?)
+		 ON CONFLICT(id) DO NOTHING`,
+		id, encodeTags(tags), maxParallel, "", "", tm(now))
+	if err != nil {
+		return model.Runner{}, fmt.Errorf("create runner: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return model.Runner{}, ErrConflict
+	}
+	return model.Runner{ID: id, Tags: tags, MaxParallel: maxParallel, CreatedAt: now}, nil
+}
+
+func (s *sqlstore) UpdateRunner(ctx context.Context, id string, tags []string, maxParallel int) error {
+	res, err := s.exec(ctx, `UPDATE runners SET tags=?, max_parallel=? WHERE id=?`, encodeTags(tags), maxParallel, id)
+	if err != nil {
+		return fmt.Errorf("update runner: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqlstore) DeleteRunner(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, s.rebind(`DELETE FROM runners WHERE id=?`), id)
+	if err != nil {
+		return fmt.Errorf("delete runner: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, s.rebind(
+		`UPDATE runner_jobs SET status=?, runner_id='', claimed_at=NULL WHERE runner_id=? AND status=?`),
+		model.JobQueued, id, model.JobRunning); err != nil {
+		return fmt.Errorf("requeue runner jobs: %w", err)
+	}
+	return tx.Commit()
+}
+
 func (s *sqlstore) ListRunners(ctx context.Context) ([]model.Runner, error) {
-	rows, err := s.query(ctx, `SELECT id, tags, version, last_seen, created_at FROM runners ORDER BY last_seen DESC, id`)
+	rows, err := s.query(ctx, `SELECT id, tags, max_parallel, version, last_seen, created_at FROM runners ORDER BY last_seen DESC, id`)
 	if err != nil {
 		return nil, wrap(err, "list runners")
 	}
@@ -3512,7 +3570,7 @@ func (s *sqlstore) ListRunners(ctx context.Context) ([]model.Runner, error) {
 			r                  model.Runner
 			tags, seen, create string
 		)
-		if err := rows.Scan(&r.ID, &tags, &r.Version, &seen, &create); err != nil {
+		if err := rows.Scan(&r.ID, &tags, &r.MaxParallel, &r.Version, &seen, &create); err != nil {
 			return nil, wrap(err, "scan runner")
 		}
 		r.Tags = decodeTags(tags)
@@ -3590,17 +3648,39 @@ func tagsContainAll(required, provided []string) bool {
 }
 
 func (s *sqlstore) ClaimRunnerJob(ctx context.Context, runnerID string, tags []string, staleBefore time.Time) (model.RunnerJob, error) {
+	release, err := s.AcquireLock(ctx, "runner-claim:"+runnerID)
+	if err != nil {
+		return model.RunnerJob{}, err
+	}
+	defer release()
+	if _, err := s.exec(ctx,
+		`UPDATE runner_jobs SET status=?, runner_id='', claimed_at=NULL
+		 WHERE status=? AND claimed_at IS NOT NULL AND claimed_at < ?`,
+		model.JobQueued, model.JobRunning, tm(staleBefore)); err != nil {
+		return model.RunnerJob{}, fmt.Errorf("requeue stale runner jobs: %w", err)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.RunnerJob{}, err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, s.rebind(
-		`UPDATE runner_jobs SET status=?, runner_id='', claimed_at=NULL
-		 WHERE status=? AND claimed_at IS NOT NULL AND claimed_at < ?`),
-		model.JobQueued, model.JobRunning, tm(staleBefore)); err != nil {
-		return model.RunnerJob{}, fmt.Errorf("requeue stale runner jobs: %w", err)
+	var maxParallel int
+	err = tx.QueryRowContext(ctx, s.rebind(`SELECT max_parallel FROM runners WHERE id=?`), runnerID).Scan(&maxParallel)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return model.RunnerJob{}, fmt.Errorf("runner parallel limit: %w", err)
+	}
+	if maxParallel <= 0 {
+		maxParallel = 2
+	}
+	var running int
+	if err := tx.QueryRowContext(ctx, s.rebind(
+		`SELECT COUNT(*) FROM runner_jobs WHERE runner_id=? AND status=?`), runnerID, model.JobRunning).Scan(&running); err != nil {
+		return model.RunnerJob{}, fmt.Errorf("count runner jobs: %w", err)
+	}
+	if running >= maxParallel {
+		return model.RunnerJob{}, ErrNotFound
 	}
 
 	rows, err := tx.QueryContext(ctx, s.rebind(
@@ -3803,8 +3883,8 @@ func auditWhere(f model.AuditFilter) (string, []any) {
 	var clauses []string
 	var args []any
 
-	if q := strings.TrimSpace(f.Query); q != "" {
-		like := "%" + strings.ToLower(q) + "%"
+	for _, term := range queryTerms(f.Query) {
+		like := "%" + term + "%"
 		clauses = append(clauses,
 			`(lower("user") LIKE ? OR lower(path) LIKE ? OR lower(remote_ip) LIKE ? OR CAST(id AS TEXT) LIKE ?)`)
 		args = append(args, like, like, like, like)

@@ -82,7 +82,15 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setCmdOpen((o) => !o)
+        return
       }
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) return
+      const input = document.querySelector('[data-search-box] input')
+      if (!input) return
+      e.preventDefault()
+      input.focus()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)

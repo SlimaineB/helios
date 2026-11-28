@@ -12,8 +12,13 @@ import {
 } from 'lucide-react'
 import { api, projectLabel } from '../api/client.js'
 import Badge from '../components/Badge.jsx'
+import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import Modal from '../components/Modal.jsx'
 import { SkeletonTable } from '../components/Skeleton.jsx'
+import TagList, { formatTags, parseTags } from '../components/TagList.jsx'
+import { toast } from '../components/Toast.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
+import { useAuth } from '../App.jsx'
 
 const fmt = (value) => {
   if (!value) return '—'
@@ -25,10 +30,19 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 const JOB_STATE = { queued: 'queued', running: 'running', ok: 'ok', drift: 'drift', failed: 'failed' }
 
+const emptyRunner = { id: '', tags: '', max_parallel: 2 }
+
 export default function Runners() {
+  const { can } = useAuth()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState(emptyRunner)
+  const [formError, setFormError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [confirm, setConfirm] = useState(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -43,6 +57,70 @@ export default function Runners() {
 
   useEffect(() => { refresh() }, [refresh])
   useLiveRefresh(refresh, { interval: 15000 })
+
+  const openNew = () => {
+    setEditing(null)
+    setForm(emptyRunner)
+    setFormError('')
+    setShowForm(true)
+  }
+
+  const openEdit = (runner) => {
+    setEditing(runner)
+    setForm({
+      id: runner.id,
+      tags: formatTags(runner.tags),
+      max_parallel: runner.max_parallel || 2,
+    })
+    setFormError('')
+    setShowForm(true)
+  }
+
+  const closeForm = () => {
+    setShowForm(false)
+    setEditing(null)
+    setFormError('')
+  }
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setSaving(true)
+    setFormError('')
+    try {
+      const body = {
+        tags: parseTags(form.tags),
+        max_parallel: Number(form.max_parallel) || 2,
+      }
+      if (editing) await api.updateRunner(editing.id, body)
+      else await api.createRunner({ ...body, id: form.id.trim() })
+      toast.success(editing ? 'Runner updated' : 'Runner added')
+      closeForm()
+      refresh()
+    } catch (err) {
+      setFormError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const askDelete = (runner) => setConfirm({
+    title: 'Delete runner',
+    message: `Delete "${runner.id}"? Stop its helios-runner process first, otherwise it will register again on the next heartbeat. Any running job is requeued for another runner.`,
+    variant: 'danger',
+    onConfirm: () => doDelete(runner),
+  })
+
+  const doDelete = async (runner) => {
+    try {
+      await api.deleteRunner(runner.id)
+      toast.success('Runner deleted')
+      refresh()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setConfirm(null)
+    }
+  }
 
   if (loading && !data) {
     return (
@@ -162,6 +240,15 @@ export default function Runners() {
         <span className="muted detail-count">{runners.length}</span>
       </h2>
 
+      <div className="filters">
+        <span className="muted">
+          {runners.length} registered · {summary.online || 0} online
+        </span>
+        <button type="button" className="filter-add" onClick={openNew} disabled={!can('instances', 'create')}>
+          ＋ New runner
+        </button>
+      </div>
+
       {runners.length === 0 ? (
         <div className="empty">
           <p className="muted">No runner has heartbeated yet. Start <code>helios-runner</code> with the hub token.</p>
@@ -174,9 +261,11 @@ export default function Runners() {
               <tr>
                 <th>Runner</th>
                 <th style={{ width: '240px' }}>Tags</th>
+                <th style={{ width: '110px' }}>Max parallel</th>
                 <th style={{ width: '110px' }}>Version</th>
                 <th style={{ width: '130px' }}>State</th>
                 <th style={{ width: '200px' }}>Last seen</th>
+                <th style={{ width: '170px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -184,13 +273,18 @@ export default function Runners() {
                 <tr key={runner.id}>
                   <td><span className="mono"><strong>{runner.id}</strong></span></td>
                   <td>
-                    {(runner.tags || []).length ? (runner.tags || []).map((tag) => (
-                      <span className="project-badge" key={tag} style={{ marginRight: 4 }}>{tag}</span>
-                    )) : <span className="muted">any</span>}
+                    {(runner.tags || []).length ? <TagList tags={runner.tags} /> : <span className="muted">any</span>}
                   </td>
+                  <td className="mono">{runner.max_parallel || 2}</td>
                   <td className="mono muted">{runner.version || '—'}</td>
                   <td><Badge state={runner.online ? 'ok' : 'offline'} label={runner.online ? 'online' : 'offline'} small /></td>
                   <td className="muted">{fmt(runner.last_seen)}</td>
+                  <td>
+                    <div className="row-actions">
+                      <button className="btn ghost small" disabled={!can('instances', 'update')} onClick={() => openEdit(runner)}>Edit</button>
+                      <button className="btn danger small" disabled={!can('instances', 'delete')} onClick={() => askDelete(runner)}>Delete</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -238,6 +332,64 @@ export default function Runners() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {confirm && (
+        <ConfirmDialog
+          open
+          onConfirm={confirm.onConfirm}
+          onCancel={() => setConfirm(null)}
+          title={confirm.title}
+          message={confirm.message}
+          variant={confirm.variant}
+        />
+      )}
+
+      {showForm && (
+        <Modal title={editing ? `Edit ${editing.id}` : 'New runner'} onClose={closeForm}>
+          <form className="form-card" onSubmit={submit}>
+            <label>
+              Runner ID
+              <input
+                required
+                autoFocus={!editing}
+                disabled={!!editing}
+                value={form.id}
+                onChange={(e) => setForm((prev) => ({ ...prev, id: e.target.value }))}
+                placeholder="runner-eu-1"
+              />
+              <span className="sub">Must match <code>HELIOS_RUNNER_ID</code> on the runner process.</span>
+            </label>
+            <label>
+              Tags <span className="muted">(comma separated)</span>
+              <input
+                value={form.tags}
+                onChange={(e) => setForm((prev) => ({ ...prev, tags: e.target.value }))}
+                placeholder="eu, prod, web"
+              />
+              <span className="sub">A runner receives only jobs whose required tags it advertises.</span>
+            </label>
+            <label>
+              Max parallel jobs
+              <input
+                type="number"
+                min="1"
+                max="64"
+                required
+                value={form.max_parallel}
+                onChange={(e) => setForm((prev) => ({ ...prev, max_parallel: e.target.value }))}
+              />
+              <span className="sub">Hub-side claim limit. The runner process also caps itself with <code>HELIOS_RUNNER_MAX_CONCURRENT</code>.</span>
+            </label>
+            {formError && <div className="error">{formError}</div>}
+            <div className="form-actions">
+              <button type="button" className="ghost" onClick={closeForm}>Cancel</button>
+              <button type="submit" disabled={saving || !form.id.trim()}>
+                {saving ? 'Saving…' : editing ? 'Save' : 'Add runner'}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       <details className="detail-panel">

@@ -232,7 +232,7 @@ metadata:
 spec:
   url: {app_repo.as_uri()}
 """)
-    write(repo / "application.yaml", """\
+    write(repo / "application.yaml", f"""\
 apiVersion: helios.dev/v1alpha1
 kind: Application
 metadata:
@@ -247,6 +247,82 @@ spec:
   syncInterval: 60
   vars:
     env: gitops
+---
+apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: web
+  project: platform
+spec:
+  repoURL: {app_repo.as_uri()}
+  branch: main
+  path: ansible/site.yml
+  executionMode: runner
+  runnerTags: [eu, web]
+  inventorySource: repo
+  inventoryPath: inventory/hosts.ini
+  ignorePaths: |
+    copy /etc/motd
+    write /etc/nginx/*
+  vars:
+    http_port: 80
+---
+apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: legacy
+  project: sandbox
+spec:
+  repoURL: {app_repo.as_uri()}
+  branch: main
+  path: ansible/legacy.yml
+  executionMode: runner
+  runnerTags: [sandbox, legacy]
+  inventorySource: repo
+  inventoryPath: inventory/dir
+---
+apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: db
+  project: platform
+spec:
+  repoURL: {app_repo.as_uri()}
+  branch: main
+  path: ansible/site.yml
+  executionMode: runner
+  runnerTags: [eu, db]
+  inventorySource: hub
+  inventory:
+    groups:
+      - name: all
+        children: [db]
+      - name: db
+        vars:
+          ansible_user: dba
+          ansible_password: db-secret
+        hosts:
+          - name: db-1
+            vars:
+              ansible_host: 10.10.0.21
+          - name: db-2
+            vars:
+              ansible_host: 10.10.0.22
+---
+apiVersion: helios.dev/v1alpha1
+kind: Application
+metadata:
+  name: empty-hub
+  project: platform
+spec:
+  repoURL: {app_repo.as_uri()}
+  branch: main
+  path: ansible/site.yml
+  executionMode: runner
+  runnerTags: [eu]
+  inventorySource: hub
+  inventory:
+    groups: []
 """)
     write(repo / "assignment.yaml", f"""\
 apiVersion: helios.dev/v1alpha1
@@ -608,6 +684,12 @@ def main():
     heartbeat(hub, "runner-eu-1", ["eu", "web", "db", "linux"])
     heartbeat(hub, "runner-us-1", ["us", "api", "linux"])
     heartbeat(hub, "runner-onprem-1", ["sandbox", "legacy"])
+    hub.op("PUT", "/api/v1/runners/runner-eu-1",
+           {"tags": ["eu", "web", "db", "linux"], "max_parallel": 4})
+    hub.op("PUT", "/api/v1/runners/runner-us-1",
+           {"tags": ["us", "api", "linux"], "max_parallel": 2})
+    hub.op("PUT", "/api/v1/runners/runner-onprem-1",
+           {"tags": ["sandbox", "legacy"], "max_parallel": 1})
 
     checkin(hub, agent_eu_1)
     checkin(hub, agent_us_1)
@@ -731,6 +813,7 @@ def main():
 Demo dataset ready on {hub.url}
 
   Applications: web, api, flaky, db, legacy, agent-only, empty-hub, gitops-web
+  GitOps:       gitops-web (agent) + web, legacy, db, empty-hub (runner)
   Instances:    agent-eu-01/02, agent-us-01, agent-sandbox-01, gitops-agent-01
   Runners:      runner-eu-1, runner-us-1, runner-onprem-1
   Scenarios:    agent/runner modes, repo/hub inventories, tagged jobs, GitOps,

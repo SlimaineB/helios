@@ -21,6 +21,7 @@ import TagList, { formatTags, parseTags } from '../components/TagList.jsx'
 import { SkeletonCard, SkeletonTable } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
+import { useUrlState } from '../hooks/useUrlState.js'
 
 const PAGE_SIZE = 25
 
@@ -35,9 +36,7 @@ export default function InstanceDetail() {
   const [logRun, setLogRun] = useState(null)
   const [diffRun, setDiffRun] = useState(null)
   const [varsApp, setVarsApp] = useState(null)
-  const [runsOff, setRunsOff] = useState(0)
   const [runsTotal, setRunsTotal] = useState(0)
-  const [appFilter, setAppFilter] = useState('')
   const [confirm, setConfirm] = useState(null)
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -45,8 +44,12 @@ export default function InstanceDetail() {
   const [tagsValue, setTagsValue] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [regions, setRegions] = useState([])
-  const [tab, setTab] = useState('apps')
   const tabsRef = useRef(null)
+  const [list, setList] = useUrlState(
+    { app: '', offset: 0, limit: PAGE_SIZE, tab: 'apps' },
+    { clamp: { limit: [1, 500], offset: [0, 1e9] } },
+  )
+  const { app: appFilter, offset: runsOff, limit: runsLimit, tab } = list
 
   const appNamesById = useMemo(
     () => new Map((inst?.apps || []).map((a) => [a.application.id, a.application.name])),
@@ -62,17 +65,17 @@ export default function InstanceDetail() {
     if (!loadedRef.current) setLoading(true)
     try {
       setInst(await api.instance(id))
-      const d = await api.runs(id, `?limit=${PAGE_SIZE}&offset=${runsOff}${appFilter ? `&app_id=${appFilter}` : ''}`)
+      const d = await api.runs(id, `?limit=${runsLimit}&offset=${runsOff}${appFilter ? `&app_id=${appFilter}` : ''}`)
       setRuns(d.items)
       setRunsTotal(d.total)
-      if (!d.items.length && d.total > 0 && runsOff > 0) setRunsOff(0)
+      if (!d.items.length && d.total > 0 && runsOff > 0) setList({ offset: 0 })
     } catch (e) {
       if (!loadedRef.current) toast.error(e.message)
     } finally {
       loadedRef.current = true
       setLoading(false)
     }
-  }, [id, runsOff, appFilter])
+  }, [id, runsOff, runsLimit, appFilter, setList])
 
   const commands = useCommandRunner(refresh)
   const modalOpen = !!logRun || !!diffRun || !!varsApp || !!confirm
@@ -84,10 +87,6 @@ export default function InstanceDetail() {
   useEffect(() => {
     api.regions().then(setRegions).catch(() => setRegions([]))
   }, [id])
-
-  useEffect(() => {
-    setRunsOff(0)
-  }, [appFilter])
 
   const online = instanceOnline(inst)
 
@@ -235,8 +234,7 @@ export default function InstanceDetail() {
     for (const app of inst.apps || []) commands.run(inst.id, app.application.id, action)
   }
   const filterAppLogs = (app) => {
-    setAppFilter(String(app.application.id))
-    setTab('history')
+    setList({ app: String(app.application.id), tab: 'history', offset: 0 })
     requestAnimationFrame(() => {
       tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
@@ -336,7 +334,7 @@ export default function InstanceDetail() {
           role="tab"
           aria-selected={tab === 'apps'}
           className={'seg-btn' + (tab === 'apps' ? ' active' : '')}
-          onClick={() => setTab('apps')}
+          onClick={() => setList({ tab: 'apps' })}
         >
           Applications <span className="detail-tab-count">{inst.apps.length}</span>
         </button>
@@ -345,7 +343,7 @@ export default function InstanceDetail() {
           role="tab"
           aria-selected={tab === 'history'}
           className={'seg-btn' + (tab === 'history' ? ' active' : '')}
-          onClick={() => setTab('history')}
+          onClick={() => setList({ tab: 'history' })}
         >
           Run history <span className="detail-tab-count">{runsTotal}</span>
         </button>
@@ -442,7 +440,7 @@ export default function InstanceDetail() {
               <select
                 id="history-app-filter"
                 value={appFilter}
-                onChange={(e) => setAppFilter(e.target.value)}
+                onChange={(e) => setList({ app: e.target.value, offset: 0 })}
                 title="Filter run history by application"
               >
                 <option value="">All applications</option>
@@ -452,7 +450,7 @@ export default function InstanceDetail() {
                 {appFilter && !appFilterName && <option value={appFilter}>Application #{appFilter}</option>}
               </select>
               {appFilterName && (
-                <button type="button" className="ghost small" onClick={() => setAppFilter('')}>Clear filter</button>
+                <button type="button" className="ghost small" onClick={() => setList({ app: '', offset: 0 })}>Clear filter</button>
               )}
             </div>
           )}
@@ -506,7 +504,14 @@ export default function InstanceDetail() {
               </tbody>
             </table>
           </div>
-          <Pager total={runsTotal} limit={PAGE_SIZE} offset={runsOff} onPage={setRunsOff} />
+          <Pager
+            total={runsTotal}
+            limit={runsLimit}
+            offset={runsOff}
+            onPage={(offset) => setList({ offset }, { push: true })}
+            onLimit={(limit) => setList({ limit, offset: 0 })}
+            label="runs"
+          />
         </>
       )}
 

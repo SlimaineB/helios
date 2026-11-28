@@ -6,6 +6,7 @@ import Modal from '../components/Modal.jsx'
 import VariableEditor from '../components/VariableEditor.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import CopyButton from '../components/CopyButton.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import HealthBadge from '../components/HealthBadge.jsx'
 import ApplicationCard from '../components/ApplicationCard.jsx'
 import GitOpsBadge, { managedByGitOps, managedTitle } from '../components/GitOpsBadge.jsx'
@@ -17,6 +18,8 @@ import { SkeletonCard } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
 import { useLiveRefresh } from '../hooks/useLiveRefresh.js'
+import { matchesSearch } from '../search.js'
+import { useUrlState } from '../hooks/useUrlState.js'
 
 const TOPOLOGY_LIMIT = 300
 
@@ -61,14 +64,16 @@ export default function Applications() {
   const [historyApp, setHistoryApp] = useState(null)
   const [topologyInstances, setTopologyInstances] = useState([])
   const [topologyTotal, setTopologyTotal] = useState(0)
-  const [search, setSearch] = useState('')
-  const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
-  const [repoFilter, setRepoFilter] = useState(searchParams.get('repo') || '')
-  const [view, setView] = useState(() => {
-    const saved = localStorage.getItem('helios_apps_view')
-    if (saved === 'topology' || saved === 'cards' || saved === 'table') return saved
-    return 'cards'
-  })
+  const [list, setList, resetList] = useUrlState(() => ({
+    q: '',
+    project: '',
+    repo: '',
+    view: (() => {
+      const saved = localStorage.getItem('helios_apps_view')
+      return saved === 'topology' || saved === 'cards' || saved === 'table' ? saved : 'cards'
+    })(),
+  }))
+  const { q: search, project: projectFilter, repo: repoFilter, view } = list
   const focusAppId = useMemo(() => {
     const raw = Number(searchParams.get('app'))
     return Number.isInteger(raw) && raw > 0 ? raw : null
@@ -109,24 +114,22 @@ export default function Applications() {
   }, [refresh])
   useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
 
-  useEffect(() => {
-    setProjectFilter(searchParams.get('project') || '')
-    setRepoFilter(searchParams.get('repo') || '')
-  }, [searchParams])
-
   const clearViewFilters = () => {
-    setProjectFilter('')
-    setRepoFilter('')
-    setSearchParams({}, { replace: true })
+    resetList(['q', 'project', 'repo'])
+    if (focusAppId) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('app')
+      setSearchParams(next, { replace: true })
+    }
   }
 
   const changeView = (v) => {
-    setView(v)
+    setList({ view: v })
     localStorage.setItem('helios_apps_view', v)
   }
 
   const changeSearch = (value) => {
-    setSearch(value)
+    setList({ q: value })
     if (focusAppId) {
       const next = new URLSearchParams(searchParams)
       next.delete('app')
@@ -347,7 +350,6 @@ export default function Applications() {
   )
 
   const filteredApps = useMemo(() => {
-    const q = search.trim().toLowerCase()
     return apps.filter((a) => {
       if (focusAppId && a.id !== focusAppId) return false
       if (projectFilter) {
@@ -355,7 +357,7 @@ export default function Applications() {
         if (projectFilter === '__global__' ? p !== '' : p !== projectFilter) return false
       }
       if (repoFilter && a.repo_url !== repoFilter) return false
-      if (q && ![a.name, a.project, a.repo_url, a.branch, a.path].join(' ').toLowerCase().includes(q)) return false
+      if (!matchesSearch([a.name, a.project, a.repo_url, a.branch, a.path].join(' '), search)) return false
       return true
     })
   }, [apps, search, projectFilter, repoFilter, focusAppId])
@@ -413,12 +415,11 @@ export default function Applications() {
       </div>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search application, project, repository…"
           value={search}
-          onChange={(e) => changeSearch(e.target.value)}
+          onSearch={changeSearch}
         />
         <button type="button" className="filter-add" onClick={openNew} disabled={!can('applications', 'create')}>
           ＋ New application

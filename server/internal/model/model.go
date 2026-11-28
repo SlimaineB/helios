@@ -209,12 +209,13 @@ type Assignment struct {
 // Runner is a bastion/worker registered with the hub. Runners are stateless
 // and can run on a VM, in Docker or as a Kubernetes pod.
 type Runner struct {
-	ID        string    `json:"id"`
-	Tags      []string  `json:"tags"`
-	Version   string    `json:"version,omitempty"`
-	LastSeen  time.Time `json:"last_seen"`
-	Online    bool      `json:"online"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Tags        []string  `json:"tags"`
+	MaxParallel int       `json:"max_parallel"`
+	Version     string    `json:"version,omitempty"`
+	LastSeen    time.Time `json:"last_seen"`
+	Online      bool      `json:"online"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // RunnerJob is one playbook execution assigned to a runner.

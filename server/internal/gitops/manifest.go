@@ -219,17 +219,21 @@ func (d Document) Repository() (RepositorySpec, error) {
 
 // ApplicationSpec is the typed spec of an Application manifest.
 type ApplicationSpec struct {
-	Name          string
-	Project       string
-	RepoURL       string
-	RepoRef       string
-	Branch        string
-	Path          string
-	InventoryPath string
-	Vars          string
-	AutoHeal      bool
-	SyncInterval  int
-	IgnorePaths   string
+	Name            string
+	Project         string
+	RepoURL         string
+	RepoRef         string
+	Branch          string
+	Path            string
+	ExecutionMode   string
+	RunnerTags      []string
+	InventoryPath   string
+	InventorySource string
+	InventoryData   string
+	Vars            string
+	AutoHeal        bool
+	SyncInterval    int
+	IgnorePaths     string
 }
 
 func (d Document) Application() (ApplicationSpec, error) {
@@ -257,18 +261,63 @@ func (d Document) Application() (ApplicationSpec, error) {
 	if inventory == "" {
 		inventory = str(d.Spec, "inventory_path")
 	}
+	mode := str(d.Spec, "executionMode")
+	if mode == "" {
+		mode = str(d.Spec, "execution_mode")
+	}
+	if mode == "" {
+		mode = "agent"
+	}
+	source := str(d.Spec, "inventorySource")
+	if source == "" {
+		source = str(d.Spec, "inventory_source")
+	}
+	if source == "" {
+		source = "repo"
+	}
+	inventoryData := "{}"
+	for _, key := range []string{"inventory", "inventoryData", "inventory_data"} {
+		v, ok := d.Spec[key]
+		if !ok || v == nil {
+			continue
+		}
+		if raw, ok := v.(string); ok {
+			inventoryData = strings.TrimSpace(raw)
+			if inventoryData == "" {
+				inventoryData = "{}"
+			}
+			continue
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return ApplicationSpec{}, fmt.Errorf("spec.%s: %w", key, err)
+		}
+		inventoryData = string(b)
+		break
+	}
+	var tags []string
+	for _, key := range []string{"runnerTags", "runner_tags"} {
+		if v, ok := d.Spec[key]; ok {
+			tags = stringList(v)
+			break
+		}
+	}
 	return ApplicationSpec{
-		Name:          d.Metadata.Name,
-		Project:       d.project(),
-		RepoURL:       repoURL,
-		RepoRef:       repoRef,
-		Branch:        strDefault(d.Spec, "branch", "main"),
-		Path:          strDefault(d.Spec, "path", "site.yml"),
-		InventoryPath: inventory,
-		Vars:          vars,
-		AutoHeal:      boolean(d.Spec["autoHeal"], boolean(d.Spec["autoheal"], false)),
-		SyncInterval:  integer(d.Spec["syncInterval"], integer(d.Spec["sync_interval"], 0)),
-		IgnorePaths:   ignore,
+		Name:            d.Metadata.Name,
+		Project:         d.project(),
+		RepoURL:         repoURL,
+		RepoRef:         repoRef,
+		Branch:          strDefault(d.Spec, "branch", "main"),
+		Path:            strDefault(d.Spec, "path", "site.yml"),
+		ExecutionMode:   mode,
+		RunnerTags:      tags,
+		InventoryPath:   inventory,
+		InventorySource: source,
+		InventoryData:   inventoryData,
+		Vars:            vars,
+		AutoHeal:        boolean(d.Spec["autoHeal"], boolean(d.Spec["autoheal"], false)),
+		SyncInterval:    integer(d.Spec["syncInterval"], integer(d.Spec["sync_interval"], 0)),
+		IgnorePaths:     ignore,
 	}, nil
 }
 
@@ -323,6 +372,50 @@ func str(m map[string]any, key string) string {
 	default:
 		return fmt.Sprint(t)
 	}
+}
+
+func stringList(v any) []string {
+	switch t := v.(type) {
+	case string:
+		return splitTags(t)
+	case []string:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if tag := strings.TrimSpace(item); tag != "" {
+				out = append(out, tag)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if tag := strings.TrimSpace(fmt.Sprint(item)); tag != "" {
+				out = append(out, tag)
+			}
+		}
+		return out
+	default:
+		if v == nil {
+			return nil
+		}
+		if tag := strings.TrimSpace(fmt.Sprint(v)); tag != "" {
+			return []string{tag}
+		}
+		return nil
+	}
+}
+
+func splitTags(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if tag := strings.TrimSpace(part); tag != "" {
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 func strDefault(m map[string]any, key, def string) string {

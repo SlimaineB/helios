@@ -220,6 +220,9 @@ type Store interface {
 
 	// Runners (tagged bastion fleet) and their playbook jobs.
 	UpsertRunner(ctx context.Context, id string, tags []string, version string, now time.Time) error
+	CreateRunner(ctx context.Context, id string, tags []string, maxParallel int) (model.Runner, error)
+	UpdateRunner(ctx context.Context, id string, tags []string, maxParallel int) error
+	DeleteRunner(ctx context.Context, id string) error
 	ListRunners(ctx context.Context) ([]model.Runner, error)
 	CreateRunnerJob(ctx context.Context, appID int64, mode, trigger string, requiredTags []string) (model.RunnerJob, error)
 	DeleteQueuedRunnerJobs(ctx context.Context, appID int64) error

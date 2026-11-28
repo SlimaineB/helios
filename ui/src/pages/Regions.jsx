@@ -3,9 +3,11 @@ import { MapPin } from 'lucide-react'
 import { api } from '../api/client.js'
 import Modal from '../components/Modal.jsx'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { SkeletonTable } from '../components/Skeleton.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
+import { matchesSearch } from '../search.js'
 
 const empty = { name: '', description: '' }
 
@@ -35,13 +37,10 @@ export default function Regions() {
   }, [])
   useEffect(() => { refresh() }, [refresh])
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return regions
-    return regions.filter((region) =>
-      `${region.name} ${region.description || ''}`.toLowerCase().includes(q),
-    )
-  }, [regions, search])
+  const filtered = useMemo(
+    () => regions.filter((region) => matchesSearch(`${region.name} ${region.description || ''}`, search)),
+    [regions, search],
+  )
 
   const totalInstances = useMemo(
     () => regions.reduce((sum, region) => sum + (region.instances || 0), 0),
@@ -114,12 +113,11 @@ export default function Regions() {
       </div>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search region or description…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onSearch={setSearch}
         />
         <span className="muted">{filtered.length} of {regions.length}</span>
         <button type="button" className="filter-add" onClick={openNew} disabled={!can('regions', 'create')}>＋ New region</button>

@@ -16,8 +16,11 @@ import TopologyView from '../components/TopologyView.jsx'
 import InstancesCard from '../components/InstancesCard.jsx'
 import TagList, { parseTags } from '../components/TagList.jsx'
 import QuickMenu from '../components/QuickMenu.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { useAuth } from '../App.jsx'
 import { toast } from '../components/Toast.jsx'
+import { matchesSearch } from '../search.js'
+import { useUrlState } from '../hooks/useUrlState.js'
 
 const PAGE_SIZE = 20
 const TOPOLOGY_LIMIT = 300
@@ -31,14 +34,14 @@ function appState(app) {
   return s === 'failed' ? 'error' : s || 'unknown'
 }
 
-function instanceMatches(inst, q) {
-  return !q || [inst.name, inst.id, inst.project, inst.region, ...(inst.tags || [])].join(' ').toLowerCase().includes(q)
+function instanceMatches(inst, query) {
+  return matchesSearch([inst.name, inst.id, inst.project, inst.region, ...(inst.tags || [])].join(' '), query)
 }
 
 function appMatches(inst, app, { appFilter, stateFilter, q }) {
   if (appFilter && String(app.application.id) !== appFilter) return false
   if (stateFilter && appState(app) !== stateFilter) return false
-  if (q && !instanceMatches(inst, q) && !app.application.name.toLowerCase().includes(q)) return false
+  if (q && !matchesSearch([inst.name, inst.id, inst.project, inst.region, ...(inst.tags || []), app.application.name].join(' '), q)) return false
   return true
 }
 
@@ -177,7 +180,7 @@ function InstancesTree({ instances, onCheckAll, onApplyAll, onHostAutoHeal, can,
 
 export default function Instances() {
   const { can } = useAuth()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const [instances, setInstances] = useState([])
   const [total, setTotal] = useState(0)
   const [facets, setFacets] = useState({ projects: [], tags: [], apps: [] })
@@ -200,33 +203,40 @@ export default function Instances() {
   const [downloads, setDownloads] = useState([])
   const [busy, setBusy] = useState({})
   const [confirm, setConfirm] = useState(null)
-  const [pageOff, setPageOff] = useState(0)
   const [selected, setSelected] = useState(() => new Set())
   const [bulkBusy, setBulkBusy] = useState('')
-  const [view, setView] = useState(() => {
+  const listDefaults = useMemo(() => {
     const saved = localStorage.getItem('helios_instances_view')
-    if (saved === 'topology' || saved === 'list' || saved === 'cards') return saved
-    return 'cards'
-  })
-
-  const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [stateFilter, setStateFilter] = useState('')
-  const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '')
-  const [appFilter, setAppFilter] = useState(searchParams.get('app') || '')
-  const [tagFilter, setTagFilter] = useState('')
-  const [onlineOnly, setOnlineOnly] = useState(false)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput.trim()), 250)
-    return () => clearTimeout(timer)
-  }, [searchInput])
+    return {
+      q: '',
+      state: '',
+      project: '',
+      app: '',
+      tag: '',
+      online: false,
+      offset: 0,
+      limit: PAGE_SIZE,
+      view: saved === 'topology' || saved === 'list' || saved === 'cards' ? saved : 'cards',
+    }
+  }, [])
+  const [list, setList, resetList] = useUrlState(listDefaults, { clamp: { limit: [1, 500], offset: [0, 1e9] } })
+  const {
+    q: search,
+    state: stateFilter,
+    project: projectFilter,
+    app: appFilter,
+    tag: tagFilter,
+    online: onlineOnly,
+    offset: pageOff,
+    limit: pageSize,
+    view,
+  } = list
 
   const refresh = useCallback(async () => {
     const seq = ++reqSeq.current
     if (!loadedRef.current) setLoading(true)
     try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(pageOff), facets: '1', stats: '1' })
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(pageOff), facets: '1', stats: '1' })
       if (search) params.set('q', search)
       if (stateFilter) params.set('state', stateFilter)
       if (projectFilter) params.set('project', projectFilter)
@@ -248,8 +258,8 @@ export default function Instances() {
       setProjects(projectList)
       setRegions(regionList)
       if (!items.length && pageOff > 0 && nextTotal > 0) {
-        const last = Math.floor((nextTotal - 1) / PAGE_SIZE) * PAGE_SIZE
-        setPageOff(last)
+        const last = Math.floor((nextTotal - 1) / pageSize) * pageSize
+        setList({ offset: last })
       }
     } catch (e) {
       if (seq === reqSeq.current && !loadedRef.current) toast.error(e.message)
@@ -259,7 +269,7 @@ export default function Instances() {
         setLoading(false)
       }
     }
-  }, [appFilter, onlineOnly, pageOff, projectFilter, search, stateFilter, tagFilter])
+  }, [appFilter, onlineOnly, pageOff, pageSize, projectFilter, search, setList, stateFilter, tagFilter])
 
   const commands = useCommandRunner(refresh)
   const modalOpen = showReg || !!confirm
@@ -268,23 +278,8 @@ export default function Instances() {
   }, [refresh])
   useLiveRefresh(refresh, { interval: 30000, enabled: !modalOpen })
 
-  useEffect(() => {
-    setAppFilter(searchParams.get('app') || '')
-    setProjectFilter(searchParams.get('project') || '')
-  }, [searchParams])
-
-  const setParam = (key, value) => {
-    const next = new URLSearchParams(searchParams)
-    if (value) next.set(key, value)
-    else next.delete(key)
-    setSearchParams(next, { replace: true })
-  }
-  const applyAppFilter = (v) => { setAppFilter(v); setParam('app', v) }
-  const applyProjectFilter = (v) => { setProjectFilter(v); setParam('project', v) }
-
-  useEffect(() => {
-    setPageOff(0)
-  }, [search, stateFilter, projectFilter, appFilter, tagFilter, onlineOnly])
+  const applyAppFilter = (v) => setList({ app: v, offset: 0 })
+  const applyProjectFilter = (v) => setList({ project: v, offset: 0 })
 
   const addInstance = async (e) => {
     e.preventDefault()
@@ -371,7 +366,7 @@ export default function Instances() {
     return [...set].sort((a, b) => a.localeCompare(b))
   }, [facets.tags, tagFilter])
 
-  const q = search.trim().toLowerCase()
+  const q = search
 
   useEffect(() => {
     if (view !== 'topology') return undefined
@@ -406,7 +401,7 @@ export default function Instances() {
   }
 
   const changeView = (next) => {
-    setView(next)
+    setList({ view: next })
     localStorage.setItem('helios_instances_view', next)
   }
 
@@ -459,15 +454,7 @@ export default function Instances() {
   })
   const filtersActive = !!(search || stateFilter || projectFilter || appFilter || tagFilter || onlineOnly)
   const clearFilters = () => {
-    setSearchInput('')
-    setSearch('')
-    setStateFilter('')
-    setProjectFilter('')
-    setAppFilter('')
-    setModeFilter('')
-    setTagFilter('')
-    setOnlineOnly(false)
-    setSearchParams({}, { replace: true })
+    resetList(['q', 'state', 'project', 'app', 'tag', 'online', 'offset'])
   }
 
   if (loading) {
@@ -496,16 +483,15 @@ export default function Instances() {
       </div>
 
       <div className="filters">
-        <input
-          type="search"
+        <SearchBox
           className="filter-search"
           placeholder="Search name, id, region, tag, project or application…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          value={search}
+          onSearch={(value) => setList({ q: value, offset: 0 })}
         />
         <select
           value={stateFilter}
-          onChange={(e) => setStateFilter(e.target.value)}
+          onChange={(e) => setList({ state: e.target.value, offset: 0 })}
           aria-label="State"
           title="Filters agents and their applications"
         >
@@ -522,7 +508,7 @@ export default function Instances() {
             <option key={p} value={p}>{p}</option>
           ))}
         </select>
-        <select value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} aria-label="Tag">
+        <select value={tagFilter} onChange={(e) => setList({ tag: e.target.value, offset: 0 })} aria-label="Tag">
           <option value="">All tags</option>
           {tagOptions.map((t) => (
             <option key={t} value={t}>{t}</option>
@@ -535,7 +521,7 @@ export default function Instances() {
           ))}
         </select>
         <label className="row small filter-check">
-          <input type="checkbox" checked={onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked)} />
+          <input type="checkbox" checked={onlineOnly} onChange={(e) => setList({ online: e.target.checked, offset: 0 })} />
           Online only
         </label>
         {filtersActive && (
@@ -740,7 +726,14 @@ export default function Instances() {
 
       {confirm && <ConfirmDialog open onConfirm={confirm.onConfirm} onCancel={() => setConfirm(null)} title={confirm.title} message={confirm.message} variant={confirm.variant} />}
       {view !== 'topology' && (
-        <Pager total={total} limit={PAGE_SIZE} offset={pageOff} onPage={setPageOff} />
+        <Pager
+          total={total}
+          limit={pageSize}
+          offset={pageOff}
+          onPage={(offset) => setList({ offset }, { push: true })}
+          onLimit={(limit) => setList({ limit, offset: 0 })}
+          label="instances"
+        />
       )}
     </section>
   )
