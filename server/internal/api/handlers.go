@@ -51,8 +51,8 @@ type Server struct {
 	notifier      *notify.Notifier
 	downloadsDir  string
 	reconciler    *reconciler.Reconciler
-	// Runners authenticate with a shared bearer token and discover the
-	// ssh-managed instances they execute against.
+	// Runners authenticate with a shared bearer token and claim tagged jobs
+	// for runner-mode applications.
 	runnerTokenHash string
 	repoCache       *repocache.Cache
 	settings        ServerSettings

@@ -203,7 +203,7 @@ func main() {
 	srv.SetDownloadsDir(*downloads)
 	srv.SetRunnerToken(*runnerToken)
 	if *runnerToken != "" {
-		log.Info("runner API enabled for ssh-managed instances")
+		log.Info("runner API enabled for runner-mode applications")
 	}
 	gitopsState := envutil.Or("HELIOS_GITOPS_STATE_DIR", "/tmp/helios-gitops")
 	recon := reconciler.New(st, log, gitopsState)
