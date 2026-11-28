@@ -51,9 +51,13 @@ func TestRunnerJobLifecycle(t *testing.T) {
 	}
 
 	rec := runnerRequest(s, s.handleRunnerHeartbeat, http.MethodPost, "/api/v1/runner/heartbeat",
-		`{"runner_id":"bastion-eu-1","tags":["eu","linux"],"version":"test"}`)
+		`{"runner_id":"bastion-eu-1","tags":["eu","linux"],"version":"test","runtime":{"ansible":"ansible [core 2.16.3]","python":"Python 3.11.2","collections":[{"name":"ansible.posix","version":"1.5.4"}]}}`)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("heartbeat: %d %s", rec.Code, rec.Body.String())
+	}
+	runners, err := st.ListRunners(ctx)
+	if err != nil || len(runners) != 1 || runners[0].Runtime.Ansible == "" || len(runners[0].Runtime.Collections) != 1 || runners[0].Runtime.Collections[0].Name != "ansible.posix" {
+		t.Fatalf("runners = %+v, %v", runners, err)
 	}
 
 	rec = runnerRequest(s, s.handleRunnerClaim, http.MethodPost, "/api/v1/runner/jobs/claim",
@@ -132,7 +136,7 @@ func TestRunnerCRUD(t *testing.T) {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
 	// A heartbeat refreshes liveness/tags but must not erase the operator limit.
-	if err := st.UpsertRunner(context.Background(), "runner-1", []string{"eu"}, "v1", time.Now()); err != nil {
+	if err := st.UpsertRunner(context.Background(), "runner-1", []string{"eu"}, "v1", model.RunnerRuntime{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	runners, err := st.ListRunners(context.Background())

@@ -22,6 +22,7 @@ import (
 	"github.com/slim/helios/agent/internal/ansible"
 	"github.com/slim/helios/agent/internal/client"
 	"github.com/slim/helios/agent/internal/gitops"
+	"github.com/slim/helios/agent/internal/hostinfo"
 	"github.com/slim/helios/agent/internal/inventory"
 )
 
@@ -47,6 +48,9 @@ type Runner struct {
 	control *client.Client
 	slots   chan struct{}
 	wg      sync.WaitGroup
+
+	runtimeMu sync.RWMutex
+	runtime   client.RunnerRuntime
 }
 
 func New(cfg Config, log *slog.Logger) *Runner {
@@ -97,14 +101,34 @@ func (r *Runner) Run(ctx context.Context) error {
 func (r *Runner) heartbeatLoop(ctx context.Context, tags []string) {
 	ticker := time.NewTicker(r.cfg.PollInterval)
 	defer ticker.Stop()
+	refresh := time.NewTicker(5 * time.Minute)
+	defer refresh.Stop()
+
+	collect := func() {
+		rt := hostinfo.CollectRuntime(r.cfg.AnsibleBin)
+		r.runtimeMu.Lock()
+		r.runtime = rt
+		r.runtimeMu.Unlock()
+	}
+	collect()
+	r.runtimeMu.RLock()
+	rt := r.runtime
+	r.runtimeMu.RUnlock()
+	r.log.Info("runner runtime", "ansible", rt.Ansible, "python", rt.Python, "collections", len(rt.Collections))
+
 	for {
-		if err := r.control.RunnerHeartbeat(ctx, r.cfg.RunnerID, tags, agentversion.Version); err != nil && ctx.Err() == nil {
+		r.runtimeMu.RLock()
+		current := r.runtime
+		r.runtimeMu.RUnlock()
+		if err := r.control.RunnerHeartbeat(ctx, r.cfg.RunnerID, tags, agentversion.Version, &current); err != nil && ctx.Err() == nil {
 			r.log.Warn("runner heartbeat failed", "error", err)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-refresh.C:
+			collect()
 		}
 	}
 }

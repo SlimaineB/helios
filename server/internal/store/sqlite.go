@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS runners (
   tags         TEXT NOT NULL DEFAULT '[]',
   max_parallel INTEGER NOT NULL DEFAULT 2,
   version      TEXT NOT NULL DEFAULT '',
+  runtime      TEXT NOT NULL DEFAULT '{}',
   last_seen    TEXT NOT NULL,
   created_at   TEXT NOT NULL
 );
@@ -413,6 +414,7 @@ CREATE TABLE IF NOT EXISTS runners (
   tags         TEXT NOT NULL DEFAULT '[]',
   max_parallel INTEGER NOT NULL DEFAULT 2,
   version      TEXT NOT NULL DEFAULT '',
+  runtime      TEXT NOT NULL DEFAULT '{}',
   last_seen    TEXT NOT NULL,
   created_at   TEXT NOT NULL
 );
@@ -689,6 +691,7 @@ func initPostgresSchema(db *sql.DB) error {
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS poll_interval INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE instances ADD COLUMN IF NOT EXISTS host_info TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE runners ADD COLUMN IF NOT EXISTS max_parallel INTEGER NOT NULL DEFAULT 2`,
+		`ALTER TABLE runners ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE assignments ADD COLUMN IF NOT EXISTS target_revision TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN IF NOT EXISTS claimed_at TEXT`,
 		`ALTER TABLE runs ADD COLUMN IF NOT EXISTS runner_id TEXT NOT NULL DEFAULT ''`,
@@ -846,6 +849,7 @@ func migrate(db *sql.DB) error {
 		{"assignments", "target_revision", "ALTER TABLE assignments ADD COLUMN target_revision TEXT NOT NULL DEFAULT ''"},
 		{"commands", "claimed_at", "ALTER TABLE commands ADD COLUMN claimed_at TEXT"},
 		{"runners", "max_parallel", "ALTER TABLE runners ADD COLUMN max_parallel INTEGER NOT NULL DEFAULT 2"},
+		{"runners", "runtime", "ALTER TABLE runners ADD COLUMN runtime TEXT NOT NULL DEFAULT '{}'"},
 		{"runs", "runner_id", "ALTER TABLE runs ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''"},
 		{"runs", "commit_msg", "ALTER TABLE runs ADD COLUMN commit_msg TEXT NOT NULL DEFAULT ''"},
 		{"runs", "output", "ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT ''"},
@@ -3497,11 +3501,15 @@ func scanRunnerJob(row interface{ Scan(...any) error }) (model.RunnerJob, error)
 	return job, nil
 }
 
-func (s *sqlstore) UpsertRunner(ctx context.Context, id string, tags []string, version string, now time.Time) error {
-	_, err := s.exec(ctx,
-		`INSERT INTO runners (id, tags, version, last_seen, created_at) VALUES (?,?,?,?,?)
-		 ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, version=excluded.version, last_seen=excluded.last_seen`,
-		id, encodeTags(tags), version, tm(now), tm(now))
+func (s *sqlstore) UpsertRunner(ctx context.Context, id string, tags []string, version string, runtime model.RunnerRuntime, now time.Time) error {
+	rt, err := json.Marshal(runtime)
+	if err != nil {
+		return fmt.Errorf("marshal runner runtime: %w", err)
+	}
+	_, err = s.exec(ctx,
+		`INSERT INTO runners (id, tags, version, runtime, last_seen, created_at) VALUES (?,?,?,?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET tags=excluded.tags, version=excluded.version, runtime=excluded.runtime, last_seen=excluded.last_seen`,
+		id, encodeTags(tags), version, string(rt), tm(now), tm(now))
 	if err != nil {
 		return fmt.Errorf("upsert runner: %w", err)
 	}
@@ -3559,7 +3567,7 @@ func (s *sqlstore) DeleteRunner(ctx context.Context, id string) error {
 }
 
 func (s *sqlstore) ListRunners(ctx context.Context) ([]model.Runner, error) {
-	rows, err := s.query(ctx, `SELECT id, tags, max_parallel, version, last_seen, created_at FROM runners ORDER BY last_seen DESC, id`)
+	rows, err := s.query(ctx, `SELECT id, tags, max_parallel, version, runtime, last_seen, created_at FROM runners ORDER BY last_seen DESC, id`)
 	if err != nil {
 		return nil, wrap(err, "list runners")
 	}
@@ -3567,13 +3575,14 @@ func (s *sqlstore) ListRunners(ctx context.Context) ([]model.Runner, error) {
 	out := []model.Runner{}
 	for rows.Next() {
 		var (
-			r                  model.Runner
-			tags, seen, create string
+			r                           model.Runner
+			tags, runtime, seen, create string
 		)
-		if err := rows.Scan(&r.ID, &tags, &r.MaxParallel, &r.Version, &seen, &create); err != nil {
+		if err := rows.Scan(&r.ID, &tags, &r.MaxParallel, &r.Version, &runtime, &seen, &create); err != nil {
 			return nil, wrap(err, "scan runner")
 		}
 		r.Tags = decodeTags(tags)
+		_ = json.Unmarshal([]byte(runtime), &r.Runtime)
 		r.LastSeen = parseTime(seen)
 		r.CreatedAt = parseTime(create)
 		out = append(out, r)

@@ -262,7 +262,7 @@ export default function Runners() {
                 <th>Runner</th>
                 <th style={{ width: '240px' }}>Tags</th>
                 <th style={{ width: '110px' }}>Max parallel</th>
-                <th style={{ width: '110px' }}>Version</th>
+                <th style={{ width: '240px' }}>Runtime</th>
                 <th style={{ width: '130px' }}>State</th>
                 <th style={{ width: '200px' }}>Last seen</th>
                 <th style={{ width: '170px' }}>Actions</th>
@@ -276,7 +276,25 @@ export default function Runners() {
                     {(runner.tags || []).length ? <TagList tags={runner.tags} /> : <span className="muted">any</span>}
                   </td>
                   <td className="mono">{runner.max_parallel || 2}</td>
-                  <td className="mono muted">{runner.version || '—'}</td>
+                  <td className="runtime">
+                    {(() => {
+                      const rt = runner.runtime || {}
+                      const parts = []
+                      if (rt.ansible) parts.push(<span key="a" className="mono">Ansible {rt.ansible}</span>)
+                      if (rt.python) parts.push(<span key="p" className="mono muted">· Python {rt.python}</span>)
+                      if (!parts.length) return <span className="muted">—</span>
+                      return (
+                        <>
+                          <div style={{ lineHeight: '1.4' }}>{parts}</div>
+                          {rt.collections?.length && (
+                            <div className="muted" style={{ fontSize: '11px', marginTop: '3px' }} title={rt.collections.map((c) => `${c.name} ${c.version}`).join(', ')}>
+                              {rt.collections.length} collections
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </td>
                   <td><Badge state={runner.online ? 'ok' : 'offline'} label={runner.online ? 'online' : 'offline'} small /></td>
                   <td className="muted">{fmt(runner.last_seen)}</td>
                   <td>

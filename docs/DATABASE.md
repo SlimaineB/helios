@@ -202,6 +202,7 @@ so there is no status column to clean up.
 | `tags` | `TEXT NOT NULL DEFAULT '[]'` | JSON array advertised by the runner |
 | `max_parallel` | `INTEGER NOT NULL DEFAULT 2` | Hub-side limit for simultaneously running jobs |
 | `version` | `TEXT NOT NULL DEFAULT ''` | Reported runner version |
+| `runtime` | `TEXT NOT NULL DEFAULT '{}'` | Best-effort toolchain (Ansible/Python versions, collections) as JSON |
 | `last_seen` | `TEXT NOT NULL` | Last heartbeat |
 | `created_at` | `TEXT NOT NULL` | First registration |
 

@@ -219,7 +219,7 @@ type Store interface {
 	DeleteExpiredOperatorSessions(ctx context.Context, before time.Time) error
 
 	// Runners (tagged bastion fleet) and their playbook jobs.
-	UpsertRunner(ctx context.Context, id string, tags []string, version string, now time.Time) error
+	UpsertRunner(ctx context.Context, id string, tags []string, version string, runtime model.RunnerRuntime, now time.Time) error
 	CreateRunner(ctx context.Context, id string, tags []string, maxParallel int) (model.Runner, error)
 	UpdateRunner(ctx context.Context, id string, tags []string, maxParallel int) error
 	DeleteRunner(ctx context.Context, id string) error

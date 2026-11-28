@@ -111,6 +111,20 @@ type HostInfo struct {
 	Ansible  string `json:"ansible,omitempty"`
 }
 
+// RunnerCollection is one Ansible collection installed on a runner.
+type RunnerCollection struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// RunnerRuntime is the Ansible/Python toolchain reported by a runner on each
+// heartbeat. Best-effort: missing tools or parse failures are omitted.
+type RunnerRuntime struct {
+	Ansible     string             `json:"ansible,omitempty"`
+	Python      string             `json:"python,omitempty"`
+	Collections []RunnerCollection `json:"collections,omitempty"`
+}
+
 // ErrSnapshotUnsupported means the server cannot cache this revision (for
 // example a semver range). Agents should fall back to their git implementation.
 var ErrSnapshotUnsupported = errors.New("revision not supported by repo cache")
@@ -240,11 +254,16 @@ type runnerJobClaim struct {
 	Application Application `json:"application"`
 }
 
-// RunnerHeartbeat registers the runner and refreshes its liveness and tags.
-func (c *Client) RunnerHeartbeat(ctx context.Context, id string, tags []string, version string) error {
-	return c.do(ctx, http.MethodPost, "/api/v1/runner/heartbeat", map[string]any{
+// RunnerHeartbeat registers the runner and refreshes its liveness, tags and
+// toolchain runtime (Ansible version, Python version, installed collections).
+func (c *Client) RunnerHeartbeat(ctx context.Context, id string, tags []string, version string, runtime *RunnerRuntime) error {
+	body := map[string]any{
 		"runner_id": id, "tags": tags, "version": version,
-	}, nil)
+	}
+	if runtime != nil {
+		body["runtime"] = *runtime
+	}
+	return c.do(ctx, http.MethodPost, "/api/v1/runner/heartbeat", body, nil)
 }
 
 // ClaimRunnerJob returns the next queued job whose tags match. ok is false when

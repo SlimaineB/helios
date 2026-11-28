@@ -143,9 +143,10 @@ func (s *Server) handleDeleteRunner(w http.ResponseWriter, r *http.Request) {
 }
 
 type runnerHeartbeat struct {
-	RunnerID string   `json:"runner_id"`
-	Tags     []string `json:"tags"`
-	Version  string   `json:"version,omitempty"`
+	RunnerID string               `json:"runner_id"`
+	Tags     []string             `json:"tags"`
+	Version  string               `json:"version,omitempty"`
+	Runtime  *model.RunnerRuntime `json:"runtime,omitempty"`
 }
 
 func (s *Server) handleRunnerHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +160,11 @@ func (s *Server) handleRunnerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "missing or invalid runner_id")
 		return
 	}
-	if err := s.store.UpsertRunner(r.Context(), body.RunnerID, normalizeInstanceTags(body.Tags), body.Version, time.Now().UTC()); err != nil {
+	var runtime model.RunnerRuntime
+	if body.Runtime != nil {
+		runtime = *body.Runtime
+	}
+	if err := s.store.UpsertRunner(r.Context(), body.RunnerID, normalizeInstanceTags(body.Tags), body.Version, runtime, time.Now().UTC()); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

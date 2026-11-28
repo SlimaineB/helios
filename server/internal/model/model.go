@@ -101,6 +101,20 @@ func (h HostInfo) Empty() bool {
 	return h == HostInfo{}
 }
 
+// RunnerCollection is one Ansible collection installed on a runner.
+type RunnerCollection struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// RunnerRuntime is the Ansible/Python toolchain reported by a runner on each
+// heartbeat. Best-effort: missing tools or parse failures are omitted.
+type RunnerRuntime struct {
+	Ansible     string             `json:"ansible,omitempty"`
+	Python      string             `json:"python,omitempty"`
+	Collections []RunnerCollection `json:"collections,omitempty"`
+}
+
 type Application struct {
 	ID      int64  `json:"id"`
 	Name    string `json:"name"`
@@ -216,6 +230,9 @@ type Runner struct {
 	LastSeen    time.Time `json:"last_seen"`
 	Online      bool      `json:"online"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Runtime is the best-effort toolchain reported on heartbeat
+	// (Ansible version, Python version, installed collections).
+	Runtime RunnerRuntime `json:"runtime,omitempty"`
 }
 
 // RunnerJob is one playbook execution assigned to a runner.

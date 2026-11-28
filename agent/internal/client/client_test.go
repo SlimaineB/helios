@@ -57,7 +57,7 @@ func TestRunnerJobCalls(t *testing.T) {
 
 	c := NewRunner(srv.URL, "runner-token", false)
 	ctx := context.Background()
-	if err := c.RunnerHeartbeat(ctx, "runner-eu", []string{"eu"}, "test"); err != nil {
+	if err := c.RunnerHeartbeat(ctx, "runner-eu", []string{"eu"}, "test", nil); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	job, ok, err := c.ClaimRunnerJob(ctx, "runner-eu", []string{"eu"})

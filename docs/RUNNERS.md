@@ -93,7 +93,9 @@ the process first or the next heartbeat registers it again.
 
 `max_parallel` is enforced by the hub at claim time. A heartbeat refreshes tags
 and liveness but does not overwrite the operator-set limit. The runner process
-still has its own hard cap.
+still has its own hard cap. A heartbeat also reports the toolchain runtime
+(Ansible version, Python version, installed collections) which surfaces on the
+Runners page.
 
 ## Capacity and scaling
 
@@ -122,7 +124,7 @@ still has its own hard cap.
 
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
-| `POST /api/v1/runner/heartbeat` | runner token | Register identity, tags and liveness |
+| `POST /api/v1/runner/heartbeat` | runner token | Register identity, tags, liveness and toolchain runtime |
 | `POST /api/v1/runner/jobs/claim` | runner token | Claim the next matching job (204 = none) |
 | `POST /api/v1/runner/jobs/{id}/result` | runner token | Report status and run output |
 | `POST /api/v1/applications/{appId}/run` | operator | Queue a runner job |
